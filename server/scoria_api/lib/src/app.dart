@@ -1490,9 +1490,10 @@ class MaiaApp {
     }
     final b = await _body(r);
     final platform = (b['platform'] as String?)?.trim();
-    final focus = platform == null || platform.isEmpty
+    final slug = platform == null || platform.isEmpty
         ? ''
-        : '#one_connector=${Uri.encodeComponent(platform)}';
+        : Uri.encodeComponent(platform);
+    final focus = slug.isEmpty ? '' : '&connector=$slug#one_connector=$slug';
     return _json({
       'mode': 'oauth',
       'authorize_url': '/one/authorize?person=$personId$focus',
@@ -1639,7 +1640,7 @@ class MaiaApp {
       return _json({
         'mode': 'oauth',
         'authorize_url':
-            '/one/authorize?person=$personId#one_connector=${Uri.encodeComponent(platform)}',
+            '/one/authorize?person=$personId&connector=${Uri.encodeComponent(platform)}#one_connector=${Uri.encodeComponent(platform)}',
       });
     }
     final platforms = _platformList(grant!['platforms']);

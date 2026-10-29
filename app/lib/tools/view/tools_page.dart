@@ -8,7 +8,7 @@ import 'package:scoria_models/scoria_models.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-/// Manage inference, You.com, One Connect, and which tools the agent may use.
+/// One Connect catalog. Each row starts OAuth for that connector.
 class ToolsPage extends StatefulWidget {
   const ToolsPage({super.key});
 
@@ -21,8 +21,15 @@ class _ToolsPageState extends State<ToolsPage> {
   String? _error;
   var _loading = true;
   var _busy = false;
+  var _query = '';
+  var _category = 'all';
 
   MaiaApiClient get _api => context.read<MaiaApiClient>();
+
+  ChatConnection? get _one => _catalog?.connections.cast<ChatConnection?>().firstWhere(
+        (c) => c?.id == 'one',
+        orElse: () => null,
+      );
 
   @override
   void initState() {
@@ -51,67 +58,48 @@ class _ToolsPageState extends State<ToolsPage> {
     }
   }
 
-  Future<void> _apply(Future<ChatCatalog> Function() fn) async {
-    setState(() => _busy = true);
-    try {
-      final catalog = await fn();
-      if (!mounted) return;
-      setState(() {
-        _catalog = catalog;
-        _busy = false;
-      });
-    } on Exception catch (e) {
-      if (!mounted) return;
-      setState(() => _busy = false);
-      ShadToaster.of(context).show(
-        ShadToast.destructive(
-          title: const Text('Tools'),
-          description: Text('$e'),
-        ),
-      );
-    }
-  }
-
   String? _absolute(String? path) {
     if (path == null || path.isEmpty) return null;
     if (path.startsWith('http')) return path;
-    return _api.baseUrl
-        .resolve(path.startsWith('/') ? path.substring(1) : path)
-        .toString();
-  }
-
-  Future<void> _setYouKey() async {
-    final key = await showShadDialog<String>(
-      context: context,
-      builder: (_) => const _YouKeyDialog(),
+    final parsed = Uri.parse(path);
+    final resolved = _api.baseUrl.resolve(
+      parsed.path.startsWith('/') ? parsed.path.substring(1) : parsed.path,
     );
-    if (key == null || key.isEmpty) return;
-    await _apply(() => _api.putConnection('you', apiKey: key));
+    return resolved.replace(
+      queryParameters: {
+        ...resolved.queryParameters,
+        ...parsed.queryParameters,
+      },
+      fragment: parsed.hasFragment ? parsed.fragment : null,
+    ).toString();
   }
 
-  Future<void> _connectOne({String? platform}) async {
+  Future<void> _openOauth(String? url) async {
+    if (url == null) return;
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _connect(String platform) async {
     setState(() => _busy = true);
     try {
-      final result = await _api.oneConnect(platform: platform);
+      final result = await _api.oneAccount(platform, syncing: true);
       if (!mounted) return;
+      if (result.isOauth) {
+        await _openOauth(_absolute(result.authorizeUrl));
+        setState(() => _busy = false);
+        return;
+      }
       if (result.isUnconfigured) {
         setState(() => _busy = false);
         ShadToaster.of(context).show(
           ShadToast.destructive(
-            title: const Text('One Connect'),
+            title: const Text('One'),
             description: Text(
-              result.message ?? 'One Connect is not configured.',
+              result.message ??
+                  'The Linux box needs ONE_CLIENT_ID and ONE_CONNECT_KEY.',
             ),
           ),
         );
-        return;
-      }
-      if (result.isOauth) {
-        final url = _absolute(result.authorizeUrl);
-        if (url != null) {
-          await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-        }
-        setState(() => _busy = false);
         return;
       }
       await _load();
@@ -129,152 +117,139 @@ class _ToolsPageState extends State<ToolsPage> {
     }
   }
 
-  Future<void> _setAccount(String platform, {required bool syncing}) async {
+  Future<void> _disconnect(String platform) async {
     setState(() => _busy = true);
     try {
-      final result = await _api.oneAccount(platform, syncing: syncing);
-      if (!mounted) return;
-      if (result.isUnconfigured || result.isOauth) {
-        setState(() => _busy = false);
-        if (result.isOauth) {
-          final url = _absolute(result.authorizeUrl);
-          if (url != null) {
-            await launchUrl(
-              Uri.parse(url),
-              mode: LaunchMode.externalApplication,
-            );
-          }
-          return;
-        }
-        ShadToaster.of(context).show(
-          ShadToast.destructive(
-            title: const Text('One Connect'),
-            description: Text(result.message ?? 'One Connect is not configured.'),
-          ),
-        );
-        return;
-      }
+      await _api.oneAccount(platform, syncing: false);
       await _load();
-      if (!mounted) return;
-      setState(() => _busy = false);
-      ShadToaster.of(context).show(
-        ShadToast(
-          title: Text(syncing ? 'Syncing $platform' : 'Disconnected $platform'),
-          description: Text(
-            syncing
-                ? 'Maia will pull this account into memory.'
-                : 'This account stays in One. Maia will not sync it.',
-          ),
-        ),
-      );
     } on Exception catch (e) {
       if (!mounted) return;
-      setState(() => _busy = false);
       ShadToaster.of(context).show(
         ShadToast.destructive(
-          title: const Text('One Connect'),
+          title: const Text('Disconnect'),
           description: Text('$e'),
         ),
       );
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
-  Future<void> _addAccount() async {
-    final platform = await showShadDialog<String>(
-      context: context,
-      builder: (_) => const _AddAccountDialog(),
-    );
-    if (platform == null || platform.isEmpty) return;
-    await _setAccount(platform, syncing: true);
-  }
-
-  Future<void> _syncOne() async {
+  Future<void> _sync(String platform) async {
     setState(() => _busy = true);
     try {
-      final platforms = await _api.oneSync();
+      await _api.oneSync(platforms: [platform]);
       if (!mounted) return;
-      setState(() => _busy = false);
       ShadToaster.of(context).show(
         ShadToast(
           title: const Text('Sync queued'),
-          description: Text(platforms.join(', ')),
+          description: Text(platform),
         ),
       );
     } on Exception catch (e) {
       if (!mounted) return;
-      setState(() => _busy = false);
       ShadToaster.of(context).show(
         ShadToast.destructive(
           title: const Text('Sync'),
           description: Text('$e'),
         ),
       );
-    }
-  }
-
-  Future<void> _startVoice() async {
-    setState(() => _busy = true);
-    try {
-      await context.read<VoiceCubit>().startSidecar();
-      await _load();
-      if (!mounted) return;
-      final voice = context.read<VoiceCubit>().state;
-      ShadToaster.of(context).show(
-        ShadToast(
-          title: Text(
-            voice.sidecarLoaded ? 'Voice is warm' : 'Voice is starting',
-          ),
-          description: Text(
-            voice.sidecarLoaded
-                ? (voice.keepUntil == null
-                      ? 'PersonaPlex will stay loaded for six hours.'
-                      : 'Warm until ${voice.keepUntil}.')
-                : 'Weights are loading on this machine. Chat already speaks '
-                      'on the device.',
-          ),
-        ),
-      );
-    } on Exception catch (e) {
-      if (!mounted) return;
-      ShadToaster.of(context).show(
-        ShadToast.destructive(
-          title: const Text('PersonaVoice'),
-          description: Text('$e'),
-        ),
-      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  Future<void> _disconnectOne() async {
+  Future<void> _setYouKey() async {
+    final key = await showShadDialog<String>(
+      context: context,
+      builder: (_) => const _YouKeyDialog(),
+    );
+    if (key == null || key.isEmpty) return;
     setState(() => _busy = true);
     try {
-      await _api.oneGrantDelete();
-      await _load();
+      final catalog = await _api.putConnection('you', apiKey: key);
+      if (!mounted) return;
+      setState(() {
+        _catalog = catalog;
+        _busy = false;
+      });
     } on Exception catch (e) {
       if (!mounted) return;
+      setState(() => _busy = false);
       ShadToaster.of(context).show(
-        ShadToast.destructive(
-          title: const Text('One Connect'),
-          description: Text('$e'),
-        ),
+        ShadToast.destructive(title: const Text('You.com'), description: Text('$e')),
       );
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
+  }
+
+  OneAccount? _accountFor(_Connector item) {
+    final accounts = _one?.accounts ?? const <OneAccount>[];
+    for (final account in accounts) {
+      if (account.platform == item.slug) return account;
+    }
+    return null;
+  }
+
+  bool _connected(_Connector item) {
+    final account = _accountFor(item);
+    if (account != null) return account.syncing;
+    return _one?.platforms.contains(item.slug) ?? false;
+  }
+
+  List<_Connector> get _visible {
+    final q = _query.trim().toLowerCase();
+    return [
+      for (final item in _connectors)
+        if ((_category == 'all' || item.category == _category) &&
+            (q.isEmpty ||
+                item.title.toLowerCase().contains(q) ||
+                item.slug.contains(q)))
+          item,
+    ];
+  }
+
+  int get _connectedCount {
+    var n = 0;
+    for (final item in _connectors) {
+      if (_connected(item)) n++;
+    }
+    return n;
+  }
+
+  void _openDetail(_Connector item) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _ConnectorDetail(
+          item: item,
+          account: _accountFor(item),
+          connected: _connected(item),
+          busy: _busy,
+          onConnect: () => _connect(item.slug),
+          onDisconnect: () => _disconnect(item.slug),
+          onSync: () => _sync(item.slug),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    final provider = context.watch<ChatSettingsCubit>().state;
+    final connected = _connectedCount;
     return Scaffold(
       body: Column(
         children: [
           MaiaHeader(
-            title: 'Tools',
+            title: 'Connectors',
             actions: [
+              if (connected > 0)
+                Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: Text(
+                    '$connected connected',
+                    style: theme.textTheme.muted,
+                  ),
+                ),
               ShadIconButton.ghost(
                 key: const Key('tools_refresh_button'),
                 icon: const Icon(LucideIcons.refreshCw, size: 16),
@@ -286,93 +261,92 @@ class _ToolsPageState extends State<ToolsPage> {
             child: _loading && _catalog == null
                 ? const MaiaSkeleton()
                 : ListView(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
                     children: [
-                      Text(
-                        'This is where connections live. The agent only '
-                        'spends a turn on what is on.',
-                        style: theme.textTheme.muted,
-                      ),
                       if (_error != null) ...[
-                        const SizedBox(height: 12),
                         ShadAlert.destructive(
-                          title: const Text('Could not load tools'),
+                          title: const Text('Could not load connectors'),
                           description: Text(_error!),
                         ),
+                        const SizedBox(height: 12),
                       ],
-                      const SizedBox(height: 20),
-                      Text('Connections', style: theme.textTheme.h4),
-                      const SizedBox(height: 8),
-                      if (_catalog != null)
-                        for (final c in _catalog!.connections)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: _ConnectionCard(
-                              connection: c,
-                              busy: _busy,
-                              onYouKey: _setYouKey,
-                              onClearYou: () => _apply(
-                                () => _api.deleteConnection('you'),
+                      ShadInput(
+                        placeholder: const Text('Search apps'),
+                        leading: const Icon(LucideIcons.search, size: 16),
+                        onChanged: (v) => setState(() => _query = v),
+                      ),
+                      const SizedBox(height: 12),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            for (final chip in _categories) ...[
+                              _CategoryChip(
+                                label: chip.$2,
+                                selected: _category == chip.$1,
+                                onPressed: () =>
+                                    setState(() => _category = chip.$1),
                               ),
-                              onConnectOne: () => _connectOne(),
-                              onAddAccount: _addAccount,
-                              onAccount: (platform, syncing) =>
-                                  _setAccount(platform, syncing: syncing),
-                              onSyncOne: _syncOne,
-                              onDisconnectOne: _disconnectOne,
-                              onStartVoice: _startVoice,
-                            ),
+                              const SizedBox(width: 8),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      if (_query.isEmpty && _category == 'all') ...[
+                        _SectionLabel('Recommended'),
+                        const SizedBox(height: 8),
+                        for (final item in _visible.take(6))
+                          _ConnectorRow(
+                            item: item,
+                            connected: _connected(item),
+                            busy: _busy,
+                            onConnect: () => _connect(item.slug),
+                            onOpen: () => _openDetail(item),
                           ),
-                      const SizedBox(height: 16),
-                      Text('Inference', style: theme.textTheme.h4),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Parasail is the cloud brain for chat and spoken '
-                        'thinking. Local is Ollama. Speech stays on this '
-                        'device, and on PersonaVoice if that sidecar is up.',
-                        style: theme.textTheme.muted,
-                      ),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          for (final id in const ['auto', 'parasail', 'ollama'])
-                            _ProviderChip(
-                              id: id,
-                              selected: provider == id,
-                              info: _catalog?.providers[id],
-                              onPressed: () => context
-                                  .read<ChatSettingsCubit>()
-                                  .setProvider(id),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 24),
-                      Text('Agent tools', style: theme.textTheme.h4),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Switch one off if you do not want it in the next chat.',
-                        style: theme.textTheme.muted,
-                      ),
-                      const SizedBox(height: 12),
-                      if (_catalog != null)
-                        for (final t in _catalog!.tools)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: _ToolCard(
-                              tool: t,
-                              busy: _busy,
-                              onChanged: t.available
-                                  ? (on) => _apply(
-                                      () => _api.putConnection(
-                                        t.name,
-                                        enabled: on,
-                                      ),
-                                    )
-                                  : null,
-                            ),
+                        const SizedBox(height: 16),
+                      ],
+                      for (final cat in _categoryGroups(_visible, _query, _category)) ...[
+                        _SectionLabel(cat.$1),
+                        const SizedBox(height: 8),
+                        for (final item in cat.$2)
+                          _ConnectorRow(
+                            item: item,
+                            connected: _connected(item),
+                            busy: _busy,
+                            onConnect: () => _connect(item.slug),
+                            onOpen: () => _openDetail(item),
                           ),
+                        const SizedBox(height: 16),
+                      ],
+                      const SizedBox(height: 8),
+                      _MachineSection(
+                        catalog: _catalog,
+                        busy: _busy,
+                        onYouKey: _setYouKey,
+                        onClearYou: () async {
+                          setState(() => _busy = true);
+                          try {
+                            final catalog = await _api.deleteConnection('you');
+                            if (!mounted) return;
+                            setState(() {
+                              _catalog = catalog;
+                              _busy = false;
+                            });
+                          } on Exception catch (e) {
+                            if (!mounted) return;
+                            setState(() => _busy = false);
+                            ShadToaster.of(context).show(
+                              ShadToast.destructive(
+                                title: const Text('You.com'),
+                                description: Text('$e'),
+                              ),
+                            );
+                          }
+                        },
+                        onStartVoice: () =>
+                            context.read<VoiceCubit>().startSidecar(),
+                      ),
                     ],
                   ),
           ),
@@ -382,252 +356,472 @@ class _ToolsPageState extends State<ToolsPage> {
   }
 }
 
-class _ConnectionCard extends StatelessWidget {
-  const _ConnectionCard({
-    required this.connection,
-    required this.busy,
-    required this.onYouKey,
-    required this.onClearYou,
-    required this.onConnectOne,
-    required this.onAddAccount,
-    required this.onAccount,
-    required this.onSyncOne,
-    required this.onDisconnectOne,
-    required this.onStartVoice,
+const _categories = <(String, String)>[
+  ('all', 'All'),
+  ('communication', 'Communication'),
+  ('productivity', 'Productivity'),
+  ('code', 'Code'),
+  ('files', 'Files'),
+];
+
+const _connectors = <_Connector>[
+  _Connector(
+    'gmail',
+    'Gmail',
+    'communication',
+    'Pull mail into memory.',
+    LucideIcons.mail,
+    Color(0xFFEA4335),
+  ),
+  _Connector(
+    'google-calendar',
+    'Google Calendar',
+    'communication',
+    'Upcoming events as memories.',
+    LucideIcons.calendar,
+    Color(0xFF4285F4),
+  ),
+  _Connector(
+    'google-docs',
+    'Google Docs',
+    'productivity',
+    'Read, create, and edit documents.',
+    LucideIcons.fileText,
+    Color(0xFF4285F4),
+  ),
+  _Connector(
+    'email',
+    'Email',
+    'communication',
+    'Generic mailbox connector.',
+    LucideIcons.inbox,
+    Color(0xFFC2185B),
+  ),
+  _Connector(
+    'github',
+    'GitHub',
+    'code',
+    'Activity into the life graph.',
+    LucideIcons.gitBranch,
+    Color(0xFF24292F),
+  ),
+  _Connector(
+    'slack',
+    'Slack',
+    'communication',
+    'Channels and DMs you grant.',
+    LucideIcons.hash,
+    Color(0xFF4A154B),
+  ),
+  _Connector(
+    'notion',
+    'Notion',
+    'productivity',
+    'Pages you choose to share.',
+    LucideIcons.bookOpen,
+    Color(0xFF111111),
+  ),
+  _Connector(
+    'linear',
+    'Linear',
+    'productivity',
+    'Issues and projects.',
+    LucideIcons.circleDashed,
+    Color(0xFF5E6AD2),
+  ),
+  _Connector(
+    'canva',
+    'Canva',
+    'productivity',
+    'Designs you grant.',
+    LucideIcons.palette,
+    Color(0xFF00C4CC),
+  ),
+  _Connector(
+    'onedrive',
+    'OneDrive',
+    'files',
+    'Files from Microsoft.',
+    LucideIcons.cloud,
+    Color(0xFF0078D4),
+  ),
+  _Connector(
+    'discord',
+    'Discord',
+    'communication',
+    'Servers you grant.',
+    LucideIcons.messageCircle,
+    Color(0xFF5865F2),
+  ),
+  _Connector(
+    'stripe',
+    'Stripe',
+    'productivity',
+    'Payments you grant.',
+    LucideIcons.creditCard,
+    Color(0xFF635BFF),
+  ),
+];
+
+List<(String, List<_Connector>)> _categoryGroups(
+  List<_Connector> items,
+  String query,
+  String category,
+) {
+  if (query.isNotEmpty) {
+    return items.isEmpty ? const [] : [('Results', items)];
+  }
+  if (category != 'all') {
+    return items.isEmpty ? const [] : [(_titleFor(category), items)];
+  }
+  final skip = items.take(6).map((e) => e.slug).toSet();
+  final rest = [for (final item in items) if (!skip.contains(item.slug)) item];
+  final by = <String, List<_Connector>>{};
+  for (final item in rest) {
+    (by[item.category] ??= []).add(item);
+  }
+  return [
+    for (final cat in _categories)
+      if (cat.$1 != 'all' && (by[cat.$1]?.isNotEmpty ?? false))
+        (cat.$2, by[cat.$1]!),
+  ];
+}
+
+String _titleFor(String id) {
+  for (final cat in _categories) {
+    if (cat.$1 == id) return cat.$2;
+  }
+  return id;
+}
+
+class _Connector {
+  const _Connector(
+    this.slug,
+    this.title,
+    this.category,
+    this.description,
+    this.icon,
+    this.color,
+  );
+
+  final String slug;
+  final String title;
+  final String category;
+  final String description;
+  final IconData icon;
+  final Color color;
+}
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(text, style: ShadTheme.of(context).textTheme.muted);
+  }
+}
+
+class _CategoryChip extends StatelessWidget {
+  const _CategoryChip({
+    required this.label,
+    required this.selected,
+    required this.onPressed,
   });
 
-  final ChatConnection connection;
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    if (selected) {
+      return ShadButton(size: ShadButtonSize.sm, onPressed: onPressed, child: Text(label));
+    }
+    return ShadButton.outline(
+      size: ShadButtonSize.sm,
+      onPressed: onPressed,
+      child: Text(label),
+    );
+  }
+}
+
+class _ConnectorRow extends StatelessWidget {
+  const _ConnectorRow({
+    required this.item,
+    required this.connected,
+    required this.busy,
+    required this.onConnect,
+    required this.onOpen,
+  });
+
+  final _Connector item;
+  final bool connected;
   final bool busy;
-  final VoidCallback onYouKey;
-  final VoidCallback onClearYou;
-  final VoidCallback onConnectOne;
-  final VoidCallback? onAddAccount;
-  final void Function(String platform, bool syncing)? onAccount;
-  final VoidCallback onSyncOne;
-  final VoidCallback onDisconnectOne;
-  final VoidCallback onStartVoice;
+  final VoidCallback onConnect;
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    final c = connection;
-    return ShadCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: InkWell(
+        onTap: onOpen,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Row(
             children: [
-              Icon(_icon(c.id), size: 16, color: theme.colorScheme.mutedForeground),
-              const SizedBox(width: 8),
-              Expanded(child: Text(c.label, style: theme.textTheme.small)),
-              Text(
-                c.connected ? 'connected' : 'off',
-                style: theme.textTheme.muted.copyWith(
-                  color: c.connected
-                      ? theme.colorScheme.foreground
-                      : theme.colorScheme.destructive,
+              _AppGlyph(item: item),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(item.title, style: theme.textTheme.small),
+              ),
+              if (connected)
+                Row(
+                  children: [
+                    Icon(
+                      LucideIcons.check,
+                      size: 16,
+                      color: theme.colorScheme.foreground,
+                    ),
+                    const SizedBox(width: 6),
+                    Text('Connected', style: theme.textTheme.muted),
+                  ],
+                )
+              else
+                ShadButton.outline(
+                  size: ShadButtonSize.sm,
+                  onPressed: busy ? null : onConnect,
+                  child: const Text('Connect'),
                 ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AppGlyph extends StatelessWidget {
+  const _AppGlyph({required this.item, this.size = 36});
+
+  final _Connector item;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: item.color,
+        borderRadius: BorderRadius.circular(size * 0.28),
+      ),
+      child: Icon(item.icon, size: size * 0.5, color: Colors.white),
+    );
+  }
+}
+
+class _ConnectorDetail extends StatelessWidget {
+  const _ConnectorDetail({
+    required this.item,
+    required this.account,
+    required this.connected,
+    required this.busy,
+    required this.onConnect,
+    required this.onDisconnect,
+    required this.onSync,
+  });
+
+  final _Connector item;
+  final OneAccount? account;
+  final bool connected;
+  final bool busy;
+  final VoidCallback onConnect;
+  final VoidCallback onDisconnect;
+  final VoidCallback onSync;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    return Scaffold(
+      body: Column(
+        children: [
+          MaiaHeader(
+            title: item.title,
+            leading: ShadIconButton.ghost(
+              icon: const Icon(LucideIcons.arrowLeft, size: 16),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            actions: [
+              ShadIconButton.ghost(
+                icon: const Icon(LucideIcons.x, size: 16),
+                onPressed: () => Navigator.of(context).pop(),
               ),
             ],
           ),
-          if (c.description != null) ...[
-            const SizedBox(height: 6),
-            Text(c.description!, style: theme.textTheme.muted),
-          ],
-          if (c.id == 'one' && c.accounts.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            for (final account in c.accounts) ...[
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      account.access.isEmpty
-                          ? account.label
-                          : '${account.label} · ${account.access}',
-                      style: theme.textTheme.small,
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                Row(
+                  children: [
+                    _AppGlyph(item: item, size: 48),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(item.title, style: theme.textTheme.h4),
                     ),
+                    if (connected)
+                      ShadButton.outline(
+                        onPressed: busy ? null : onDisconnect,
+                        child: const Text('Disconnect'),
+                      )
+                    else
+                      ShadButton(
+                        onPressed: busy ? null : onConnect,
+                        child: const Text('Connect'),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(item.description, style: theme.textTheme.muted),
+                const SizedBox(height: 24),
+                Text('Accounts', style: theme.textTheme.muted),
+                const SizedBox(height: 8),
+                ShadCard(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          account?.label ?? 'default',
+                          style: theme.textTheme.small,
+                        ),
+                      ),
+                      Text(
+                        connected ? 'Connected' : 'Off',
+                        style: theme.textTheme.muted.copyWith(
+                          color: connected
+                              ? const Color(0xFF34C759)
+                              : theme.colorScheme.mutedForeground,
+                        ),
+                      ),
+                    ],
                   ),
-                  Text(
-                    account.syncing ? 'syncing' : 'off',
-                    style: theme.textTheme.muted,
-                  ),
-                  const SizedBox(width: 8),
-                  ShadButton.ghost(
-                    onPressed: onAccount == null
-                        ? null
-                        : () => onAccount!(account.platform, !account.syncing),
-                    child: Text(account.syncing ? 'Disconnect' : 'Resume'),
+                ),
+                if (connected) ...[
+                  const SizedBox(height: 16),
+                  ShadButton.outline(
+                    onPressed: busy ? null : onSync,
+                    child: const Text('Sync now'),
                   ),
                 ],
-              ),
-            ],
-          ] else if (c.platforms.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (final p in c.platforms)
-                  ShadBadge.outline(child: Text(p)),
+                const SizedBox(height: 24),
+                Text(
+                  'OAuth stays at One. Maia stores a grant pointer, not the token.',
+                  style: theme.textTheme.muted,
+                ),
               ],
             ),
-          ],
-          if (c.model != null) ...[
-            const SizedBox(height: 6),
-            Text(c.model!, style: theme.textTheme.muted),
-          ],
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              if (c.id == 'you') ...[
-                ShadButton.outline(
-                  onPressed: busy ? null : onYouKey,
-                  child: Text(c.connected ? 'Replace key' : 'Add key'),
-                ),
-                if (c.hasSecret)
-                  ShadButton.ghost(
-                    onPressed: busy ? null : onClearYou,
-                    child: const Text('Use server key'),
-                  ),
-              ],
-              if (c.id == 'one' && !c.ready)
-                ShadButton.outline(
-                  onPressed: busy
-                      ? null
-                      : () => launchUrl(
-                          Uri.parse(
-                            'https://app.withone.ai/developers/connect',
-                          ),
-                          mode: LaunchMode.externalApplication,
-                        ),
-                  child: const Text('Create Connect app'),
-                ),
-              if (c.id == 'one' && c.ready && !c.connected)
-                ShadButton(
-                  onPressed: busy ? null : onConnectOne,
-                  child: const Text('Sign in with One'),
-                ),
-              if (c.id == 'one' && c.ready) ...[
-                ShadButton.outline(
-                  onPressed: busy ? null : onAddAccount,
-                  child: const Text('Add account'),
-                ),
-              ],
-              if (c.id == 'one' && c.connected) ...[
-                ShadButton.outline(
-                  onPressed: busy ? null : onSyncOne,
-                  child: const Text('Sync now'),
-                ),
-                ShadButton.ghost(
-                  onPressed: busy ? null : onDisconnectOne,
-                  child: const Text('Disconnect all'),
-                ),
-              ],
-              if (c.id == 'voice')
-                ShadButton(
-                  onPressed: busy ? null : onStartVoice,
-                  child: Text(
-                    !c.connected
-                        ? 'Start voice'
-                        : c.ready
-                        ? 'Keep warm'
-                        : 'Load engine',
-                  ),
-                ),
-            ],
           ),
         ],
       ),
     );
   }
-
-  static IconData _icon(String id) => switch (id) {
-    'you' => LucideIcons.globe,
-    'one' => LucideIcons.link,
-    'parasail' => LucideIcons.cloud,
-    'ollama' => LucideIcons.cpu,
-    'voice' => LucideIcons.audioLines,
-    _ => LucideIcons.wrench,
-  };
 }
 
-class _AddAccountDialog extends StatefulWidget {
-  const _AddAccountDialog();
+class _MachineSection extends StatelessWidget {
+  const _MachineSection({
+    required this.catalog,
+    required this.busy,
+    required this.onYouKey,
+    required this.onClearYou,
+    required this.onStartVoice,
+  });
 
-  @override
-  State<_AddAccountDialog> createState() => _AddAccountDialogState();
-}
-
-class _AddAccountDialogState extends State<_AddAccountDialog> {
-  final _platform = TextEditingController();
-
-  static const _suggestions = [
-    'slack',
-    'linear',
-    'notion',
-    'gmail',
-    'google-calendar',
-    'github',
-    'discord',
-    'hubspot',
-    'stripe',
-  ];
-
-  @override
-  void dispose() {
-    _platform.dispose();
-    super.dispose();
-  }
-
-  void _submit(String raw) {
-    final platform = raw.trim().toLowerCase();
-    if (platform.isEmpty) return;
-    Navigator.of(context).pop(platform);
-  }
+  final ChatCatalog? catalog;
+  final bool busy;
+  final VoidCallback onYouKey;
+  final VoidCallback onClearYou;
+  final VoidCallback onStartVoice;
 
   @override
   Widget build(BuildContext context) {
-    return ShadDialog(
-      title: const Text('Add an account'),
-      description: const Text(
-        'Any One platform slug. One opens that connector on its own. '
-        'The full catalog is at withone.ai/knowledge.',
-      ),
-      actions: [
-        ShadButton.outline(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        ShadButton(
-          onPressed: () => _submit(_platform.text),
-          child: const Text('Connect'),
-        ),
-      ],
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ShadInput(
-            controller: _platform,
-            placeholder: const Text('slack'),
-            onSubmitted: _submit,
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
+    final theme = ShadTheme.of(context);
+    final you = catalog?.connections.cast<ChatConnection?>().firstWhere(
+          (c) => c?.id == 'you',
+          orElse: () => null,
+        );
+    final voice = catalog?.connections.cast<ChatConnection?>().firstWhere(
+          (c) => c?.id == 'voice',
+          orElse: () => null,
+        );
+    final provider = context.watch<ChatSettingsCubit>().state;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('This machine', style: theme.textTheme.muted),
+        const SizedBox(height: 8),
+        ShadCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              for (final platform in _suggestions)
-                ShadButton.outline(
-                  onPressed: () => _submit(platform),
-                  child: Text(platform),
+              Text('You.com', style: theme.textTheme.small),
+              const SizedBox(height: 4),
+              Text(
+                'Web search for the agent.',
+                style: theme.textTheme.muted,
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: [
+                  ShadButton.outline(
+                    size: ShadButtonSize.sm,
+                    onPressed: busy ? null : onYouKey,
+                    child: Text(you?.connected == true ? 'Replace key' : 'Add key'),
+                  ),
+                  if (you?.hasSecret == true)
+                    ShadButton.ghost(
+                      size: ShadButtonSize.sm,
+                      onPressed: busy ? null : onClearYou,
+                      child: const Text('Use server key'),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text('Brain', style: theme.textTheme.small),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final id in const ['auto', 'parasail', 'ollama'])
+                    _ProviderChip(
+                      id: id,
+                      selected: provider == id,
+                      info: catalog?.providers[id],
+                      onPressed: () =>
+                          context.read<ChatSettingsCubit>().setProvider(id),
+                    ),
+                ],
+              ),
+              if (voice != null) ...[
+                const SizedBox(height: 16),
+                ShadButton(
+                  size: ShadButtonSize.sm,
+                  onPressed: busy ? null : onStartVoice,
+                  child: Text(
+                    voice.connected
+                        ? (voice.ready ? 'Keep voice warm' : 'Load voice')
+                        : 'Start voice',
+                  ),
                 ),
+              ],
             ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -698,72 +892,16 @@ class _ProviderChip extends StatelessWidget {
     final missing = id != 'auto' && info != null && !info!.available;
     final child = Text(missing ? '$label (off)' : label);
     if (selected) {
-      return ShadButton(onPressed: missing ? null : onPressed, child: child);
+      return ShadButton(
+        size: ShadButtonSize.sm,
+        onPressed: missing ? null : onPressed,
+        child: child,
+      );
     }
     return ShadButton.outline(
+      size: ShadButtonSize.sm,
       onPressed: missing ? null : onPressed,
       child: child,
     );
   }
-}
-
-class _ToolCard extends StatelessWidget {
-  const _ToolCard({
-    required this.tool,
-    required this.busy,
-    required this.onChanged,
-  });
-
-  final ChatToolInfo tool;
-  final bool busy;
-  final ValueChanged<bool>? onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
-    return ShadCard(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            _icon(tool.name),
-            size: 16,
-            color: theme.colorScheme.mutedForeground,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(tool.name, style: theme.textTheme.small),
-                const SizedBox(height: 4),
-                Text(tool.description, style: theme.textTheme.muted),
-                if (!tool.available)
-                  Text(
-                    'needs a connection',
-                    style: theme.textTheme.muted.copyWith(
-                      color: theme.colorScheme.destructive,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          ShadSwitch(
-            value: tool.enabled && tool.available,
-            enabled: !busy && onChanged != null,
-            onChanged: onChanged,
-          ),
-        ],
-      ),
-    );
-  }
-
-  static IconData _icon(String name) => switch (name) {
-    'memory_search' || 'memory_recent' || 'memory_get' => LucideIcons.brain,
-    'remember' => LucideIcons.bookmark,
-    'life_graph' => LucideIcons.gitBranch,
-    'web_search' => LucideIcons.globe,
-    'now' => LucideIcons.clock,
-    _ => LucideIcons.wrench,
-  };
 }

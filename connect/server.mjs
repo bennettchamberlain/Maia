@@ -180,7 +180,7 @@ const server = createServer(async (req, res) => {
 <body style="font:16px/1.4 system-ui;max-width:36rem;margin:3rem auto">
 <h1>One is not configured</h1>
 <p>This Maia has no <code>ONE_CLIENT_ID</code> / <code>ONE_CONNECT_KEY</code> yet, so there is nothing to authorize.</p>
-<p>Create an app at <a href="https://app.withone.ai/developers/connect">app.withone.ai/developers/connect</a>, put the keys in <code>.env</code>, restart Connect, then come back from the Tools tab.</p>
+<p>Create an app at <a href="https://app.withone.ai/developers/connect">app.withone.ai/developers/connect</a>, put the keys in <code>.env</code>, restart Connect, then come back from Connectors.</p>
 </body>`);
     return;
   }

@@ -34,7 +34,7 @@ class _HomePageState extends State<HomePage> {
   static const _destinations = <({IconData icon, String label})>[
     (icon: LucideIcons.messageCircle, label: 'Chat'),
     (icon: LucideIcons.brain, label: 'Memory'),
-    (icon: LucideIcons.wrench, label: 'Tools'),
+    (icon: LucideIcons.unplug, label: 'Connectors'),
     (icon: LucideIcons.listTodo, label: 'Jobs'),
     // Places: LucideIcons.mapPin
     // People: LucideIcons.users
