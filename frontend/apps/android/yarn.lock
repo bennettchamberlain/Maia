@@ -43,12 +43,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@capacitor/android@npm:^7.6.9":
-  version: 7.6.9
-  resolution: "@capacitor/android@npm:7.6.9"
+"@capacitor/android@npm:^8.5.3":
+  version: 8.5.3
+  resolution: "@capacitor/android@npm:8.5.3"
   peerDependencies:
-    "@capacitor/core": ^7.6.0
-  checksum: 10c0/29167da3f04a8284ecb4b4a615d36f8a16bdca1df443d9bd5f88d1288e20221e3323ece42af53ba0b098409eef851223c45d018b82d13d336817077e065bc0ac
+    "@capacitor/core": ^8.5.0
+  checksum: 10c0/25bfc9a76920e49ccb96e4dcb34a1861f54e8541cdb2f6a2d85d51bff8b8b9f24823a159e55d63417895d12211b66178d87decfbcd22270d7d2edd9156df3121
   languageName: node
   linkType: hard
 
@@ -209,7 +209,7 @@ __metadata:
     "@capacitor-community/background-geolocation": "patch:@capacitor-community/background-geolocation@npm%3A1.2.26#~/.yarn/patches/@capacitor-community-background-geolocation-npm-1.2.26-e4d02e234f.patch"
     "@capacitor-community/sqlite": "npm:^7.0.1"
     "@capacitor-mlkit/barcode-scanning": "npm:^7.5.0"
-    "@capacitor/android": "npm:^7.6.9"
+    "@capacitor/android": "npm:^8.5.3"
     "@capacitor/app": "npm:^7.0.0"
     "@capacitor/browser": "npm:^7.0.0"
     "@capacitor/camera": "npm:^7.0.0"
