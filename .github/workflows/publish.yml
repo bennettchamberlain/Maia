@@ -270,7 +270,7 @@ jobs:
           echo "Release tag ${tag} accepted."
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -422,7 +422,7 @@ jobs:
 
       # For scripts/publish/ only. No history, no tags, no stored token.
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -535,7 +535,7 @@ jobs:
           echo "Release tag ${tag} accepted."
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true

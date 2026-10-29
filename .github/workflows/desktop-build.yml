@@ -64,7 +64,7 @@ jobs:
             label: Windows (x64)
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
