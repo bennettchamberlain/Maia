@@ -119,7 +119,7 @@ jobs:
       # build over `portal:` symlinks from frontend/packages), so both are listed.
       - name: Upload unit test reports
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           retention-days: 7
           name: android-unit-test-reports
@@ -131,7 +131,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           retention-days: 7
           name: companion-android-apk
@@ -211,7 +211,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$APP" "$GITHUB_WORKSPACE/companion-ios-simulator.app.zip"
 
       - name: Upload iOS app
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           retention-days: 7
           name: companion-ios-simulator-app

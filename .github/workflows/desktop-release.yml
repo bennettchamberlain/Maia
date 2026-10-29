@@ -528,7 +528,7 @@ jobs:
 
       - name: Upload macOS artifact
         if: steps.secrets.outputs.present == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           retention-days: 7
           name: release-macos
@@ -687,7 +687,7 @@ jobs:
 
       - name: Upload Windows artifact
         if: steps.secrets.outputs.present == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           retention-days: 7
           name: release-windows
@@ -796,7 +796,7 @@ jobs:
             -c '{"bundle":{"createUpdaterArtifacts":false}}' -b deb,rpm
 
       - name: Upload Linux artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           retention-days: 7
           name: release-linux

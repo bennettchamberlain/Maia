@@ -254,7 +254,7 @@ jobs:
 
       - name: Upload jest report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: consent-path-report
           path: consent-path-report.json
