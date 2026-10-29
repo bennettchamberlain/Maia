@@ -132,7 +132,7 @@
     "@types/web-push": "^3.6.4",
     "@types/xml2js": "^0",
     "@yarnpkg/pnpify": "^4.1.4",
-    "dependency-cruiser": "^17.0.2",
+    "dependency-cruiser": "^18.7.0",
     "eslint": "^9.27.0",
     "eslint-config-prettier": "^10.1.5",
     "eslint-import-resolver-typescript": "^4.4.4",
