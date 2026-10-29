@@ -25,12 +25,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@capacitor-mlkit/barcode-scanning@npm:^7.5.0":
-  version: 7.5.0
-  resolution: "@capacitor-mlkit/barcode-scanning@npm:7.5.0"
+"@capacitor-mlkit/barcode-scanning@npm:^8.2.1":
+  version: 8.2.1
+  resolution: "@capacitor-mlkit/barcode-scanning@npm:8.2.1"
   peerDependencies:
-    "@capacitor/core": ">=7.0.0"
-  checksum: 10c0/66f6763f833301f3b1e584fd2bfe38f8f54bfebe292673af472f161b52878dc5f9919befec5590386c931511b72b83ab74ed299f62bda47e36f1f56829c1ee57
+    "@capacitor/core": ">=8.0.0"
+  checksum: 10c0/23098288f83ff0f6724ce1fce53a5adf49f5cc263626764f694189f94da4a91b50eb40e48ad23c4c29b86a24ccccb5a5618e2cd42362b0a4a3609f25792a14a6
   languageName: node
   linkType: hard
 
@@ -181,7 +181,7 @@ __metadata:
   dependencies:
     "@capacitor-community/background-geolocation": "npm:^1.2.26"
     "@capacitor-community/sqlite": "npm:^7.0.1"
-    "@capacitor-mlkit/barcode-scanning": "npm:^7.5.0"
+    "@capacitor-mlkit/barcode-scanning": "npm:^8.2.1"
     "@capacitor/app": "npm:^7.0.0"
     "@capacitor/browser": "npm:^7.0.0"
     "@capacitor/camera": "npm:^7.0.0"
