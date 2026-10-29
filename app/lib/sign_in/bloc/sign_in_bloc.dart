@@ -17,7 +17,7 @@ class SignInBloc extends Bloc<SignInEvent, SignInState> {
     on<SignInSubmitted>(_onSubmitted);
   }
 
-  final ScoriaApiClient _api;
+  final MaiaApiClient _api;
 
   Future<void> _onSubmitted(
     SignInSubmitted event,
@@ -31,7 +31,7 @@ class SignInBloc extends Bloc<SignInEvent, SignInState> {
         password: state.password,
       );
       emit(state.copyWith(status: SignInStatus.success, session: session));
-    } on ScoriaApiException catch (e) {
+    } on MaiaApiException catch (e) {
       emit(
         state.copyWith(
           status: SignInStatus.failure,

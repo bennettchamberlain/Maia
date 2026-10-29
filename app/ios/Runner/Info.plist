@@ -10,11 +10,11 @@
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Requiem talks to your own Requiem server on the local network.</string>
+	<string>Maia talks to your own Maia server on the local network.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Requiem listens on this phone so you can speak a chat turn.</string>
+	<string>Maia listens on this phone so you can speak a chat turn.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Requiem turns speech into text on this device.</string>
+	<string>Maia turns speech into text on this device.</string>
 	<key>CFBundleLocalizations</key>
 	<array>
 		<string>en</string>

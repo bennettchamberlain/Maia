@@ -1,4 +1,4 @@
-package com.scoria.app
+package com.maia.app
 
 import io.flutter.embedding.android.FlutterActivity
 

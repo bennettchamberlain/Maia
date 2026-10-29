@@ -6,7 +6,7 @@ import 'package:scoria_api_client/scoria_api_client.dart';
 import 'package:test/test.dart';
 
 void main() {
-  ScoriaApiClient client(http.Client inner, {String? token}) => ScoriaApiClient(
+  MaiaApiClient client(http.Client inner, {String? token}) => MaiaApiClient(
     baseUrl: Uri.parse('http://localhost:8080/'),
     tokenProvider: () => token,
     httpClient: inner,
@@ -35,7 +35,7 @@ void main() {
     expect(feed.single.kind, 'note');
   });
 
-  test('maps errors to ScoriaApiException', () async {
+  test('maps errors to MaiaApiException', () async {
     final c = client(
       MockClient(
         (_) async => http.Response(
@@ -47,7 +47,7 @@ void main() {
     expect(
       c.me(),
       throwsA(
-        isA<ScoriaApiException>().having(
+        isA<MaiaApiException>().having(
           (e) => e.isUnauthorized,
           'unauth',
           true,

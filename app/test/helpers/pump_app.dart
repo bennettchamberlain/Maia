@@ -15,7 +15,7 @@ extension PumpApp on WidgetTester {
             localizationsDelegates: AppLocalizations.localizationsDelegates,
             supportedLocales: AppLocalizations.supportedLocales,
             builder: (context, child) => ShadAppBuilder(
-              builder: scoriaMaterialTheme,
+              builder: maiaMaterialTheme,
               child: child,
             ),
             home: widget,

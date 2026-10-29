@@ -18,7 +18,7 @@ const userStore = {
     const post = (platforms) =>
       fetch(`${SCORIA}/internal/one/grant`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-scoria-internal": INTERNAL },
+        headers: { "content-type": "application/json", "x-maia-internal": INTERNAL },
         body: JSON.stringify({
           person_id: appUserId,
           one_user_id: oneUserId,
@@ -41,7 +41,7 @@ const userStore = {
   async loadUser(appUserId) {
     const r = await fetch(`${SCORIA}/internal/one/grant`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-scoria-internal": INTERNAL },
+      headers: { "content-type": "application/json", "x-maia-internal": INTERNAL },
       body: JSON.stringify({ person_id: appUserId, lookup: true }),
     });
     if (!r.ok) return null;
@@ -52,7 +52,7 @@ const userStore = {
   async clearUser(appUserId) {
     await fetch(`${SCORIA}/internal/one/grant`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-scoria-internal": INTERNAL },
+      headers: { "content-type": "application/json", "x-maia-internal": INTERNAL },
       body: JSON.stringify({ person_id: appUserId, revoked: true }),
     });
   },
@@ -179,7 +179,7 @@ const server = createServer(async (req, res) => {
     res.end(`<!doctype html><meta charset="utf-8"><title>One Connect</title>
 <body style="font:16px/1.4 system-ui;max-width:36rem;margin:3rem auto">
 <h1>One is not configured</h1>
-<p>This Requiem has no <code>ONE_CLIENT_ID</code> / <code>ONE_CONNECT_KEY</code> yet, so there is nothing to authorize.</p>
+<p>This Maia has no <code>ONE_CLIENT_ID</code> / <code>ONE_CONNECT_KEY</code> yet, so there is nothing to authorize.</p>
 <p>Create an app at <a href="https://app.withone.ai/developers/connect">app.withone.ai/developers/connect</a>, put the keys in <code>.env</code>, restart Connect, then come back from the Tools tab.</p>
 </body>`);
     return;

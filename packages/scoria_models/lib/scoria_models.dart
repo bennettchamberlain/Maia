@@ -1,4 +1,4 @@
-/// Shared Scoria domain models. Mirrors `schema/dbschema/default.gel`.
+/// Shared Maia domain models. Mirrors `schema/dbschema/default.gel`.
 ///
 /// These are transport shapes: what the named queries return and what the
 /// API accepts. Policies live in the schema, not here.

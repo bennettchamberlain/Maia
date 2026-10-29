@@ -5,7 +5,7 @@ import 'package:scoria_api_client/scoria_api_client.dart';
 import 'package:scoria_app/chat/chat.dart';
 import 'package:scoria_models/scoria_models.dart';
 
-class _MockApi extends Mock implements ScoriaApiClient;
+class _MockApi extends Mock implements MaiaApiClient;
 
 void main() {
   final session = ChatSession(id: 's1', createdAt: DateTime.utc(2026));

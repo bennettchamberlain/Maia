@@ -4,7 +4,7 @@ PersonaPlex (NVIDIA's Moshi fork) is the mouth and the ears: low-latency,
 full-duplex, consistent persona. It is also a 7B model that does not know
 your life, cannot browse, and cannot call tools. This package wires it to a
 brain — the strongest local LLM the machine runs through Ollama — that
-listens to the user transcript, uses Scoria memory and the web, and feeds
+listens to the user transcript, uses Maia memory and the web, and feeds
 PersonaPlex two ways:
 
 * **briefs**: facts written into the conversation as a `<system>` block, the

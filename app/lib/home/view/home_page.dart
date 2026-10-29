@@ -110,7 +110,7 @@ class _Sidebar extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      handle ?? 'Scoria',
+                      handle ?? 'Maia',
                       style: theme.textTheme.small,
                       overflow: TextOverflow.ellipsis,
                     ),

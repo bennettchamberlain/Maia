@@ -54,7 +54,7 @@ class Config:
     whisper_compute: str = "int8"
     stt_enabled: bool = True
 
-    # Scoria memory
+    # Maia memory
     scoria_api_url: str | None = "http://127.0.0.1:8090"
     scoria_handle: str | None = None
     scoria_password: str | None = None

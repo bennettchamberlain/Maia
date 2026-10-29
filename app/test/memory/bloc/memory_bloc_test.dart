@@ -5,7 +5,7 @@ import 'package:scoria_api_client/scoria_api_client.dart';
 import 'package:scoria_app/memory/memory.dart';
 import 'package:scoria_models/scoria_models.dart';
 
-class _MockApi extends Mock implements ScoriaApiClient;
+class _MockApi extends Mock implements MaiaApiClient;
 
 MemoryItem _item(String id, DateTime at) => MemoryItem(
   id: id,
@@ -82,7 +82,7 @@ void main() {
       'surfaces api failure',
       setUp: () {
         when(() => api.memoryFeed())
-            .thenThrow(const ScoriaApiException(401, 'expired'));
+            .thenThrow(const MaiaApiException(401, 'expired'));
       },
       build: () => MemoryBloc(api: api),
       act: (b) => b.add(const MemoryFetched()),

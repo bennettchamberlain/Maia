@@ -31,8 +31,8 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Requiem listens on this Mac so you can speak a chat turn.</string>
+	<string>Maia listens on this Mac so you can speak a chat turn.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Requiem turns speech into text on this device.</string>
+	<string>Maia turns speech into text on this device.</string>
 </dict>
 </plist>

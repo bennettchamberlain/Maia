@@ -8,7 +8,7 @@ class ChatSettingsCubit extends Cubit<String> {
     : _prefs = prefs,
       super(initial ?? prefs?.getString(_key) ?? 'auto');
 
-  static const _key = 'requiem.chat_provider';
+  static const _key = 'maia.chat_provider';
   final SharedPreferences? _prefs;
 
   Future<void> setProvider(String provider) async {

@@ -22,7 +22,7 @@ class _ToolsPageState extends State<ToolsPage> {
   var _loading = true;
   var _busy = false;
 
-  ScoriaApiClient get _api => context.read<ScoriaApiClient>();
+  MaiaApiClient get _api => context.read<MaiaApiClient>();
 
   @override
   void initState() {
@@ -162,8 +162,8 @@ class _ToolsPageState extends State<ToolsPage> {
           title: Text(syncing ? 'Syncing $platform' : 'Disconnected $platform'),
           description: Text(
             syncing
-                ? 'Requiem will pull this account into memory.'
-                : 'This account stays in One. Requiem will not sync it.',
+                ? 'Maia will pull this account into memory.'
+                : 'This account stays in One. Maia will not sync it.',
           ),
         ),
       );
@@ -272,7 +272,7 @@ class _ToolsPageState extends State<ToolsPage> {
     return Scaffold(
       body: Column(
         children: [
-          ScoriaHeader(
+          MaiaHeader(
             title: 'Tools',
             actions: [
               ShadIconButton.ghost(
@@ -284,7 +284,7 @@ class _ToolsPageState extends State<ToolsPage> {
           ),
           Expanded(
             child: _loading && _catalog == null
-                ? const ScoriaSkeleton()
+                ? const MaiaSkeleton()
                 : ListView(
                     padding: const EdgeInsets.all(16),
                     children: [

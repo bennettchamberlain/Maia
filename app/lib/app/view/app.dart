@@ -16,7 +16,7 @@ class App extends StatelessWidget {
   const new({super.key, this.apiClient, this.prefs});
 
   /// Injected in tests; built from [ServerCubit] otherwise.
-  final ScoriaApiClient? apiClient;
+  final MaiaApiClient? apiClient;
 
   /// Persisted settings (server URL). Null in tests.
   final SharedPreferences? prefs;
@@ -33,22 +33,22 @@ class App extends StatelessWidget {
         builder: (context) {
           final session = context.read<SessionCubit>();
           final server = context.read<ServerCubit>();
-          return RepositoryProvider<ScoriaApiClient>(
+          return RepositoryProvider<MaiaApiClient>(
             create: (_) =>
                 apiClient ??
-                ScoriaApiClient(
+                MaiaApiClient(
                   baseUrl: server.uri,
                   tokenProvider: () => session.token,
                 ),
             child: BlocProvider(
               create: (context) => VoiceCubit(
-                api: context.read<ScoriaApiClient>(),
+                api: context.read<MaiaApiClient>(),
                 prefs: prefs,
               ),
               child: BlocListener<ServerCubit, String>(
                 // Re-point the live client when the user edits the URL.
                 listener: (context, _) =>
-                    context.read<ScoriaApiClient>().baseUrl = server.uri,
+                    context.read<MaiaApiClient>().baseUrl = server.uri,
                 child: const AppView(),
               ),
             ),
@@ -70,12 +70,13 @@ class AppView extends StatelessWidget {
     return ShadApp.custom(
       appBuilder: (context) {
         return MaterialApp(
+          title: 'Maia',
           debugShowCheckedModeBanner: false,
           theme: Theme.of(context),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
           builder: (context, child) => ShadAppBuilder(
-            builder: scoriaMaterialTheme,
+            builder: maiaMaterialTheme,
             child: child,
           ),
           home: status == SessionStatus.authenticated

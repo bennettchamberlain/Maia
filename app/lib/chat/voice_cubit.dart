@@ -119,15 +119,15 @@ class VoiceState extends Equatable {
 /// Local mouth and ears for chat. Thinking stays on Parasail through the API.
 class VoiceCubit extends Cubit<VoiceState> {
   VoiceCubit({
-    required ScoriaApiClient api,
+    required MaiaApiClient api,
     SharedPreferences? prefs,
   }) : _api = api,
        _prefs = prefs,
        super(VoiceState(enabled: prefs?.getBool(_enabledKey) ?? false));
 
-  static const _enabledKey = 'requiem.voice.enabled';
+  static const _enabledKey = 'maia.voice.enabled';
 
-  final ScoriaApiClient _api;
+  final MaiaApiClient _api;
   final SharedPreferences? _prefs;
   SpeechToText? _stt;
   FlutterTts? _tts;

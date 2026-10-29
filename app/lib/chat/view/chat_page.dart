@@ -10,7 +10,7 @@ import 'package:scoria_app/ui/chrome.dart';
 import 'package:scoria_models/scoria_models.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
-/// Chat with the Scoria agent. Phone: list of conversations, tap to open.
+/// Chat with the Maia agent. Phone: list of conversations, tap to open.
 /// Wide: list on the left, conversation on the right.
 class ChatPage extends StatelessWidget {
   const new({super.key});
@@ -19,7 +19,7 @@ class ChatPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final chat = BlocProvider(
       create: (context) => ChatBloc(
-        api: context.read<ScoriaApiClient>(),
+        api: context.read<MaiaApiClient>(),
         provider: () => context.read<ChatSettingsCubit>().state,
       )..add(const ChatStarted()),
       child: const ChatView(),
@@ -30,7 +30,7 @@ class ChatPage extends StatelessWidget {
     } on Object {
       return BlocProvider(
         create: (context) =>
-            VoiceCubit(api: context.read<ScoriaApiClient>()),
+            VoiceCubit(api: context.read<MaiaApiClient>()),
         child: chat,
       );
     }
@@ -48,7 +48,7 @@ class ChatView extends StatelessWidget {
       return const Row(
         children: [
           SizedBox(width: 300, child: _SessionList()),
-          ScoriaDivider.vertical(),
+          MaiaDivider.vertical(),
           Expanded(child: _WideConversation()),
         ],
       );
@@ -76,7 +76,7 @@ class _SessionList extends StatelessWidget {
     return Scaffold(
       body: Column(
         children: [
-          ScoriaHeader(
+          MaiaHeader(
             title: 'Chat',
             actions: [
               ShadIconButton.ghost(
@@ -97,8 +97,8 @@ class _SessionList extends StatelessWidget {
   Widget _list(BuildContext context, ChatState state) {
     return switch (state.status) {
       ChatStatus.initial || ChatStatus.loading when state.sessions.isEmpty =>
-        const ScoriaSkeleton(),
-      ChatStatus.failure when state.sessions.isEmpty => ScoriaFailure(
+        const MaiaSkeleton(),
+      ChatStatus.failure when state.sessions.isEmpty => MaiaFailure(
         message: state.error ?? 'Could not load chats',
         onRetry: () => context.read<ChatBloc>().add(const ChatStarted()),
       ),
@@ -108,7 +108,7 @@ class _SessionList extends StatelessWidget {
             context.read<ChatBloc>().add(const ChatStarted()),
         child: ListView.separated(
           itemCount: state.sessions.length,
-          separatorBuilder: (_, _) => const ScoriaDivider.horizontal(),
+          separatorBuilder: (_, _) => const MaiaDivider.horizontal(),
           itemBuilder: (context, i) {
             final s = state.sessions[i];
             return Dismissible(
@@ -253,7 +253,7 @@ class _ConversationState extends State<_Conversation> {
         return Scaffold(
           body: Column(
             children: [
-              ScoriaHeader(
+              MaiaHeader(
                 title: open?.title ?? 'New chat',
                 leading: widget.showBack
                     ? ShadIconButton.ghost(
@@ -268,7 +268,7 @@ class _ConversationState extends State<_Conversation> {
               Expanded(
                 child:
                     state.status == ChatStatus.loading && state.messages.isEmpty
-                    ? const ScoriaSkeleton()
+                    ? const MaiaSkeleton()
                     : ListView(
                         controller: _scroll,
                         padding: const EdgeInsets.all(12),
@@ -321,8 +321,8 @@ class _ConversationState extends State<_Conversation> {
                                     : partial;
                               }
                               return v.state.enabled
-                                  ? 'Ask Requiem, or speak…'
-                                  : 'Ask Requiem…';
+                                  ? 'Ask Maia, or speak…'
+                                  : 'Ask Maia…';
                             }),
                           ),
                         ),
@@ -517,7 +517,7 @@ class _Hint extends StatelessWidget {
     padding: const EdgeInsets.all(24),
     child: Text(
       'Ask about your memories, places you have been, or anything in the '
-      'world. Requiem searches memory first, then the web. Turn on the '
+      'world. Maia searches memory first, then the web. Turn on the '
       'speaker to hear replies; the mic speaks from this device while '
       'thinking stays on Parasail.',
       textAlign: TextAlign.center,
@@ -543,7 +543,7 @@ class _EmptyConversation extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) =>
-      const ScoriaEmpty('Pick a chat or start a new one.');
+      const MaiaEmpty('Pick a chat or start a new one.');
 }
 
 String _ago(DateTime t) {

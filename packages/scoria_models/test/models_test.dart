@@ -32,7 +32,7 @@ void main() {
       'kind': 'knows',
       'status': 'proposed',
       'source': {'id': 'a', 'name': 'Alex'},
-      'target': {'id': 'b', 'name': 'Scoria'},
+      'target': {'id': 'b', 'name': 'Maia'},
     });
     expect(edge.source?.name, 'Alex');
     expect(GraphEdge.fromJson(edge.toJson()).kind, 'knows');

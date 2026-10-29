@@ -78,7 +78,7 @@ class ChatMessageBody extends StatelessWidget {
             ChatBlock(:final part) => ChatPartView(part),
             ChatBlockPending() => const SizedBox(
               height: 96,
-              child: ScoriaSkeleton(rows: 2),
+              child: MaiaSkeleton(rows: 2),
             ),
           },
           const SizedBox(height: 8),
@@ -104,7 +104,7 @@ class ChatPartView extends StatelessWidget {
         text,
         style: ShadTheme.of(context).textTheme.h4,
       ),
-      ChatDivider() => const ScoriaDivider.horizontal(),
+      ChatDivider() => const MaiaDivider.horizontal(),
       ChatColumn(:final children) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [for (final child in children) ChatPartView(child)],
@@ -123,7 +123,7 @@ class ChatPartView extends StatelessWidget {
         children: [
           for (final child in children) ...[
             ChatPartView(child),
-            const ScoriaDivider.horizontal(),
+            const MaiaDivider.horizontal(),
           ],
         ],
       ),
@@ -286,7 +286,7 @@ class _MapView extends StatelessWidget {
                 TileLayer(
                   urlTemplate:
                       'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.requiem.app',
+                  userAgentPackageName: 'com.maia.app',
                 ),
                 MarkerLayer(
                   markers: [
@@ -786,7 +786,7 @@ class _YouSearchViewState extends State<_YouSearchView> {
       return Text(_error!, style: theme.textTheme.muted);
     }
     if (hits == null) {
-      return const SizedBox(height: 120, child: ScoriaSkeleton(rows: 2));
+      return const SizedBox(height: 120, child: MaiaSkeleton(rows: 2));
     }
     if (hits.isEmpty) {
       return Text('No results.', style: theme.textTheme.muted);

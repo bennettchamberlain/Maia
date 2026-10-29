@@ -17,7 +17,7 @@ class MemoryBloc extends Bloc<MemoryEvent, MemoryState> {
     on<MemoryNoteAdded>(_onNoteAdded);
   }
 
-  final ScoriaApiClient _api;
+  final MaiaApiClient _api;
   final int pageSize;
 
   Future<void> _onFetched(MemoryFetched e, Emitter<MemoryState> emit) async {
@@ -59,7 +59,7 @@ class MemoryBloc extends Bloc<MemoryEvent, MemoryState> {
       final items = [item, ...state.items.where((m) => m.id != item.id)]
         ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
       emit(state.copyWith(items: items, status: MemoryStatus.success));
-    } on ScoriaApiException catch (err) {
+    } on MaiaApiException catch (err) {
       emit(state.copyWith(error: err.message));
     }
   }
@@ -76,7 +76,7 @@ class MemoryBloc extends Bloc<MemoryEvent, MemoryState> {
           clearError: true,
         ),
       );
-    } on ScoriaApiException catch (err) {
+    } on MaiaApiException catch (err) {
       emit(state.copyWith(status: MemoryStatus.failure, error: err.message));
     } on Exception catch (err) {
       emit(state.copyWith(status: MemoryStatus.failure, error: '$err'));

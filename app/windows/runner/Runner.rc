@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.scoria.app" "\0"
+            VALUE "CompanyName", "com.maia.app" "\0"
             VALUE "FileDescription", "scoria_app" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "scoria_app" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.scoria.app. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 com.maia.app. All rights reserved." "\0"
             VALUE "OriginalFilename", "scoria_app.exe" "\0"
-            VALUE "ProductName", "Scoria App" "\0"
+            VALUE "ProductName", "Maia" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

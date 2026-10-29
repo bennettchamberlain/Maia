@@ -13,7 +13,7 @@ class MemoryPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocProvider(
       create: (context) =>
-          MemoryBloc(api: context.read<ScoriaApiClient>())
+          MemoryBloc(api: context.read<MaiaApiClient>())
             ..add(const MemoryFetched()),
       child: const MemoryView(),
     );
@@ -28,7 +28,7 @@ class MemoryView extends StatelessWidget {
     return Scaffold(
       body: Column(
         children: [
-          ScoriaHeader(
+          MaiaHeader(
             title: 'Memory',
             // TODO(scoria): semantic search needs OLLAMA_URL on the server.
             actions: [
@@ -84,9 +84,9 @@ class _MemoryBody extends StatelessWidget {
     switch (state.status) {
       case MemoryStatus.initial:
       case MemoryStatus.loading:
-        return const ScoriaSkeleton();
+        return const MaiaSkeleton();
       case MemoryStatus.failure when state.items.isEmpty:
-        return ScoriaFailure(
+        return MaiaFailure(
           message: state.error ?? 'Could not load memory',
           onRetry: () =>
               context.read<MemoryBloc>().add(const MemoryRefreshed()),
@@ -94,7 +94,7 @@ class _MemoryBody extends StatelessWidget {
       case MemoryStatus.failure:
       case MemoryStatus.success:
         if (state.items.isEmpty) {
-          return const ScoriaEmpty('Nothing here yet.');
+          return const MaiaEmpty('Nothing here yet.');
         }
         return RefreshIndicator(
           onRefresh: () async {
@@ -114,12 +114,12 @@ class _MemoryBody extends StatelessWidget {
             child: ListView.separated(
               physics: const AlwaysScrollableScrollPhysics(),
               itemCount: state.items.length + (state.hasMore ? 1 : 0),
-              separatorBuilder: (_, _) => const ScoriaDivider.horizontal(),
+              separatorBuilder: (_, _) => const MaiaDivider.horizontal(),
               itemBuilder: (context, i) {
                 if (i >= state.items.length) {
                   return const Padding(
                     padding: EdgeInsets.all(16),
-                    child: ScoriaSkeleton(rows: 1),
+                    child: MaiaSkeleton(rows: 1),
                   );
                 }
                 return _MemoryTile(item: state.items[i]);

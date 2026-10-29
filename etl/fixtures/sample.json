@@ -3,7 +3,7 @@
     "messages": [
       {
         "id": "g-alex-1",
-        "subject": "Scoria graph review with Alex",
+        "subject": "Maia graph review with Alex",
         "from": "Alex Chen <alex@example.com>",
         "snippet": "Alex will send the GitHub PR for the weaver before Friday standup.",
         "date": "2026-10-27T16:00:00Z"

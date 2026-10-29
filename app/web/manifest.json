@@ -1,11 +1,11 @@
 {
-    "name": "Scoria App",
-    "short_name": "Scoria App",
+    "name": "Maia",
+    "short_name": "Maia",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "Scoria memory client",
+    "description": "Maia memory client",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

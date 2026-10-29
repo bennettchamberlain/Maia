@@ -81,7 +81,7 @@ void main() {
 
   group('ToolPrefsStore', () {
     test('round-trips a You.com key and disabled tools', () async {
-      final dir = await Directory.systemTemp.createTemp('requiem-secrets');
+      final dir = await Directory.systemTemp.createTemp('maia-secrets');
       addTearDown(() => dir.delete(recursive: true));
       final store = ToolPrefsStore(dir);
       await store.write(

@@ -22,7 +22,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     on<ChatBackToList>((e, emit) => emit(state.copyWith(clearOpen: true)));
   }
 
-  final ScoriaApiClient _api;
+  final MaiaApiClient _api;
   final String Function()? provider;
 
   static EventTransformer<T> _sequential<T>() =>
@@ -237,7 +237,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   }
 
   static String _msg(Exception e) => switch (e) {
-    ScoriaApiException(:final statusCode, :final message) =>
+    MaiaApiException(:final statusCode, :final message) =>
       statusCode == 503
           ? 'No chat model. Set PARASAIL_API_KEY or start Ollama.'
           : message,

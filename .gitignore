@@ -121,7 +121,7 @@ app/linux/flutter/ephemeral/
 app/macos/Flutter/ephemeral/
 schema/.gel/
 
-# Requiem / event local
+# Maia / event local
 .env
 .venv/
 .one/

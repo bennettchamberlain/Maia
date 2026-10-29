@@ -154,7 +154,7 @@ class Config {
   /// Python used to run ETL / weaver jobs.
   final String pythonBin;
 
-  /// Requiem repo root (`etl/` and `swarm/` live here).
+  /// Maia repo root (`etl/` and `swarm/` live here).
   final String? hackathonRoot;
 
   /// PersonaVoice sidecar (PersonaPlex + local STT). Thinking is Parasail.

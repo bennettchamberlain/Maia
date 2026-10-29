@@ -127,7 +127,7 @@ Future<void> main() async {
           model: config.agentModel,
         );
 
-  final app = ScoriaApp(
+  final app = MaiaApp(
     config: config,
     db: db,
     queries: queries,
@@ -138,6 +138,7 @@ Future<void> main() async {
     ollamaChat: ollamaChat,
     agent: gateway,
   );
+  await app.ensureBootstrap();
 
   final server = await io.serve(
     app.handler,
@@ -145,7 +146,7 @@ Future<void> main() async {
     config.port,
   );
   stdout.writeln(
-    'scoria-api on :${server.port} '
+    'maia-api on :${server.port} '
     '(gel=${config.gelDsn}, pgboss=${jobs != null}, '
     'embeddings=${local != null}, cloud=${cloud != null}, '
     'chat=${app.defaultChatLabel}, '

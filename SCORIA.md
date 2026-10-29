@@ -1,9 +1,8 @@
-# Scoria (Requiem)
+# Maia
 
-The product name is **Requiem**: memento mori — twenty-four hours, spend them.
-The codebase is still Scoria.
+The product name is **Maia**.
 
-Scoria is the slim, local-only successor to CI-Server: a Dart server appliance
+Maia is the slim, local-only successor to CI-Server: a Dart server appliance
 in front of **Napalm v2** (a Gel/EdgeDB fork) plus a Flutter client. Napalm owns
 schema, access policies, vectors and files; the Dart side owns what a database
 should not — sign-in, ingest, embeddings, and the PGBoss job runner. No Portal,

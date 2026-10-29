@@ -1,7 +1,7 @@
 /// Error from scoria-api. `statusCode` is the HTTP status; `code` is the
 /// machine-readable error the server returned, when it did.
-class ScoriaApiException implements Exception {
-  const ScoriaApiException(this.statusCode, this.message, {this.code});
+class MaiaApiException implements Exception {
+  const MaiaApiException(this.statusCode, this.message, {this.code});
 
   final int statusCode;
   final String message;
@@ -10,5 +10,5 @@ class ScoriaApiException implements Exception {
   bool get isUnauthorized => statusCode == 401;
 
   @override
-  String toString() => 'ScoriaApiException($statusCode, $code): $message';
+  String toString() => 'MaiaApiException($statusCode, $code): $message';
 }

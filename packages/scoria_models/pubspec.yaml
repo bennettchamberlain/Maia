@@ -1,5 +1,5 @@
 name: scoria_models
-description: Shared Scoria domain models (Person, MemoryItem, JobRecord, Presence)
+description: Shared Maia domain models (Person, MemoryItem, JobRecord, Presence)
 version: 0.1.0+1
 publish_to: none
 

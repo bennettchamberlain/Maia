@@ -14,7 +14,7 @@ class JobsBloc extends Bloc<JobsEvent, JobsState> {
     on<JobsFilterChanged>(_onFilterChanged);
   }
 
-  final ScoriaApiClient _api;
+  final MaiaApiClient _api;
 
   Future<void> _onFetched(JobsFetched e, Emitter<JobsState> emit) async {
     if (state.status == JobsStatus.success) return;
@@ -46,7 +46,7 @@ class JobsBloc extends Bloc<JobsEvent, JobsState> {
           clearError: true,
         ),
       );
-    } on ScoriaApiException catch (err) {
+    } on MaiaApiException catch (err) {
       emit(state.copyWith(status: JobsStatus.failure, error: err.message));
     } on Exception catch (err) {
       emit(state.copyWith(status: JobsStatus.failure, error: '$err'));

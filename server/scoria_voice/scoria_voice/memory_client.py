@@ -1,4 +1,4 @@
-"""Scoria memory for the brain: the same HTTP contract the Flutter app uses."""
+"""Maia memory for the brain: the same HTTP contract the Flutter app uses."""
 
 from __future__ import annotations
 

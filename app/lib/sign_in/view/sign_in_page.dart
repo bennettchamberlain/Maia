@@ -14,7 +14,7 @@ class SignInPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
-      create: (context) => SignInBloc(api: context.read<ScoriaApiClient>()),
+      create: (context) => SignInBloc(api: context.read<MaiaApiClient>()),
       child: const SignInView(),
     );
   }
@@ -38,7 +38,7 @@ class SignInView extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: ShadCard(
-                title: const Text('Requiem'),
+                title: const Text('Maia'),
                 description: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -115,7 +115,7 @@ class _ServerFieldState extends State<_ServerField> {
         const SizedBox(height: 6),
         Text(
           kIsWeb
-              ? 'e.g. localhost:8090 (this Requiem API)'
+              ? 'e.g. localhost:8090 (this Maia API)'
               : 'This phone cannot use localhost. Use the Mac Tailscale '
                     'or Wi-Fi address, e.g. ${AppConfig.apiUrl}',
           style: muted,
@@ -137,7 +137,7 @@ class _HandleField extends StatelessWidget {
         ShadInput(
           key: const Key('signIn_handle_textField'),
           autocorrect: false,
-          placeholder: const Text('Handle'),
+          placeholder: const Text('maia'),
           onChanged: (v) =>
               context.read<SignInBloc>().add(SignInHandleChanged(v)),
         ),
@@ -165,7 +165,7 @@ class _PasswordFieldState extends State<_PasswordField> {
         ShadInput(
           key: const Key('signIn_password_textField'),
           obscureText: _obscure,
-          placeholder: const Text('Password'),
+          placeholder: const Text('maia-admin'),
           onChanged: (v) =>
               context.read<SignInBloc>().add(SignInPasswordChanged(v)),
           onSubmitted: (_) =>

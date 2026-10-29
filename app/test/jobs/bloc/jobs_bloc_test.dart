@@ -5,7 +5,7 @@ import 'package:scoria_api_client/scoria_api_client.dart';
 import 'package:scoria_app/jobs/jobs.dart';
 import 'package:scoria_models/scoria_models.dart';
 
-class _MockApi extends Mock implements ScoriaApiClient;
+class _MockApi extends Mock implements MaiaApiClient;
 
 JobRecord _job(String id, JobState state) => JobRecord(
   id: id,
@@ -55,7 +55,7 @@ void main() {
       'reports failure',
       setUp: () {
         when(() => api.jobs(limit: 200))
-            .thenThrow(const ScoriaApiException(500, 'boom'));
+            .thenThrow(const MaiaApiException(500, 'boom'));
       },
       build: () => JobsBloc(api: api),
       act: (b) => b.add(const JobsFetched()),

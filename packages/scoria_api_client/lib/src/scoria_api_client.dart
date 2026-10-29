@@ -12,8 +12,8 @@ typedef TokenProvider = String? Function();
 ///
 /// The server applies Napalm policies as the signed-in person. This client
 /// only carries the token; it never decides what is visible.
-class ScoriaApiClient {
-  ScoriaApiClient({
+class MaiaApiClient {
+  MaiaApiClient({
     required Uri baseUrl,
     required TokenProvider tokenProvider,
     http.Client? httpClient,
@@ -122,7 +122,7 @@ class ScoriaApiClient {
         query: {'lat': '$lat', 'lng': '$lng'},
       );
       return Place.fromJson(json as Map<String, dynamic>);
-    } on ScoriaApiException catch (e) {
+    } on MaiaApiException catch (e) {
       if (e.statusCode == 404) return null;
       rethrow;
     }
@@ -179,7 +179,7 @@ class ScoriaApiClient {
       final json = await call();
       if (json is! Map<String, dynamic>) return VoiceStatus.unavailable;
       return VoiceStatus.fromJson(json);
-    } on ScoriaApiException catch (e) {
+    } on MaiaApiException catch (e) {
       if (e.statusCode == 404 ||
           e.statusCode == 503 ||
           e.code == 'voice_unavailable') {
@@ -208,7 +208,7 @@ class ScoriaApiClient {
   Future<OneGrant?> oneGrant() async {
     try {
       return OneGrant.fromJson(await _get('/one/grant') as Map<String, dynamic>);
-    } on ScoriaApiException catch (e) {
+    } on MaiaApiException catch (e) {
       if (e.statusCode == 404) return null;
       rethrow;
     }
@@ -274,7 +274,7 @@ class ScoriaApiClient {
     if (res.statusCode != 200) {
       final body = await res.stream.bytesToString();
       final err = body.isEmpty ? null : jsonDecode(body);
-      throw ScoriaApiException(
+      throw MaiaApiException(
         res.statusCode,
         err is Map<String, dynamic>
             ? err['message'] as String? ?? 'chat failed'
@@ -374,7 +374,7 @@ class ScoriaApiClient {
       try {
         body = jsonDecode(r.body);
       } on FormatException {
-        throw ScoriaApiException(
+        throw MaiaApiException(
           r.statusCode,
           r.statusCode >= 200 && r.statusCode < 300
               ? 'Server sent a non-JSON reply.'
@@ -385,7 +385,7 @@ class ScoriaApiClient {
     }
     if (r.statusCode >= 200 && r.statusCode < 300) return body;
     final err = body is Map<String, dynamic> ? body : const <String, dynamic>{};
-    throw ScoriaApiException(
+    throw MaiaApiException(
       r.statusCode,
       err['message'] as String? ?? r.reasonPhrase ?? 'request failed',
       code: err['code'] as String?,

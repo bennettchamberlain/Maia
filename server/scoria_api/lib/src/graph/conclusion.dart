@@ -253,7 +253,7 @@ final _contains = RegExp(
   caseSensitive: false,
 );
 
-/// "Scoria contains the chat harness" is a row, not a guess. The container
+/// "Maia contains the chat harness" is a row, not a guess. The container
 /// is the nearest named thing (or capitalised word) before "contains".
 List<ConcludedEdge> _absorbContainment(
   String memory,

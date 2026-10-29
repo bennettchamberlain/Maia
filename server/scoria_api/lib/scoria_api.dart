@@ -1,4 +1,4 @@
-/// scoria-api: the side-effect plane in front of Napalm.
+/// maia-api: the side-effect plane in front of Napalm.
 ///
 /// Napalm (Gel) owns schema, policies, vectors and files. This process owns
 /// what a database should not: sign-in, session tokens, ingest, embedding

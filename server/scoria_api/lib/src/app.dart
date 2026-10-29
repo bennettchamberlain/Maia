@@ -32,8 +32,8 @@ import 'package:shelf_router/shelf_router.dart';
 /// - machines with an API key (`sk_…`): the OpenClaw memory plugin, scripts;
 /// - `/chat`, which talks to Parasail or local Ollama (OpenClaw optional)
 ///   and runs host tools (memory, graph, You.com) on this process.
-class ScoriaApp {
-  ScoriaApp({
+class MaiaApp {
+  MaiaApp({
     required this.config,
     required this.db,
     required this.queries,
@@ -74,6 +74,56 @@ class ScoriaApp {
   /// credential table on every request.
   final _apiKeyCache = <String, (String, DateTime)>{};
 
+  /// First account on a fresh box. Renames leftover `admin` to `maia`
+  /// and sets password `maia-admin`.
+  Future<void> ensureBootstrap() async {
+    const handle = 'maia';
+    final hash = _password.hash('maia-admin');
+    await db.service.execute(
+      r'''
+      update Person
+      filter .handle = 'admin'
+        and not exists (select Person filter .handle = <str>$handle)
+      set {
+        handle := <str>$handle,
+        display_name := 'Maia',
+        is_superadmin := true,
+      }
+      ''',
+      {'handle': handle},
+    );
+    await db.service.execute(
+      r'''
+      insert Person {
+        handle := <str>$handle,
+        display_name := 'Maia',
+        is_superadmin := true,
+      }
+      unless conflict on .handle
+      ''',
+      {'handle': handle},
+    );
+    await db.service.execute(
+      r'''
+      with p := assert_exists((select Person filter .handle = <str>$handle))
+      insert LocalCredential {
+        person := p,
+        password_hash := <str>$hash,
+      }
+      unless conflict on .person
+      else (
+        update LocalCredential
+        filter .person = p
+        set {
+          password_hash := <str>$hash,
+          rotated_at := datetime_of_statement(),
+        }
+      )
+      ''',
+      {'handle': handle, 'hash': hash},
+    );
+  }
+
   Handler get handler => const Pipeline()
       .addMiddleware(logRequests())
       .addMiddleware(_cors)
@@ -83,7 +133,7 @@ class ScoriaApp {
   static const _corsHeaders = {
     'access-control-allow-origin': '*',
     'access-control-allow-headers':
-        'authorization, content-type, x-api-key, x-scoria-internal',
+        'authorization, content-type, x-api-key, x-maia-internal',
     'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
   };
 
@@ -247,7 +297,8 @@ class ScoriaApp {
   ) {
     return (Request r) async {
       final secret = config.internalSecret;
-      final got = r.headers['x-scoria-internal'];
+      final got =
+          r.headers['x-maia-internal'] ?? r.headers['x-scoria-internal'];
       if (secret == null || got == null || got != secret) {
         return _error(401, 'unauthorized', 'internal secret required');
       }
@@ -846,7 +897,7 @@ class ScoriaApp {
               ? 'Each account comes from your One grant. Disconnect one '
                     'without dropping the others, or add any platform One supports.'
               : 'Sign in with One, then connect Slack, Linear, Gmail, or any '
-                    'other app. Requiem only lists accounts you actually grant.',
+                    'other app. Maia only lists accounts you actually grant.',
         },
         {
           'id': 'parasail',
@@ -1104,7 +1155,7 @@ class ScoriaApp {
         ? ''
         : ' On screen right now, only these parts are visible. Speech may '
               'refer to these titles and must not invent others:\n$shown\n';
-    return 'You are Requiem, $name\'s personal assistant. The day is twenty-four '
+    return 'You are Maia, $name\'s personal assistant. The day is twenty-four '
         'hours; spend them. The signed-in user is "$name" (handle ${person['handle']}). '
         'Current local time: ${now.toIso8601String()} (${now.timeZoneName}). '
         'Tools run as this person on Gel/Napalm: access policies decide what '
@@ -1171,7 +1222,7 @@ class ScoriaApp {
       }),
     ) as List<dynamic>;
     final lines = <String>[
-      '# Scoria memory profile',
+      '# Maia memory profile',
       if (me != null)
         'User: ${me['display_name'] ?? me['handle']} (handle ${me['handle']})',
       'Now: ${DateTime.now().toIso8601String()}',
@@ -1418,7 +1469,7 @@ class ScoriaApp {
             '<!doctype html><meta charset="utf-8"><title>One Connect</title>'
             '<body style="font:16px/1.4 system-ui;max-width:36rem;margin:3rem auto">'
             '<h1>One Connect is not reachable</h1>'
-            '<p>Requiem could not reach the Connect sidecar. '
+            '<p>Maia could not reach the Connect sidecar. '
             'This is not a 8788 link — stay on this host. $e</p></body>',
         headers: const {'content-type': 'text/html; charset=utf-8'},
       );

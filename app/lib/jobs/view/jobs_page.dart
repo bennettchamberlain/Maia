@@ -13,7 +13,7 @@ class JobsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocProvider(
       create: (context) =>
-          JobsBloc(api: context.read<ScoriaApiClient>())
+          JobsBloc(api: context.read<MaiaApiClient>())
             ..add(const JobsFetched()),
       child: const JobsView(),
     );
@@ -28,7 +28,7 @@ class JobsView extends StatelessWidget {
     return const Scaffold(
       body: Column(
         children: [
-          ScoriaHeader(
+          MaiaHeader(
             title: 'Jobs',
             actions: [_RefreshButton()],
           ),
@@ -120,19 +120,19 @@ class _JobsBody extends StatelessWidget {
     switch (state.status) {
       case JobsStatus.initial:
       case JobsStatus.loading:
-        return const ScoriaSkeleton();
+        return const MaiaSkeleton();
       case JobsStatus.failure:
-        return ScoriaFailure(
+        return MaiaFailure(
           message: state.error ?? 'Could not load jobs',
           onRetry: () => context.read<JobsBloc>().add(const JobsRefreshed()),
         );
       case JobsStatus.success:
         if (state.jobs.isEmpty) {
-          return const ScoriaEmpty('No jobs.');
+          return const MaiaEmpty('No jobs.');
         }
         return ListView.separated(
           itemCount: state.jobs.length,
-          separatorBuilder: (_, _) => const ScoriaDivider.horizontal(),
+          separatorBuilder: (_, _) => const MaiaDivider.horizontal(),
           itemBuilder: (context, i) => _JobTile(job: state.jobs[i]),
         );
     }

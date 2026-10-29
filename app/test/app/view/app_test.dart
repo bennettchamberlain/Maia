@@ -7,7 +7,7 @@ import 'package:scoria_app/home/home.dart';
 import 'package:scoria_app/sign_in/sign_in.dart';
 import 'package:scoria_models/scoria_models.dart';
 
-class _MockApi extends Mock implements ScoriaApiClient;
+class _MockApi extends Mock implements MaiaApiClient;
 
 void main() {
   group('App', () {

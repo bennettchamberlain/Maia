@@ -1,8 +1,8 @@
 # scoria-voice
 
-Full-duplex voice for Scoria. [PersonaPlex](https://github.com/NVIDIA/personaplex)
+Full-duplex voice for Maia. [PersonaPlex](https://github.com/NVIDIA/personaplex)
 (NVIDIA's Moshi fork) is the mouth and the ears. Thinking prefers Parasail
-when `PARASAIL_API_KEY` is set, then a local Ollama model. Scoria memory and
+when `PARASAIL_API_KEY` is set, then a local Ollama model. Maia memory and
 the web stay as tools. Flutter chat speaks on the device (mic + TTS) and
 renders generative UI; this sidecar is the room speaker when the engine is on.
 

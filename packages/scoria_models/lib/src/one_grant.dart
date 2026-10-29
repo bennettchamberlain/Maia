@@ -41,7 +41,7 @@ class OneGrant {
   };
 }
 
-/// Result of `POST /one/connect`. `local` means this Requiem recorded the
+/// Result of `POST /one/connect`. `local` means this Maia recorded the
 /// grant and queued ETL (fixtures when One keys are missing). `oauth`
 /// means the client should open [authorizeUrl] on the same API host.
 class OneConnectResult {

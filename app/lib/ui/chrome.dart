@@ -3,7 +3,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 
 /// Bridges leftover Material widgets (scaffold, ink, refresh) onto the
 /// shadcn slate palette. [ShadApp] does not install a `material_ui` theme.
-Widget scoriaMaterialTheme(BuildContext context, Widget? child) {
+Widget maiaMaterialTheme(BuildContext context, Widget? child) {
   final scheme = ShadTheme.of(context).colorScheme;
   return Theme(
     data: ThemeData(
@@ -26,7 +26,7 @@ Widget scoriaMaterialTheme(BuildContext context, Widget? child) {
   );
 }
 
-class ScoriaHeader extends StatelessWidget {
+class MaiaHeader extends StatelessWidget {
   const new({
     super.key,
     required this.title,
@@ -73,7 +73,7 @@ class ScoriaHeader extends StatelessWidget {
   }
 }
 
-class ScoriaDivider extends StatelessWidget {
+class MaiaDivider extends StatelessWidget {
   const new vertical({super.key}) : axis = Axis.vertical;
 
   const new horizontal({super.key}) : axis = Axis.horizontal;
@@ -93,7 +93,7 @@ class ScoriaDivider extends StatelessWidget {
 }
 
 /// shadcn/ui has no Skeleton widget in 0.57. Muted blocks pulse the same way.
-class ScoriaSkeleton extends StatelessWidget {
+class MaiaSkeleton extends StatelessWidget {
   const new({super.key, this.rows = 6});
 
   final int rows;
@@ -132,7 +132,7 @@ class ScoriaSkeleton extends StatelessWidget {
   }
 }
 
-class ScoriaFailure extends StatelessWidget {
+class MaiaFailure extends StatelessWidget {
   const new({super.key, required this.message, required this.onRetry});
 
   final String message;
@@ -165,7 +165,7 @@ class ScoriaFailure extends StatelessWidget {
   }
 }
 
-class ScoriaEmpty extends StatelessWidget {
+class MaiaEmpty extends StatelessWidget {
   const new(this.message, {super.key});
 
   final String message;
