@@ -153,12 +153,18 @@ final class ChatPlace extends ChatPart {
     this.city = '',
     this.region = '',
     this.country = '',
+    this.lat,
+    this.lng,
   });
 
   final String name;
   final String city;
   final String region;
   final String country;
+  final double? lat;
+  final double? lng;
+
+  bool get hasPoint => lat != null && lng != null;
 
   String get line => [
     name,
@@ -168,7 +174,29 @@ final class ChatPlace extends ChatPart {
   ].join(', ');
 
   @override
-  List<Object?> get props => [name, city, region, country];
+  List<Object?> get props => [name, city, region, country, lat, lng];
+}
+
+/// One pin on a [ChatMap]. Coordinates come from the server geocoder.
+final class ChatMapMarker extends Equatable {
+  const new({required this.lat, required this.lng, this.title = ''});
+
+  final double lat;
+  final double lng;
+  final String title;
+
+  @override
+  List<Object?> get props => [lat, lng, title];
+}
+
+/// A map of markers. The chat draws this from stored coordinates.
+final class ChatMap extends ChatPart {
+  const new(this.markers);
+
+  final List<ChatMapMarker> markers;
+
+  @override
+  List<Object?> get props => [markers];
 }
 
 final class ChatPerson extends ChatPart {
@@ -468,7 +496,10 @@ ChatPart? partFromJson(Object? raw) {
       city: textOf('city'),
       region: textOf('region'),
       country: textOf('country'),
+      lat: _asDouble(raw['lat']),
+      lng: _asDouble(raw['lng']),
     ),
+    'map' => ChatMap(_markersOf(raw)),
     'person' || 'entity' => ChatPerson(
       name: textOf('name').isEmpty ? textOf('title') : textOf('name'),
       handle: textOf('handle'),
@@ -541,6 +572,33 @@ ChatGraph _graphFromJson(Map<Object?, Object?> raw) {
   return ChatGraph(nodes: nodes, edges: edges);
 }
 
+double? _asDouble(Object? value) {
+  if (value is num) return value.toDouble();
+  if (value is String) return double.tryParse(value);
+  return null;
+}
+
+List<ChatMapMarker> _markersOf(Map<Object?, Object?> raw) {
+  final items = raw['markers'] ?? raw['points'] ?? raw['children'];
+  if (items is! List) return const [];
+  final markers = <ChatMapMarker>[];
+  for (final item in items) {
+    if (item is! Map) continue;
+    final lat = _asDouble(item['lat'] ?? item['latitude']);
+    final lng = _asDouble(item['lng'] ?? item['lon'] ?? item['longitude']);
+    if (lat == null || lng == null) continue;
+    final title = item['title'] ?? item['name'] ?? '';
+    markers.add(
+      ChatMapMarker(
+        lat: lat,
+        lng: lng,
+        title: title is String ? title : '',
+      ),
+    );
+  }
+  return markers;
+}
+
 String _named(Object? raw) {
   if (raw is String) return raw;
   if (raw is Map && raw['name'] is String) return raw['name']! as String;
@@ -579,6 +637,11 @@ String screenNoteOf(String content) {
         lines.add('memory: $title ($kind)');
       case ChatPlace(:final name):
         lines.add('place: $name');
+      case ChatMap(:final markers):
+        lines.add('map: ${markers.length}');
+        for (final marker in markers.take(6)) {
+          if (marker.title.isNotEmpty) lines.add('marker: ${marker.title}');
+        }
       case ChatPerson(:final name, :final relation):
         lines.add(
           relation.isEmpty ? 'person: $name' : 'person: $name ($relation)',

@@ -217,8 +217,23 @@ class ScoriaApiClient {
   Future<void> oneGrantDelete() => _delete('/one/grant');
 
   /// Connect from the Flutter app. Stays on this API host — no :8788.
-  Future<OneConnectResult> oneConnect() async => OneConnectResult.fromJson(
-    await _post('/one/connect', const {}) as Map<String, dynamic>,
+  Future<OneConnectResult> oneConnect({String? platform}) async =>
+      OneConnectResult.fromJson(
+        await _post('/one/connect', {
+          if (platform != null && platform.isNotEmpty) 'platform': platform,
+        }) as Map<String, dynamic>,
+      );
+
+  /// Start or stop sync for one One platform. An authorize URL means One
+  /// still has to grant that account.
+  Future<OneConnectResult> oneAccount(
+    String platform, {
+    required bool syncing,
+  }) async => OneConnectResult.fromJson(
+    await _post('/one/accounts', {
+      'platform': platform,
+      'syncing': syncing,
+    }) as Map<String, dynamic>,
   );
 
   Future<List<String>> oneSync({List<String>? platforms}) async {

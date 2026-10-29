@@ -105,10 +105,55 @@ ADAPTERS = {
 }
 
 
+def generic(platform: str, payload: Any) -> list[dict[str, Any]]:
+    """Best-effort rows for any One platform that is not specially shaped."""
+    rows = _walk(
+        payload,
+        (
+            "items",
+            "data",
+            "results",
+            "records",
+            "messages",
+            "events",
+            "issues",
+            "nodes",
+            "values",
+        ),
+    )
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        source_id = str(row.get("id") or row.get("gid") or row.get("url") or "")
+        if not source_id:
+            continue
+        title = (
+            row.get("title")
+            or row.get("name")
+            or row.get("summary")
+            or row.get("subject")
+            or platform
+        )
+        body = row.get("body") or row.get("description") or row.get("snippet") or ""
+        out.append(
+            {
+                "kind": "note",
+                "title": str(title),
+                "body": str(body),
+                "occurred_at": _iso(
+                    row.get("updated_at")
+                    or row.get("created_at")
+                    or row.get("date")
+                    or row.get("occurred_at")
+                ),
+                "source": f"one:{platform}",
+                "source_id": source_id,
+            }
+        )
+    return out
+
+
 def normalize(platform: str, payload: Any) -> list[dict[str, Any]]:
-    fn = ADAPTERS.get(platform)
-    if fn is None:
-        raise KeyError(platform)
+    fn = ADAPTERS.get(platform, lambda value: generic(platform, value))
     return fn(payload)
 
 

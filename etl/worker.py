@@ -26,9 +26,6 @@ def main() -> int:
     job = json.load(sys.stdin)
     data = job.get("data") or {}
     platform = data.get("platform")
-    if platform not in INTENTS:
-        print(json.dumps({"error": f"unsupported platform {platform}"}))
-        return 1
 
     base = os.environ.get("SCORIA_API_URL", "http://127.0.0.1:8080").rstrip("/")
     token = str(data.get("token") or os.environ.get("SCORIA_API_TOKEN") or "").strip()
@@ -36,7 +33,7 @@ def main() -> int:
 
     result: dict = {"platform": platform, "upserted": 0}
     try:
-        payload = _pull(platform)
+        payload = _pull(platform, person_id=str(data.get("person_id") or ""))
         memories = normalize(platform, payload)
         with httpx.Client(timeout=30) as http:
             for item in memories:
@@ -73,7 +70,27 @@ def main() -> int:
     return 0
 
 
-def _pull(platform: str) -> object:
+def _pull(platform: str, *, person_id: str) -> object:
+    connect = os.environ.get("CONNECT_URL", "").rstrip("/")
+    if connect and person_id:
+        intent, _task = INTENTS.get(platform, ("list recent records", ""))
+        try:
+            response = httpx.post(
+                f"{connect}/api/one/pull",
+                json={"person": person_id, "platform": platform, "intent": intent},
+                timeout=45,
+            )
+        except httpx.HTTPError:
+            response = None
+        if response is not None and response.status_code == 200:
+            return response.json()
+        if response is not None and response.status_code != 503:
+            detail = response.text
+            if response.headers.get("content-type", "").startswith("application/json"):
+                body = response.json()
+                if isinstance(body, dict) and body.get("error"):
+                    detail = str(body["error"])
+            raise RuntimeError(detail or f"One pull failed ({response.status_code})")
     fixture = os.environ.get("SCORIA_ETL_FIXTURE")
     if fixture:
         data = json.loads(Path(fixture).read_text())
@@ -82,7 +99,10 @@ def _pull(platform: str) -> object:
         return data
     if not os.environ.get("ONE_SECRET") and not os.environ.get("ONE_CONNECTION_KEYS"):
         raise RuntimeError("ONE_SECRET not set; connect One or set SCORIA_ETL_FIXTURE")
-    intent, task = INTENTS[platform]
+    intent, task = INTENTS.get(
+        platform,
+        ("list recent records", f"pull recent {platform} records into memory"),
+    )
     model = os.environ.get("PARASAIL_MODEL", "parasail-glm-53-flash")
     conns = [
         c

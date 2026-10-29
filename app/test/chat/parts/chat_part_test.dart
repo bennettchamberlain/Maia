@@ -144,6 +144,25 @@ Here is the plan.
     });
   });
 
+  test('a map fence keeps each marker', () {
+    const content = '''
+```scoria
+{"type":"map","markers":[{"lat":37.8,"lng":-122.27,"title":"Cafe"},{"latitude":"37.77","longitude":-122.4,"name":"Home"}]}
+```
+''';
+    final map = ((parseChatSegments(content).single as ChatBlock).part)
+        as ChatMap;
+    expect(map.markers, hasLength(2));
+    expect(map.markers.first.title, 'Cafe');
+    expect(map.markers.first.lat, 37.8);
+    expect(map.markers.last.title, 'Home');
+    expect(map.markers.last.lng, -122.4);
+    expect(
+      screenNoteOf(content),
+      'map: 2\nmarker: Cafe\nmarker: Home',
+    );
+  });
+
   test('screenNoteOf lists the parts a reply drew', () {
     const content = '''
 Here is the week.
@@ -204,6 +223,18 @@ Here is the week.
     expect(hits.single.url, 'https://dart.dev');
     expect(hits.single.snippets, ['A snippet']);
     expect(hits.single.pageAge, '2 days ago');
+  });
+
+  testWidgets('a map draws a marker title', (tester) async {
+    await tester.pumpApp(
+      const ChatPartView(
+        ChatMap([
+          ChatMapMarker(lat: 37.8, lng: -122.27, title: 'Cafe'),
+        ]),
+      ),
+    );
+    expect(find.text('Cafe'), findsOneWidget);
+    expect(find.text('© OpenStreetMap'), findsOneWidget);
   });
 
   testWidgets('a card expands its detail in place', (tester) async {

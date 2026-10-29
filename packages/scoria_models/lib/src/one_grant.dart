@@ -50,6 +50,7 @@ class OneConnectResult {
     this.authorizeUrl,
     this.enqueued = const [],
     this.grant,
+    this.message,
   });
 
   factory OneConnectResult.fromJson(Map<String, dynamic> json) =>
@@ -62,14 +63,17 @@ class OneConnectResult {
         grant: json['grant'] == null
             ? null
             : OneGrant.fromJson(json['grant'] as Map<String, dynamic>),
+        message: json['message'] as String?,
       );
 
   final String mode;
   final String? authorizeUrl;
   final List<String> enqueued;
   final OneGrant? grant;
+  final String? message;
 
   bool get isOauth => mode == 'oauth';
+  bool get isUnconfigured => mode == 'unconfigured';
 }
 
 class SyncCursor {

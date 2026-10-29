@@ -139,6 +139,7 @@ class ScoriaApp {
     ..put('/one/grant', _authed(_oneGrantPut))
     ..delete('/one/grant', _authed(_oneGrantDelete))
     ..post('/one/sync', _authed(_oneSync))
+    ..post('/one/accounts', _authed(_oneAccount))
     ..get('/one/cursors', _authed((r, c) => _many(c, 'sync_cursor_list')))
     ..put('/one/cursors', _authed(_syncCursorPut))
     ..post('/internal/one/grant', _internal(_internalGrant))
@@ -786,7 +787,16 @@ class ScoriaApp {
     final grant = grantJson == 'null'
         ? null
         : jsonDecode(grantJson) as Map<String, dynamic>;
-    final oneLive = grant != null && grant['revoked_at'] == null;
+    final oneUser = grant?['one_user_id'] as String? ?? '';
+    final oneLive =
+        grant != null &&
+        grant['revoked_at'] == null &&
+        oneUser.isNotEmpty &&
+        !oneUser.startsWith('local:');
+    final oneReady = await _connectReady();
+    final accounts = oneLive && personId != null
+        ? await _oneAccountView(c, personId, grant!)
+        : const <Map<String, dynamic>>[];
     final youOn = box.webAvailable;
     return _json({
       'default_provider': defaultChatLabel,
@@ -818,18 +828,25 @@ class ScoriaApp {
           'label': 'One Connect',
           'kind': 'oauth',
           'connected': oneLive,
-          'ready': await _connectReady(),
-          'platforms': oneLive
-              ? grant!['platforms']
-              : const <String>[],
-          'connected_at': oneLive ? grant['connected_at'] : null,
+          'ready': oneReady,
+          'platforms': [
+            for (final account in accounts)
+              if (account['syncing'] == true) account['platform'],
+          ],
+          'accounts': accounts,
+          'connected_at': oneLive ? grant!['connected_at'] : null,
           'authorize_url': personId == null
               ? null
               : '/one/authorize?person=$personId',
-          'description': oneLive
-              ? 'Gmail, Calendar, and GitHub are linked. Sync pulls them into memory.'
-              : 'Connect from this app. Requiem talks to the server you already '
-                    'use — the laptop never has to reach :8788.',
+          'description': !oneReady
+              ? 'One Connect is not configured. Create an app at '
+                    'app.withone.ai/developers/connect and set ONE_CLIENT_ID '
+                    'and ONE_CONNECT_KEY. Nothing is linked until you sign in there.'
+              : oneLive
+              ? 'Each account comes from your One grant. Disconnect one '
+                    'without dropping the others, or add any platform One supports.'
+              : 'Sign in with One, then connect Slack, Linear, Gmail, or any '
+                    'other app. Requiem only lists accounts you actually grant.',
         },
         {
           'id': 'parasail',
@@ -1115,7 +1132,9 @@ class ScoriaApp {
         'link(title,url,snippet,detail), image(url,alt), '
         'webSearch(query), speech(text), '
         'memory(id,title,kind,when,body,place), '
-        'place(name,city,region,country), person(name,handle,relation), '
+        'place(name,city,region,country,lat,lng), '
+        'map(markers[{lat,lng,title}]), '
+        'person(name,handle,relation), '
         'quote(text,attribution), metric(value,label,detail), badge(text), '
         'timeline(title,children), checklist(title,items[{text,done}]), '
         'graph(goals,projects,habits,entities,edges), '
@@ -1123,6 +1142,7 @@ class ScoriaApp {
         'Tool results already arrive as these parts; do not repeat a tool '
         'surface unless you are adding a new one. Prefer memory/timeline for '
         'recall, graph for the life graph, link/webSearch for You.com, '
+        'map when several places have coordinates, '
         'checklist for plans, actions to offer a follow-up, speech for a '
         'line the device should say. Spoken text is plain English.';
   }
@@ -1405,31 +1425,26 @@ class ScoriaApp {
     }
   }
 
-  static const _lifePlatforms = ['gmail', 'google-calendar', 'github'];
-
-  /// Flutter calls this on the API host it already talks to. If the One
-  /// sidecar has keys, we return an authorize URL on that same host. If
-  /// not, we record a local grant and queue fixture ETL so the divide
-  /// still works.
+  /// Opens One's hosted page. A [platform] focuses that one connector.
   Future<Response> _oneConnect(Request r, gel.Client c) async {
     final personId = await _personId(c);
     if (personId == null) return _error(401, 'unauthorized', 'no person');
-    if (await _connectReady()) {
+    if (!await _connectReady()) {
       return _json({
-        'mode': 'oauth',
-        'authorize_url': '/one/authorize?person=$personId',
+        'mode': 'unconfigured',
+        'message':
+            'One Connect needs ONE_CLIENT_ID and ONE_CONNECT_KEY from '
+            'app.withone.ai/developers/connect. No accounts are linked yet.',
       });
     }
-    final grantJson = await c.querySingleJSON(queries['one_grant_upsert'], {
-      'one_user_id': 'local:$personId',
-      'space_id': null,
-      'platforms': _lifePlatforms,
-    });
-    await _enqueueEtl(c, personId, _lifePlatforms);
+    final b = await _body(r);
+    final platform = (b['platform'] as String?)?.trim();
+    final focus = platform == null || platform.isEmpty
+        ? ''
+        : '#one_connector=${Uri.encodeComponent(platform)}';
     return _json({
-      'mode': 'local',
-      'grant': jsonDecode(grantJson),
-      'enqueued': _lifePlatforms,
+      'mode': 'oauth',
+      'authorize_url': '/one/authorize?person=$personId$focus',
     });
   }
 
@@ -1475,11 +1490,7 @@ class ScoriaApp {
       'space_id': b['space_id'],
       'platforms': platforms,
     });
-    await _enqueueEtl(
-      c,
-      personId,
-      platforms.isEmpty ? _lifePlatforms : platforms,
-    );
+    await _enqueueEtl(c, personId, platforms);
     return Response.ok(json, headers: _jsonHeaders);
   }
 
@@ -1512,25 +1523,205 @@ class ScoriaApp {
       'space_id': b['space_id'],
       'platforms': platforms,
     });
-    if (personId != null) {
-      await _enqueueEtl(
-        c,
-        personId,
-        platforms.isEmpty ? _lifePlatforms : platforms,
-      );
+    if (personId != null && platforms.isNotEmpty) {
+      await _enqueueEtl(c, personId, platforms);
     }
     return Response.ok(json, headers: _jsonHeaders);
   }
 
   Future<Response> _oneSync(Request r, gel.Client c) async {
-    final b = await _body(r);
-    final platforms = (b['platforms'] as List<dynamic>? ?? _lifePlatforms)
-        .map((e) => e.toString())
-        .toList();
     final personId = await _personId(c);
     if (personId == null) return _error(401, 'unauthorized', 'no person');
+    final b = await _body(r);
+    final requested = b['platforms'] as List<dynamic>?;
+    final platforms = requested == null
+        ? await _syncingPlatforms(c, personId)
+        : requested.map((e) => e.toString()).where((p) => p.isNotEmpty).toList();
+    if (platforms.isEmpty) {
+      return _error(409, 'not_connected', 'no One accounts to sync');
+    }
     await _enqueueEtl(c, personId, platforms);
     return _json({'enqueued': platforms});
+  }
+
+  /// Turn syncing for one platform on or off. Adding a platform One has
+  /// not granted yet returns the hosted connect URL for that connector.
+  Future<Response> _oneAccount(Request r, gel.Client c) async {
+    final personId = await _personId(c);
+    if (personId == null) return _error(401, 'unauthorized', 'no person');
+    final b = await _body(r);
+    final platform = (b['platform'] as String?)?.trim().toLowerCase() ?? '';
+    if (platform.isEmpty) {
+      return _error(400, 'bad_request', 'platform required');
+    }
+    final syncing = b['syncing'] != false;
+    final grant = await _grantMap(c);
+    final oneUser = grant?['one_user_id'] as String? ?? '';
+    final real =
+        grant != null &&
+        grant['revoked_at'] == null &&
+        oneUser.isNotEmpty &&
+        !oneUser.startsWith('local:');
+    final ignored = await _ignoredPlatforms(c);
+    if (!syncing) {
+      ignored.add(platform);
+      await _writeIgnored(c, ignored);
+      if (real) {
+        final platforms = _platformList(grant!['platforms'])..remove(platform);
+        await _saveGrantPlatforms(c, grant!, platforms);
+      }
+      return _json({'ok': true, 'platform': platform, 'syncing': false});
+    }
+    ignored.remove(platform);
+    await _writeIgnored(c, ignored);
+    final live = real ? await _liveOneAccounts(personId) : null;
+    final granted = live?.any((row) => row['platform'] == platform) ?? false;
+    if (!real || !granted) {
+      if (!await _connectReady()) {
+        return _json({
+          'mode': 'unconfigured',
+          'message':
+              'One Connect needs ONE_CLIENT_ID and ONE_CONNECT_KEY before '
+              'a new account can be added.',
+        });
+      }
+      return _json({
+        'mode': 'oauth',
+        'authorize_url':
+            '/one/authorize?person=$personId#one_connector=${Uri.encodeComponent(platform)}',
+      });
+    }
+    final platforms = _platformList(grant!['platforms']);
+    if (!platforms.contains(platform)) platforms.add(platform);
+    await _saveGrantPlatforms(c, grant!, platforms);
+    await _enqueueEtl(c, personId, [platform]);
+    return _json({'ok': true, 'platform': platform, 'syncing': true});
+  }
+
+  Future<List<Map<String, dynamic>>> _oneAccountView(
+    gel.Client c,
+    String personId,
+    Map<String, dynamic> grant,
+  ) async {
+    final ignored = await _ignoredPlatforms(c);
+    final live = await _liveOneAccounts(personId);
+    if (live == null) {
+      return [
+        for (final platform in _platformList(grant['platforms']))
+          if (!ignored.contains(platform))
+            {'platform': platform, 'name': platform, 'syncing': true},
+      ];
+    }
+    return [
+      for (final row in live)
+        {
+          'platform': row['platform'],
+          'name': row['name'] ?? row['platform'],
+          'access': row['access'] ?? '',
+          'syncing': !ignored.contains(row['platform']),
+        },
+    ];
+  }
+
+  Future<List<String>> _syncingPlatforms(gel.Client c, String personId) async {
+    final grant = await _grantMap(c);
+    final oneUser = grant?['one_user_id'] as String? ?? '';
+    if (grant == null ||
+        grant['revoked_at'] != null ||
+        oneUser.isEmpty ||
+        oneUser.startsWith('local:')) {
+      return const [];
+    }
+    final view = await _oneAccountView(c, personId, grant);
+    return [
+      for (final account in view)
+        if (account['syncing'] == true) account['platform'].toString(),
+    ];
+  }
+
+  Future<Map<String, dynamic>?> _grantMap(gel.Client c) async {
+    final raw = await c.querySingleJSON(queries['one_grant_get']);
+    if (raw == 'null') return null;
+    final decoded = jsonDecode(raw);
+    return decoded is Map<String, dynamic> ? decoded : null;
+  }
+
+  List<String> _platformList(Object? raw) => [
+    for (final item in raw is List ? raw : const <Object?>[])
+      if (item != null && item.toString().isNotEmpty) item.toString(),
+  ];
+
+  Future<Set<String>> _ignoredPlatforms(gel.Client c) async {
+    final decoded = jsonDecode(await c.queryJSON(queries['sync_cursor_list']));
+    if (decoded is! List) return {};
+    for (final row in decoded) {
+      if (row is! Map) continue;
+      if (row['platform'] == 'one' && row['endpoint'] == 'ignored') {
+        return _stringSet(row['cursor']);
+      }
+    }
+    return {};
+  }
+
+  Set<String> _stringSet(Object? cursor) {
+    if (cursor is String && cursor.isNotEmpty) {
+      try {
+        return _stringSet(jsonDecode(cursor));
+      } on FormatException {
+        return {};
+      }
+    }
+    if (cursor is List) {
+      return {
+        for (final item in cursor)
+          if (item.toString().isNotEmpty) item.toString(),
+      };
+    }
+    return {};
+  }
+
+  Future<void> _writeIgnored(gel.Client c, Set<String> ignored) async {
+    await c.querySingleJSON(queries['sync_cursor_upsert'], {
+      'platform': 'one',
+      'endpoint': 'ignored',
+      'cursor': jsonEncode(ignored.toList()..sort()),
+      'last_error': null,
+    });
+  }
+
+  Future<void> _saveGrantPlatforms(
+    gel.Client c,
+    Map<String, dynamic> grant,
+    List<String> platforms,
+  ) async {
+    await c.querySingleJSON(queries['one_grant_upsert'], {
+      'one_user_id': grant['one_user_id'],
+      'space_id': grant['space_id'],
+      'platforms': platforms,
+    });
+  }
+
+  Future<List<Map<String, dynamic>>?> _liveOneAccounts(String personId) async {
+    if (!await _connectReady()) return null;
+    try {
+      final res = await http
+          .get(
+            Uri.parse(
+              '${config.connectSidecarUrl}/api/one/connections?person=$personId',
+            ),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return null;
+      final body = jsonDecode(res.body);
+      final rows = body is Map ? body['accounts'] : null;
+      if (rows is! List) return const [];
+      return [
+        for (final row in rows)
+          if (row is Map) Map<String, dynamic>.from(row),
+      ];
+    } on Object {
+      return null;
+    }
   }
 
   Future<Response> _syncCursorPut(Request r, gel.Client c) async {

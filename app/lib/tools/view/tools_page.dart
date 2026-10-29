@@ -89,11 +89,23 @@ class _ToolsPageState extends State<ToolsPage> {
     await _apply(() => _api.putConnection('you', apiKey: key));
   }
 
-  Future<void> _connectOne() async {
+  Future<void> _connectOne({String? platform}) async {
     setState(() => _busy = true);
     try {
-      final result = await _api.oneConnect();
+      final result = await _api.oneConnect(platform: platform);
       if (!mounted) return;
+      if (result.isUnconfigured) {
+        setState(() => _busy = false);
+        ShadToaster.of(context).show(
+          ShadToast.destructive(
+            title: const Text('One Connect'),
+            description: Text(
+              result.message ?? 'One Connect is not configured.',
+            ),
+          ),
+        );
+        return;
+      }
       if (result.isOauth) {
         final url = _absolute(result.authorizeUrl);
         if (url != null) {
@@ -105,16 +117,6 @@ class _ToolsPageState extends State<ToolsPage> {
       await _load();
       if (!mounted) return;
       setState(() => _busy = false);
-      ShadToaster.of(context).show(
-        ShadToast(
-          title: const Text('Connected'),
-          description: Text(
-            result.enqueued.isEmpty
-                ? 'Grant saved on this Requiem.'
-                : 'Syncing ${result.enqueued.join(', ')} into memory.',
-          ),
-        ),
-      );
     } on Exception catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
@@ -125,6 +127,65 @@ class _ToolsPageState extends State<ToolsPage> {
         ),
       );
     }
+  }
+
+  Future<void> _setAccount(String platform, {required bool syncing}) async {
+    setState(() => _busy = true);
+    try {
+      final result = await _api.oneAccount(platform, syncing: syncing);
+      if (!mounted) return;
+      if (result.isUnconfigured || result.isOauth) {
+        setState(() => _busy = false);
+        if (result.isOauth) {
+          final url = _absolute(result.authorizeUrl);
+          if (url != null) {
+            await launchUrl(
+              Uri.parse(url),
+              mode: LaunchMode.externalApplication,
+            );
+          }
+          return;
+        }
+        ShadToaster.of(context).show(
+          ShadToast.destructive(
+            title: const Text('One Connect'),
+            description: Text(result.message ?? 'One Connect is not configured.'),
+          ),
+        );
+        return;
+      }
+      await _load();
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ShadToaster.of(context).show(
+        ShadToast(
+          title: Text(syncing ? 'Syncing $platform' : 'Disconnected $platform'),
+          description: Text(
+            syncing
+                ? 'Requiem will pull this account into memory.'
+                : 'This account stays in One. Requiem will not sync it.',
+          ),
+        ),
+      );
+    } on Exception catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ShadToaster.of(context).show(
+        ShadToast.destructive(
+          title: const Text('One Connect'),
+          description: Text('$e'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _addAccount() async {
+    final platform = await showShadDialog<String>(
+      context: context,
+      builder: (_) => const _AddAccountDialog(),
+    );
+    if (platform == null || platform.isEmpty) return;
+    await _setAccount(platform, syncing: true);
   }
 
   Future<void> _syncOne() async {
@@ -253,7 +314,10 @@ class _ToolsPageState extends State<ToolsPage> {
                               onClearYou: () => _apply(
                                 () => _api.deleteConnection('you'),
                               ),
-                              onConnectOne: _connectOne,
+                              onConnectOne: () => _connectOne(),
+                              onAddAccount: _addAccount,
+                              onAccount: (platform, syncing) =>
+                                  _setAccount(platform, syncing: syncing),
                               onSyncOne: _syncOne,
                               onDisconnectOne: _disconnectOne,
                               onStartVoice: _startVoice,
@@ -325,6 +389,8 @@ class _ConnectionCard extends StatelessWidget {
     required this.onYouKey,
     required this.onClearYou,
     required this.onConnectOne,
+    required this.onAddAccount,
+    required this.onAccount,
     required this.onSyncOne,
     required this.onDisconnectOne,
     required this.onStartVoice,
@@ -335,6 +401,8 @@ class _ConnectionCard extends StatelessWidget {
   final VoidCallback onYouKey;
   final VoidCallback onClearYou;
   final VoidCallback onConnectOne;
+  final VoidCallback? onAddAccount;
+  final void Function(String platform, bool syncing)? onAccount;
   final VoidCallback onSyncOne;
   final VoidCallback onDisconnectOne;
   final VoidCallback onStartVoice;
@@ -366,7 +434,35 @@ class _ConnectionCard extends StatelessWidget {
             const SizedBox(height: 6),
             Text(c.description!, style: theme.textTheme.muted),
           ],
-          if (c.platforms.isNotEmpty) ...[
+          if (c.id == 'one' && c.accounts.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            for (final account in c.accounts) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      account.access.isEmpty
+                          ? account.label
+                          : '${account.label} · ${account.access}',
+                      style: theme.textTheme.small,
+                    ),
+                  ),
+                  Text(
+                    account.syncing ? 'syncing' : 'off',
+                    style: theme.textTheme.muted,
+                  ),
+                  const SizedBox(width: 8),
+                  ShadButton.ghost(
+                    onPressed: onAccount == null
+                        ? null
+                        : () => onAccount!(account.platform, !account.syncing),
+                    child: Text(account.syncing ? 'Disconnect' : 'Resume'),
+                  ),
+                ],
+              ),
+            ],
+          ] else if (c.platforms.isNotEmpty) ...[
             const SizedBox(height: 8),
             Wrap(
               spacing: 6,
@@ -397,11 +493,29 @@ class _ConnectionCard extends StatelessWidget {
                     child: const Text('Use server key'),
                   ),
               ],
-              if (c.id == 'one' && !c.connected)
+              if (c.id == 'one' && !c.ready)
+                ShadButton.outline(
+                  onPressed: busy
+                      ? null
+                      : () => launchUrl(
+                          Uri.parse(
+                            'https://app.withone.ai/developers/connect',
+                          ),
+                          mode: LaunchMode.externalApplication,
+                        ),
+                  child: const Text('Create Connect app'),
+                ),
+              if (c.id == 'one' && c.ready && !c.connected)
                 ShadButton(
                   onPressed: busy ? null : onConnectOne,
-                  child: const Text('Connect accounts'),
+                  child: const Text('Sign in with One'),
                 ),
+              if (c.id == 'one' && c.ready) ...[
+                ShadButton.outline(
+                  onPressed: busy ? null : onAddAccount,
+                  child: const Text('Add account'),
+                ),
+              ],
               if (c.id == 'one' && c.connected) ...[
                 ShadButton.outline(
                   onPressed: busy ? null : onSyncOne,
@@ -409,7 +523,7 @@ class _ConnectionCard extends StatelessWidget {
                 ),
                 ShadButton.ghost(
                   onPressed: busy ? null : onDisconnectOne,
-                  child: const Text('Disconnect'),
+                  child: const Text('Disconnect all'),
                 ),
               ],
               if (c.id == 'voice')
@@ -438,6 +552,84 @@ class _ConnectionCard extends StatelessWidget {
     'voice' => LucideIcons.audioLines,
     _ => LucideIcons.wrench,
   };
+}
+
+class _AddAccountDialog extends StatefulWidget {
+  const _AddAccountDialog();
+
+  @override
+  State<_AddAccountDialog> createState() => _AddAccountDialogState();
+}
+
+class _AddAccountDialogState extends State<_AddAccountDialog> {
+  final _platform = TextEditingController();
+
+  static const _suggestions = [
+    'slack',
+    'linear',
+    'notion',
+    'gmail',
+    'google-calendar',
+    'github',
+    'discord',
+    'hubspot',
+    'stripe',
+  ];
+
+  @override
+  void dispose() {
+    _platform.dispose();
+    super.dispose();
+  }
+
+  void _submit(String raw) {
+    final platform = raw.trim().toLowerCase();
+    if (platform.isEmpty) return;
+    Navigator.of(context).pop(platform);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ShadDialog(
+      title: const Text('Add an account'),
+      description: const Text(
+        'Any One platform slug. One opens that connector on its own. '
+        'The full catalog is at withone.ai/knowledge.',
+      ),
+      actions: [
+        ShadButton.outline(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ShadButton(
+          onPressed: () => _submit(_platform.text),
+          child: const Text('Connect'),
+        ),
+      ],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ShadInput(
+            controller: _platform,
+            placeholder: const Text('slack'),
+            onSubmitted: _submit,
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final platform in _suggestions)
+                ShadButton.outline(
+                  onPressed: () => _submit(platform),
+                  child: Text(platform),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _YouKeyDialog extends StatefulWidget {

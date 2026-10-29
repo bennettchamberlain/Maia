@@ -13,16 +13,30 @@ const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "public"
 
 const userStore = {
   async saveUser(appUserId, oneUser) {
-    await fetch(`${SCORIA}/internal/one/grant`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-scoria-internal": INTERNAL },
-      body: JSON.stringify({
-        person_id: appUserId,
-        one_user_id: oneUser.id || oneUser.oneUserId || String(oneUser),
-        space_id: oneUser.spaceId,
-        platforms: oneUser.platforms || ["gmail", "google-calendar", "github"],
-      }),
-    });
+    const oneUserId = oneUser.id || oneUser.oneUserId || String(oneUser);
+    const spaceId = oneUser.spaceId;
+    const post = (platforms) =>
+      fetch(`${SCORIA}/internal/one/grant`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-scoria-internal": INTERNAL },
+        body: JSON.stringify({
+          person_id: appUserId,
+          one_user_id: oneUserId,
+          space_id: spaceId,
+          platforms,
+        }),
+      });
+    await post(Array.isArray(oneUser.platforms) ? oneUser.platforms : []);
+    if (!connect?.listConnections) return;
+    try {
+      const rows = await connect.listConnections(appUserId);
+      const platforms = [
+        ...new Set(rows.map((row) => row.platform).filter(Boolean)),
+      ];
+      await post(platforms);
+    } catch (err) {
+      console.warn("One listConnections after grant:", err.message);
+    }
   },
   async loadUser(appUserId) {
     const r = await fetch(`${SCORIA}/internal/one/grant`, {
@@ -74,6 +88,81 @@ const server = createServer(async (req, res) => {
   if (url.pathname === "/" || url.pathname === "/index.html") {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end(html);
+    return;
+  }
+  if (url.pathname === "/api/one/connections" && req.method === "GET") {
+    if (!connect) {
+      res.writeHead(503, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "one_unconfigured", accounts: [] }));
+      return;
+    }
+    const person = url.searchParams.get("person");
+    if (!person) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "person required" }));
+      return;
+    }
+    try {
+      const rows = await connect.listConnections(person);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        accounts: rows.map((row) => ({
+          platform: row.platform,
+          name: row.name || row.title || row.platform,
+          access: row.access?.policy || "",
+        })),
+      }));
+    } catch (err) {
+      res.writeHead(502, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: err.message || "list failed" }));
+    }
+    return;
+  }
+  if (url.pathname === "/api/one/pull" && req.method === "POST") {
+    if (!connect) {
+      res.writeHead(503, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "one_unconfigured" }));
+      return;
+    }
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+    const person = body.person;
+    const platform = body.platform;
+    if (!person || !platform) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "person and platform required" }));
+      return;
+    }
+    try {
+      const rows = await connect.listConnections(person);
+      const conn = rows.find((row) => row.platform === platform);
+      if (!conn) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `no grant for ${platform}` }));
+        return;
+      }
+      const intent = body.intent || "list recent records";
+      const actions = await connect.searchActions(person, platform, intent);
+      const action = actions[0];
+      if (!action) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `no action for ${platform}` }));
+        return;
+      }
+      const reply = await connect.runAction(person, {
+        connectionKey: conn.key,
+        actionId: action._id,
+        query: { maxResults: "25" },
+      });
+      res.writeHead(reply.ok ? 200 : reply.status || 502, {
+        "content-type": "application/json",
+      });
+      res.end(JSON.stringify(reply.data ?? { blocked: reply.blockedByGrant }));
+    } catch (err) {
+      res.writeHead(502, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: err.message || "pull failed" }));
+    }
     return;
   }
   if (url.pathname.startsWith("/api/one/")) {

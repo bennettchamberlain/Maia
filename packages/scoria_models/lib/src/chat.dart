@@ -191,6 +191,29 @@ class ChatToolInfo {
   final bool enabled;
 }
 
+class OneAccount {
+  const OneAccount({
+    required this.platform,
+    this.name = '',
+    this.access = '',
+    this.syncing = true,
+  });
+
+  factory OneAccount.fromJson(Map<String, dynamic> json) => OneAccount(
+    platform: json['platform'] as String? ?? '',
+    name: json['name'] as String? ?? '',
+    access: json['access'] as String? ?? '',
+    syncing: json['syncing'] as bool? ?? true,
+  );
+
+  final String platform;
+  final String name;
+  final String access;
+  final bool syncing;
+
+  String get label => name.isEmpty ? platform : name;
+}
+
 class ChatConnection {
   const ChatConnection({
     required this.id,
@@ -200,6 +223,7 @@ class ChatConnection {
     this.description,
     this.authorizeUrl,
     this.platforms = const [],
+    this.accounts = const [],
     this.model,
     this.hasSecret = false,
     this.ready = false,
@@ -216,6 +240,11 @@ class ChatConnection {
     platforms: (json['platforms'] as List<dynamic>? ?? const [])
         .map((e) => e.toString())
         .toList(),
+    accounts: [
+      for (final account in json['accounts'] as List<dynamic>? ?? const [])
+        if (account is Map)
+          OneAccount.fromJson(Map<String, dynamic>.from(account)),
+    ],
     model: json['model'] as String?,
     hasSecret: json['has_secret'] as bool? ?? false,
     ready: json['ready'] as bool? ?? false,
@@ -231,6 +260,7 @@ class ChatConnection {
   final String? description;
   final String? authorizeUrl;
   final List<String> platforms;
+  final List<OneAccount> accounts;
   final String? model;
   final bool hasSecret;
   final bool ready;

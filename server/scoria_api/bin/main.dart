@@ -90,6 +90,7 @@ Future<void> main() async {
           environment: {
             'PYTHONPATH': root,
             'SCORIA_API_URL': 'http://127.0.0.1:${config.port}',
+            'CONNECT_URL': config.connectSidecarUrl,
             if ((oneSecret == null || oneSecret.isEmpty) && fixture.existsSync())
               'SCORIA_ETL_FIXTURE': fixture.path,
           },

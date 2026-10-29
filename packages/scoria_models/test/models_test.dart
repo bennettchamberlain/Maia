@@ -54,6 +54,18 @@ void main() {
     });
     expect(catalog.defaultProvider, 'parasail');
     expect(catalog.tools.single.name, 'memory_search');
+    final one = ChatConnection.fromJson({
+      'id': 'one',
+      'label': 'One Connect',
+      'kind': 'oauth',
+      'connected': true,
+      'accounts': [
+        {'platform': 'slack', 'name': 'Slack', 'syncing': true},
+        {'platform': 'github', 'name': 'GitHub', 'syncing': false},
+      ],
+    });
+    expect(one.accounts.map((a) => a.platform), ['slack', 'github']);
+    expect(one.accounts.last.syncing, isFalse);
     final call = ChatToolCall(
       name: 'now',
       arguments: '{}',

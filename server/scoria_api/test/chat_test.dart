@@ -42,6 +42,25 @@ void main() {
         allOf(contains('"type":"memory"'), contains('Friday standup')),
       );
       expect(
+        ChatToolbox.formatMemories(const [
+          {
+            'id': 'abc',
+            'title': 'Friday standup',
+            'place': {
+              'name': 'Cafe',
+              'city': 'Oakland',
+              'lat': 37.8,
+              'lng': -122.27,
+            },
+          },
+        ]),
+        allOf(
+          contains('"type":"map"'),
+          contains('Cafe'),
+          contains('37.8'),
+        ),
+      );
+      expect(
         ChatToolbox.formatGraph({
           'goals': [
             {'name': 'ship chat', 'why': 'the phone'},

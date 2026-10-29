@@ -194,10 +194,19 @@ class ChatToolbox {
     if (rows.isEmpty) {
       return jsonEncode({'type': 'text', 'text': 'no memories'});
     }
-    return jsonEncode({
+    final timeline = {
       'type': 'timeline',
       'title': 'Memory',
       'children': [for (final row in rows) memoryPart(row)],
+    };
+    final markers = _markers(rows);
+    if (markers.isEmpty) return jsonEncode(timeline);
+    return jsonEncode({
+      'type': 'column',
+      'children': [
+        timeline,
+        {'type': 'map', 'markers': markers},
+      ],
     });
   }
 
@@ -236,12 +245,40 @@ class ChatToolbox {
           'city': place['city'] ?? '',
           'region': place['region'] ?? '',
           'country': place['country'] ?? '',
+          if (_coord(place['lat']) != null) 'lat': _coord(place['lat']),
+          if (_coord(place['lng']) != null) 'lng': _coord(place['lng']),
         },
     };
   }
 
   static String formatMemoryRow(Map<String, dynamic> row) =>
       jsonEncode(memoryPart(row));
+
+  static List<Map<String, dynamic>> _markers(List<Map<String, dynamic>> rows) {
+    final markers = <Map<String, dynamic>>[];
+    final seen = <String>{};
+    for (final row in rows) {
+      final place = row['place'];
+      if (place is! Map) continue;
+      final lat = _coord(place['lat']);
+      final lng = _coord(place['lng']);
+      if (lat == null || lng == null) continue;
+      final key = '${lat.toStringAsFixed(5)},${lng.toStringAsFixed(5)}';
+      if (!seen.add(key)) continue;
+      markers.add({
+        'lat': lat,
+        'lng': lng,
+        'title': '${place['name'] ?? row['title'] ?? ''}',
+      });
+    }
+    return markers;
+  }
+
+  static double? _coord(Object? value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
 
   static String formatGraph(Map<String, dynamic>? g) {
     if (g == null) {

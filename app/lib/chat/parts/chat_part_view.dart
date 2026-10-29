@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:scoria_app/chat/bloc/chat_bloc.dart';
 import 'package:scoria_app/chat/parts/chat_part.dart';
@@ -143,6 +145,7 @@ class ChatPartView extends StatelessWidget {
       final ChatCheck check => _CheckView(check),
       final ChatChecklist list => _ChecklistView(list),
       final ChatGraph graph => _GraphView(graph),
+      final ChatMap map => _MapView(map.markers),
       ChatActions(:final items) => _ActionsView(items),
     };
   }
@@ -243,6 +246,99 @@ class _MemoryView extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _MapView extends StatelessWidget {
+  const _MapView(this.markers);
+
+  final List<ChatMapMarker> markers;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    if (markers.isEmpty) {
+      return Text('no locations', style: theme.textTheme.muted);
+    }
+    final points = [
+      for (final marker in markers) LatLng(marker.lat, marker.lng),
+    ];
+    return SizedBox(
+      height: 220,
+      child: ClipRRect(
+        borderRadius: const BorderRadius.all(Radius.circular(12)),
+        child: Stack(
+          children: [
+            FlutterMap(
+              options: MapOptions(
+                initialCenter: points.first,
+                initialZoom: 13,
+                initialCameraFit: points.length < 2
+                    ? null
+                    : CameraFit.bounds(
+                        bounds: LatLngBounds.fromPoints(points),
+                        padding: const EdgeInsets.all(36),
+                        maxZoom: 14,
+                      ),
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate:
+                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.requiem.app',
+                ),
+                MarkerLayer(
+                  markers: [
+                    for (final marker in markers)
+                      Marker(
+                        point: LatLng(marker.lat, marker.lng),
+                        width: 140,
+                        height: 48,
+                        alignment: Alignment.topCenter,
+                        child: _MapPin(marker.title),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+            Positioned(
+              right: 6,
+              bottom: 4,
+              child: Text(
+                '© OpenStreetMap',
+                style: theme.textTheme.small.copyWith(
+                  color: theme.colorScheme.foreground,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MapPin extends StatelessWidget {
+  const _MapPin(this.title);
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        if (title.isNotEmpty)
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.small,
+          ),
+        Icon(LucideIcons.mapPin, size: 18, color: theme.colorScheme.primary),
+      ],
     );
   }
 }
