@@ -465,7 +465,7 @@ jobs:
           fi
 
       - name: Download ${{ matrix.arch }} images
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: images-${{ matrix.arch }}
           path: ${{ runner.temp }}/images
@@ -595,7 +595,7 @@ jobs:
           fi
 
       - name: Download the per-arch digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: digests-*
           merge-multiple: true
