@@ -1,0 +1,675 @@
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource, QueryRunner } from 'typeorm';
+
+import { LoggerService } from '@ci/common/logging';
+import { countAffected } from '@ci/common/persistence';
+import config from '@ci/configuration';
+
+import { type AskAuditRemoval, removeFromAskAudit } from '../purge/askAudit';
+import { completeImmediateDeletionAudit } from '../purge/deletionAudit';
+import { deleteSoleOwnedObjects, PURGE_OBJECT_STORE, type PurgeObjectStore } from '../purge/objectStore';
+import { expandToPhysicalTables, readFkEdges, readUserRefColumns } from '../purge/purgeCatalog';
+import { buildPurgePlan } from '../purge/purgePlan';
+import {
+  renderBatchedDelete,
+  renderBatchedNull,
+  renderDeleteUser,
+  renderUnbatchedDelete,
+  renderUnbatchedNull,
+} from '../purge/purgeSql';
+import type { PurgePlan, PurgeStep, TableRef } from '../purge/types';
+
+const USERS_TABLE: TableRef = { schema: 'ci', table: 'users' };
+
+/**
+ * Advisory-lock namespace. Two API instances against one appliance database must
+ * not purge the same account concurrently: both would run the same statements,
+ * and the loser would see rows vanish under its batch loop.
+ */
+const ADVISORY_LOCK_NAMESPACE = 'ci.account_purge';
+
+/**
+ * Ceiling on batches per step. A batch that always reports a full page without
+ * making progress would otherwise spin forever; this converts that bug into a
+ * loud failure with the step that caused it.
+ */
+const MAX_BATCHES_PER_STEP = 100_000;
+
+/** Accounts whose deletion grace period has expired and whose purge is unfinished. */
+const DUE_ACCOUNTS_SQL = `
+  SELECT u.id           AS id,
+         u.deleted_at   AS deleted_at,
+         u.purge_after  AS purge_after
+  FROM ci.users u
+  LEFT JOIN ci.account_purges p ON p.user_id = u.id
+  WHERE u.deleted_at IS NOT NULL
+    AND u.purge_after IS NOT NULL
+    AND u.purge_after <= $1
+    AND p.completed_at IS NULL
+    AND (p.next_attempt_after IS NULL OR p.next_attempt_after <= $1)
+  ORDER BY u.purge_after ASC
+  LIMIT $2
+`;
+
+/**
+ * Soft-deleted accounts with no pinned deadline. `requestDeletion` always writes
+ * both columns, so this can only be a row deleted by some other path. The purge
+ * deliberately will not guess a deadline for them — a promise nobody made is not
+ * one to enforce irreversibly — but it does count them, so "nothing is being
+ * purged" never looks like "nothing is due".
+ */
+const UNPINNED_ACCOUNTS_SQL = `
+  SELECT count(*)::int AS count
+  FROM ci.users
+  WHERE deleted_at IS NOT NULL AND purge_after IS NULL
+`;
+
+/**
+ * How long past its deadline an unfinished purge has to be before it is reported
+ * as stalled. A day: long past the 30 s an immediate delete waits and the hourly
+ * retries, short enough that nobody finds out from a person asking why their
+ * address is still taken.
+ */
+export const STALLED_PURGE_AFTER_HOURS = 24;
+
+/** Ended accounts whose purge is due and still unfinished well past its deadline. */
+const STALLED_ACCOUNTS_SQL = `
+  SELECT u.id                 AS user_id,
+         u.purge_after        AS purge_after,
+         p.attempts           AS attempts,
+         p.last_error         AS last_error,
+         p.next_attempt_after AS next_attempt_after,
+         count(*) OVER ()::int AS total
+  FROM ci.users u
+  LEFT JOIN ci.account_purges p ON p.user_id = u.id
+  WHERE u.deleted_at IS NOT NULL
+    AND u.purge_after IS NOT NULL
+    AND u.purge_after <= $1::timestamptz - make_interval(hours => $2::int)
+    AND p.completed_at IS NULL
+  ORDER BY u.purge_after ASC
+  LIMIT 10
+`;
+
+/** An ended account whose purge has not finished long after it was due. */
+export interface StalledPurge {
+  userId: string;
+  purgeAfter: Date;
+  /** Runs that have tried it; 0 when none has started. */
+  attempts: number;
+  /** Why the last run failed, when one did and could record it. */
+  lastError: string | null;
+  nextAttemptAfter: Date | null;
+}
+
+/** {@link AccountPurgeService.findStalledPurges}: how many, and the oldest few. */
+export interface StalledPurgeReport {
+  count: number;
+  oldest: StalledPurge[];
+}
+
+export interface AccountPurgeOutcome {
+  userId: string;
+  status: 'purged' | 'failed' | 'locked';
+  /** Rows removed per schema-qualified table. */
+  deletedRows: Record<string, number>;
+  /**
+   * Rows whose reference to the account was nulled, per table. Deliberately not
+   * folded into {@link deletedRows}: those rows still exist, and this record is
+   * the evidence behind a claim about deletion.
+   */
+  detachedRows: Record<string, number>;
+  deletedObjects: number;
+  /**
+   * The `completed` row this run appended to `ci.data_deletion_audit`, when it
+   * finished an immediate delete (see `completeImmediateDeletionAudit`).
+   */
+  auditId?: string | null;
+  error?: string;
+}
+
+export interface PurgeRunSummary {
+  /** Accounts examined this run. */
+  considered: number;
+  purged: number;
+  failed: number;
+  /** Soft-deleted accounts with no `purge_after`; see {@link UNPINNED_ACCOUNTS_SQL}. */
+  unpinned: number;
+  /** Accounts still unpurged {@link STALLED_PURGE_AFTER_HOURS} after their deadline, after this run. */
+  stalled: number;
+  outcomes: AccountPurgeOutcome[];
+}
+
+/**
+ * Hard-deletes the data of accounts whose deletion grace period has expired.
+ *
+ * This is the half of account deletion that `DELETE /account` promises and does
+ * not do. That endpoint stamps `deleted_at` (which revokes access instantly,
+ * because `@DeleteDateColumn` hides the row from every repository read) and
+ * `purge_after` (the date the data goes). Until this service existed nothing
+ * read `purge_after`, so deletion revoked access and kept the data — a
+ * difference that matters because both app stores' data-deletion disclosures are
+ * statements about the second half, not the first.
+ *
+ * Four properties, in the order they constrain the design:
+ *
+ * - **Batched.** Every delete is `ctid IN (… LIMIT n)`, so no statement locks a
+ *   million-row table. The exception is a compressed hypertable chunk, which
+ *   has no `ctid`: it gets one statement per chunk (see `renderUnbatchedDelete`).
+ * - **Resumable.** Each batch is its own transaction and commits. A crash, a
+ *   restart or a statement timeout costs one batch, not the run.
+ * - **Idempotent.** Every statement is scoped by "belongs to this account", so
+ *   re-running one simply finds nothing. There is no cursor to corrupt.
+ * - **Hypertable-aware.** TimescaleDB targets are expanded to their chunks and
+ *   batched per chunk, because `ctid` is only unique within one physical table.
+ *
+ * The plan itself is derived from the live catalog on every run — see
+ * {@link buildPurgePlan} for why that beats both `ON DELETE CASCADE` and a
+ * hand-written table list.
+ */
+@Injectable()
+export class AccountPurgeService {
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly logger: LoggerService,
+    @Optional() @Inject(PURGE_OBJECT_STORE) private readonly objectStore?: PurgeObjectStore,
+  ) {
+    this.logger.setContext(AccountPurgeService.name);
+  }
+
+  /**
+   * The plan the next purge would follow, without running it.
+   *
+   * Exposed because "what would this delete" is a question worth being able to
+   * answer before an irreversible job answers it in production — and because the
+   * coverage test asserts against it.
+   */
+  async describePlan(): Promise<PurgePlan> {
+    const runner = this.dataSource.createQueryRunner();
+
+    await runner.connect();
+
+    try {
+      return await this.buildPlan(runner);
+    } finally {
+      await runner.release();
+    }
+  }
+
+  /**
+   * Purge every account that is due, up to the configured per-run cap.
+   *
+   * The cap is what keeps a backlog from turning into one enormous run; the cron
+   * simply comes back.
+   */
+  async purgeDueAccounts(now: Date = new Date()): Promise<PurgeRunSummary> {
+    const { maxAccountsPerRun } = config.accountDeletion.purge;
+
+    // Raw SQL, not the repository: `deleted_at` is a @DeleteDateColumn, so every
+    // TypeORM read filters out exactly the rows this job exists to find.
+    const due = (await this.dataSource.query(DUE_ACCOUNTS_SQL, [now, maxAccountsPerRun])) as Array<{
+      id: string;
+      deleted_at: Date;
+      purge_after: Date;
+    }>;
+
+    const [{ count: unpinned }] = (await this.dataSource.query(UNPINNED_ACCOUNTS_SQL)) as Array<{
+      count: number;
+    }>;
+
+    if (unpinned > 0) {
+      this.logger.warn('Soft-deleted accounts without a pinned purge_after are not being purged', {
+        count: unpinned,
+      });
+    }
+
+    const outcomes: AccountPurgeOutcome[] = [];
+
+    for (const account of due) {
+      outcomes.push(await this.purgeAccount(account.id, account.deleted_at, account.purge_after));
+    }
+
+    const stalled = await this.reportStalledPurges(now);
+
+    return {
+      considered: due.length,
+      purged: outcomes.filter((outcome) => outcome.status === 'purged').length,
+      failed: outcomes.filter((outcome) => outcome.status === 'failed').length,
+      unpinned,
+      stalled: stalled.count,
+      outcomes,
+    };
+  }
+
+  /**
+   * Ended accounts whose purge is still unfinished {@link STALLED_PURGE_AFTER_HOURS} after it was
+   * due: the oldest ten, and how many there are.
+   *
+   * A purge that keeps failing retries quietly forever otherwise (an object store that is down, a
+   * foreign key from a row the plan does not reach), and the person's data stays, their address
+   * stays taken, and nothing but `ci.account_purges.last_error` says so.
+   */
+  async findStalledPurges(now: Date = new Date()): Promise<StalledPurgeReport> {
+    const rows = (await this.dataSource.query(STALLED_ACCOUNTS_SQL, [
+      now,
+      STALLED_PURGE_AFTER_HOURS,
+    ])) as Array<{
+      user_id: string;
+      purge_after: Date;
+      attempts: number | null;
+      last_error: string | null;
+      next_attempt_after: Date | null;
+      total: number;
+    }>;
+
+    return {
+      count: rows[0]?.total ?? 0,
+      oldest: rows.map((row) => ({
+        userId: row.user_id,
+        purgeAfter: row.purge_after,
+        attempts: row.attempts ?? 0,
+        lastError: row.last_error,
+        nextAttemptAfter: row.next_attempt_after,
+      })),
+    };
+  }
+
+  /**
+   * {@link findStalledPurges}, logged as an error on every run while any exist, so a stuck
+   * deletion reaches whoever reads the logs instead of waiting to be found in the database.
+   */
+  async reportStalledPurges(now: Date = new Date()): Promise<StalledPurgeReport> {
+    const report = await this.findStalledPurges(now);
+
+    if (report.count > 0) {
+      this.logger.error('Ended accounts are still not purged long after their deadline', {
+        count: report.count,
+        stalledAfterHours: STALLED_PURGE_AFTER_HOURS,
+        oldest: report.oldest,
+      });
+    }
+
+    return report;
+  }
+
+  /**
+   * Purge one account.
+   *
+   * Everything runs on a single dedicated connection so the advisory lock has a
+   * session to live in — but *not* inside a transaction, deliberately: the
+   * batches have to commit as they go or none of the resumability above is real.
+   */
+  async purgeAccount(userId: string, requestedAt: Date, purgeAfter: Date): Promise<AccountPurgeOutcome> {
+    const runner = this.dataSource.createQueryRunner();
+
+    await runner.connect();
+
+    const deletedRows: Record<string, number> = {};
+    const detachedRows: Record<string, number> = {};
+    let deletedObjects = 0;
+
+    try {
+      const [{ locked }] = (await runner.query(
+        `SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS locked`,
+        [ADVISORY_LOCK_NAMESPACE, userId],
+      )) as Array<{ locked: boolean }>;
+
+      if (!locked) {
+        this.logger.warn('Skipping account purge; another worker holds the lock', { userId });
+
+        return { userId, status: 'locked', deletedRows, detachedRows, deletedObjects };
+      }
+
+      try {
+        await this.markStarted(runner, userId, requestedAt, purgeAfter);
+
+        const plan = await this.buildPlan(runner);
+
+        if (plan.warnings.length > 0) {
+          // Refusing to start beats stopping half way: a partial purge leaves an
+          // account both unusable and undeleted, and the next run would have to
+          // reason about which half happened.
+          throw new Error(`Purge plan is not safe to execute: ${plan.warnings.join('; ')}`);
+        }
+
+        this.logger.log('Purging account data', {
+          userId,
+          tables: plan.purgedTables.length,
+          steps: plan.steps.length,
+        });
+
+        // Objects first. If the process dies between the bytes and the rows, the
+        // rows are still there to find the orphaned keys again; the other order
+        // loses the pointer and strands the bytes forever.
+        deletedObjects = await this.purgeObjects(runner, userId);
+
+        // Not in the plan: ci.ask_audit names the account in columns the catalog
+        // walk does not read, and is the other party's record as much as this
+        // one's, so the account is taken out of it rather than its rows purged.
+        const askAudit = await this.purgeAskAudit(runner, userId);
+
+        if (askAudit.deleted > 0) {
+          deletedRows['ci.ask_audit'] = askAudit.deleted;
+        }
+
+        if (askAudit.detached > 0) {
+          detachedRows['ci.ask_audit'] = askAudit.detached;
+        }
+
+        for (const step of plan.steps) {
+          const affected = await this.executeStep(runner, step, userId);
+
+          if (affected > 0) {
+            // A null step does not delete the row, so it is tallied apart from
+            // the deletions. Merging them would inflate the count this record
+            // exists to state precisely.
+            const tally = step.kind === 'null' ? detachedRows : deletedRows;
+            const label = `${step.target.schema}.${step.target.table}`;
+
+            tally[label] = (tally[label] ?? 0) + affected;
+          }
+        }
+
+        const auditId = await this.recordCompletion(
+          runner,
+          userId,
+          deletedRows,
+          detachedRows,
+          deletedObjects,
+        );
+
+        this.logger.log('Account data purged', {
+          userId,
+          deletedObjects,
+          totalRows: Object.values(deletedRows).reduce((sum, count) => sum + count, 0),
+        });
+
+        return { userId, status: 'purged', deletedRows, detachedRows, deletedObjects, auditId };
+      } finally {
+        await runner.query(`SELECT pg_advisory_unlock(hashtext($1), hashtext($2))`, [
+          ADVISORY_LOCK_NAMESPACE,
+          userId,
+        ]);
+      }
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+
+      // Counts included so a partial purge is legible in the log: which tables
+      // were cleared before the failure, and how much of the account is left.
+      this.logger.error('Account purge failed', {
+        error,
+        userId,
+        deletedRows,
+        detachedRows,
+        deletedObjects,
+      });
+
+      // Best-effort. The purge's own connection is the first choice, and a pooled
+      // one the second: a purge whose backend was terminated has a dead runner,
+      // and recording on it alone left `last_error` empty. If the database itself
+      // is down this fails too, and the account is picked up again on the next run.
+      await this.markFailed(runner, userId, error)
+        .catch(() => this.markFailed(this.dataSource, userId, error))
+        .catch(() => undefined);
+
+      return { userId, status: 'failed', deletedRows, detachedRows, deletedObjects, error: error.message };
+    } finally {
+      await runner.release();
+    }
+  }
+
+  private async buildPlan(runner: QueryRunner): Promise<PurgePlan> {
+    const { excludedColumns } = config.accountDeletion.purge;
+
+    const [userColumns, edges] = await Promise.all([
+      readUserRefColumns(runner, USERS_TABLE, excludedColumns),
+      readFkEdges(runner),
+    ]);
+
+    return buildPurgePlan({ userColumns, edges, usersTable: USERS_TABLE });
+  }
+
+  private async executeStep(runner: QueryRunner, step: PurgeStep, userId: string): Promise<number> {
+    const { batchSize } = config.accountDeletion.purge;
+
+    if (step.kind === 'deleteUser') {
+      // One row, and the only statement here that is allowed to fail loudly on a
+      // foreign key: if it does, some table holding this account's rows was not
+      // in the plan, and that is precisely what must not pass silently.
+      return this.runCounting(runner, renderDeleteUser(step.target), [userId]);
+    }
+
+    // A hypertable is batched chunk by chunk; an ordinary table expands to itself.
+    const physical = await expandToPhysicalTables(runner, step.target);
+    let total = 0;
+
+    for (const table of physical) {
+      if (table.compressed) {
+        // No ctid to batch on: one statement for the whole chunk.
+        const sql =
+          step.kind === 'delete'
+            ? renderUnbatchedDelete(table, step.scope)
+            : renderUnbatchedNull(table, step.column, step.scope);
+
+        total += await this.runDecompressing(runner, sql, [userId]);
+
+        continue;
+      }
+
+      const sql =
+        step.kind === 'delete'
+          ? renderBatchedDelete(table, step.scope, batchSize)
+          : renderBatchedNull(table, step.column, step.scope, batchSize);
+
+      total += await this.runBatched(runner, sql, [userId], step.id);
+    }
+
+    return total;
+  }
+
+  /** Repeats one bounded statement until it stops finding rows. */
+  private async runBatched(
+    runner: QueryRunner,
+    sql: string,
+    parameters: unknown[],
+    stepId: string,
+  ): Promise<number> {
+    const { batchSize } = config.accountDeletion.purge;
+    let total = 0;
+
+    for (let batch = 0; batch < MAX_BATCHES_PER_STEP; batch += 1) {
+      const affected = await this.runCounting(runner, sql, parameters);
+
+      total += affected;
+
+      if (affected < batchSize) {
+        return total;
+      }
+    }
+
+    throw new Error(`Purge step ${stepId} exceeded ${MAX_BATCHES_PER_STEP} batches; aborting`);
+  }
+
+  /**
+   * One statement against a compressed chunk, in a transaction of its own with
+   * TimescaleDB's decompression cap lifted.
+   *
+   * The counting wrapper's `RETURNING` makes TimescaleDB decompress every batch
+   * the statement touches, and the default cap
+   * (`timescaledb.max_tuples_decompressed_per_dml_transaction`, 100,000) aborts
+   * it past that. A month of dense GPS history in one `ci.position` chunk is
+   * over the cap, so without this the purge failed on every retry.
+   * `PlaceMergeService` lifts the same cap the same way. The compression policy
+   * recompresses the chunk later.
+   */
+  private async runDecompressing(runner: QueryRunner, sql: string, parameters: unknown[]): Promise<number> {
+    await runner.startTransaction();
+
+    try {
+      await runner.query('SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0');
+
+      const affected = await this.runCounting(runner, sql, parameters);
+
+      await runner.commitTransaction();
+
+      return affected;
+    } catch (err) {
+      if (runner.isTransactionActive) {
+        await runner.rollbackTransaction();
+      }
+
+      throw err;
+    }
+  }
+
+  private async runCounting(runner: QueryRunner, sql: string, parameters: unknown[]): Promise<number> {
+    const rows = (await runner.query(sql, parameters)) as Array<{ count: number | string }>;
+
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  /** {@link removeFromAskAudit}, on a deployment that has the table. */
+  private async purgeAskAudit(runner: QueryRunner, userId: string): Promise<AskAuditRemoval> {
+    const [{ present }] = (await runner.query(
+      `SELECT (to_regclass('ci.ask_audit') IS NOT NULL) AS present`,
+    )) as Array<{ present: boolean }>;
+
+    return present ? removeFromAskAudit(runner, userId) : { deleted: 0, detached: 0 };
+  }
+
+  /** Delete the account's objects from the object store ({@link deleteSoleOwnedObjects}). */
+  private async purgeObjects(runner: QueryRunner, userId: string): Promise<number> {
+    const [{ present }] = (await runner.query(
+      `SELECT (to_regclass('ci.files') IS NOT NULL) AS present`,
+    )) as Array<{ present: boolean }>;
+
+    if (!present) {
+      return 0;
+    }
+
+    if (!this.objectStore) {
+      const [{ count }] = (await runner.query(
+        `SELECT count(*)::int AS count FROM ci.files WHERE user_id = $1 AND key IS NOT NULL`,
+        [userId],
+      )) as Array<{ count: number }>;
+
+      if (count > 0) {
+        // Loud, because this is the one part of a "purged" account that would
+        // otherwise silently survive in a bucket.
+        this.logger.warn('No object store wired into the purge; stored file objects will remain', {
+          userId,
+          objects: count,
+        });
+      }
+
+      return 0;
+    }
+
+    return deleteSoleOwnedObjects(runner, this.objectStore, userId, config.accountDeletion.purge.batchSize);
+  }
+
+  private async markStarted(
+    runner: QueryRunner,
+    userId: string,
+    requestedAt: Date,
+    purgeAfter: Date,
+  ): Promise<void> {
+    await runner.query(
+      `INSERT INTO ci.account_purges (user_id, requested_at, purge_after, started_at, attempts)
+       VALUES ($1, $2, $3, NOW(), 1)
+       ON CONFLICT (user_id) DO UPDATE
+         SET started_at = NOW(),
+             attempts = ci.account_purges.attempts + 1,
+             updated_at = NOW()`,
+      [userId, requestedAt, purgeAfter],
+    );
+  }
+
+  /**
+   * {@link markCompleted}, and the `completed` row of an immediate delete's
+   * audit when this run finished one, in one transaction: the two records of the
+   * same fact never disagree.
+   */
+  private async recordCompletion(
+    runner: QueryRunner,
+    userId: string,
+    deletedRows: Record<string, number>,
+    detachedRows: Record<string, number>,
+    deletedObjects: number,
+  ): Promise<string | null> {
+    await runner.startTransaction();
+
+    try {
+      await this.markCompleted(runner, userId, deletedRows, detachedRows, deletedObjects);
+
+      const auditId = await completeImmediateDeletionAudit(runner, userId, deletedRows);
+
+      await runner.commitTransaction();
+
+      return auditId;
+    } catch (err) {
+      if (runner.isTransactionActive) {
+        await runner.rollbackTransaction();
+      }
+
+      throw err;
+    }
+  }
+
+  private async markCompleted(
+    runner: QueryRunner,
+    userId: string,
+    deletedRows: Record<string, number>,
+    detachedRows: Record<string, number>,
+    deletedObjects: number,
+  ): Promise<void> {
+    // Counted through a CTE for the reason `countingWrapper` in purgeSql.ts
+    // gives: a bare `UPDATE … RETURNING` comes back from TypeORM as the pair
+    // `[rows, rowCount]`, whose length is 2 whether or not the row was found —
+    // which left the check below unable to fire.
+    const updated = await countAffected(
+      runner,
+      `WITH completed AS (
+         UPDATE ci.account_purges
+            SET completed_at = NOW(),
+                deleted_rows = $2::jsonb,
+                detached_rows = $3::jsonb,
+                deleted_objects = $4,
+                last_error = NULL,
+                next_attempt_after = NULL,
+                updated_at = NOW()
+          WHERE user_id = $1
+         RETURNING 1
+       )
+       SELECT count(*)::int AS count FROM completed`,
+      [userId, JSON.stringify(deletedRows), JSON.stringify(detachedRows), deletedObjects],
+    );
+
+    // A purge that cannot record itself has destroyed an account's data and left
+    // no evidence the request was honoured, which is the one outcome worse than
+    // failing. It happened once already: `ci.account_purges.user_id` matched the
+    // user-scoped naming convention, so the purge deleted its own audit row.
+    if (updated === 0) {
+      throw new Error(
+        `Purge of ${userId} completed but its audit record is missing — refusing to report success`,
+      );
+    }
+  }
+
+  private async markFailed(
+    executor: { query(sql: string, parameters?: unknown[]): Promise<unknown> },
+    userId: string,
+    error: Error,
+  ): Promise<void> {
+    const { retryBackoffMinutes } = config.accountDeletion.purge;
+
+    await executor.query(
+      `UPDATE ci.account_purges
+          SET last_error = $2,
+              next_attempt_after = NOW() + ($3 || ' minutes')::interval,
+              updated_at = NOW()
+        WHERE user_id = $1`,
+      [userId, error.message.slice(0, 2000), String(retryBackoffMinutes)],
+    );
+  }
+}

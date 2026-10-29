@@ -1,0 +1,212 @@
+# PowerSync sync rules — what data replicates to each user's on-device SQLite.
+#
+# One bucket per user, scoped by `request.user_id()` (the JWT `sub` set by
+# CI-Server's /api/powersync/token endpoint). Large/server-computed/PII data
+# stays online via GraphQL.
+#
+# NO ROLLING CUTOFF WINDOW. These rules used to narrow notes/messages/threads/
+# files to a rolling working set with `AND updated_at >= COALESCE(
+# bucket.cutoff::timestamptz, '-infinity'::timestamptz)`, cutoff coming from the
+# JWT. That could never load: PowerSync rejected it three ways over, and the last
+# one is not a syntax slip but a constraint the design cannot be written around.
+# Measured against the pinned journeyapps/powersync-service:1.23.0 — each of
+# these exits the container 1 at "Failed to update sync config":
+#
+#   1. `Function 'coalesce' is not defined`     — use `ifnull`, or nothing.
+#   2. `CAST not supported for 'timestamptz'`   — only casts like `::text` work
+#                                                 (see entity_tag's id below).
+#   3. `Cannot use bucket parameters in expressions` — the fatal one. A bucket
+#      parameter may appear ONLY on one side of an equality (`user_id =
+#      bucket.user_id`). Any range comparison is rejected, and so is wrapping it
+#      in a function — `updated_at >= bucket.cutoff` and `ifnull(bucket.cutoff,
+#      '')` both fail. Buckets are keyed sets, so a bucket parameter selects a
+#      set; it cannot bound one. Verified by swapping `>=` for `=`, which starts
+#      cleanly, and back, which does not.
+#
+# So a cutoff cannot filter rows here at all, and the whole per-user working set
+# syncs. To actually bound it, the window has to become something equality can
+# select: a discrete period column on the row, added to POWERSYNC_TABLES and
+# matched with `updated_month = bucket.month`, with the client subscribing to the
+# periods it wants. It must be a PLAIN column the writer maintains — a GENERATED
+# one looks tidier and cannot work, because this publication reports
+# pubgencols='n' and PostgreSQL then never replicates generated columns (the same
+# reason ci.events.duration_minutes could not sync even if selected). That is a
+# schema change, not a sync-rules change, so it is deliberately not attempted
+# here.
+#
+# /api/powersync/token still mints `parameters.cutoff` (PowerSyncTokenService
+# defaults it to 14 days back). Nothing reads it now — it is inert, not wired —
+# and it is left in place because the period-bucketing above would use it. Do not
+# reintroduce it into a WHERE clause expecting it to bite.
+#
+# ONE DEVICE RECORD PER ENTITY (2026-10-21). The phone keeps one row per
+# searchable entity in ci_search.mobile_search_documents — search text plus a
+# `related_id` and a small `detail` JSON of display fields — and reads nothing
+# else for search, the offline Memory list, the offline record page or the
+# on-device model's tool. Notes and saved searches are the exceptions: things the
+# user writes in this app and may edit offline, so they keep their own writable
+# tables. See docs/architecture/mobile-local-search-plan.md, "Revision 2026-10-21".
+#
+# Synced (each has a uuid `id`-aliasable PK + `user_id`):
+#   - ci_search.mobile_search_documents   (id, entity_type, entity_id, title,
+#                            body, occurred_at, related_id, detail — the device
+#                            record; NOT detail_version, user_id, created_at or
+#                            updated_at, see the bucket below)
+#   - ci.notes             (id, title, content, user_id, created_at, updated_at;
+#                            written offline and uploaded by the client connector)
+#   - ci.saved_searches    (id, name, description, query, entity_types, tags,
+#                            filters, is_public, share_token, is_seed, user_id,
+#                            created_at, updated_at; written offline and uploaded
+#                            by the client connector like notes, 2026-10-26)
+#   - ci_search.tags        (id, label, description, user_id, ...)
+#   - ci_search.entity_tag  (id::text AS id, entity_type, entity_id, tag_id,
+#                            created_at — no user_id of its own; scoped via a
+#                            parameter query against its tag's ci_search.tags.user_id,
+#                            see the `entity_tags` bucket below; offline tag filters)
+#
+# NO LONGER synced (2026-10-21): ci.events, ci.entities, ci.files, ci.threads,
+# ci.messages. All five were replicated and never read by any client code: the
+# app read only the search documents and tags. Their content reaches the device
+# as search documents now (an event's end time and place, a file's size and type
+# ... in `detail`). Chat threads keep their search document and summary; the
+# message history of in-app LLM chats is not needed offline.
+#
+# DELIBERATELY NOT synced as full rows (keep online): ci.browser_activity,
+# ci.communications, ci.content, ci.file_chunks, ci.entities/relationships
+# (graph), ci_search.embeddings (pgvector — huge, server-computed), HBPE tables.
+# Communications, content, browser visits (since 2026-10-23: title, url, a
+# description) and parsed-document chunks (since 2026-10-23: section title and
+# the chunk text, cut at 1 KB, pointing at their file) reach the device as
+# search documents; their full rows do not. The list of types that get a
+# document is DEVICE_INDEXED_ENTITIES in search-next/types.ts.
+#
+# The notes below on events/capture lanes and ci.objects describe why those
+# tables could not sync as full rows. They are kept because the reasons still
+# hold for anyone tempted to add them back.
+#
+# An earlier revision of this list justified the first three as "TimescaleDB
+# hypertables ... embeddings". Both halves are false and were checked: only
+# ci.position and hbpe.prediction_log are hypertables, and none of the three has
+# a vector or *embedding* column (event vectors live in ci_search.vectors). The
+# real reasons are below, because they are the ones that decide whether
+# CI-Capture's two event lanes — vizier system-activity snapshots and file-edit
+# events, both POSTed to /v1/events and materialized into ci.events — can ever
+# reach a device. Today they cannot, and it is not a matter of adding a table:
+#
+#   1. The rows are nameless. Migration 20260811061409_convert_events_to_cti
+#      moved title/description off ci.events onto the matching ci.entities row.
+#      A synced event is then event_type plus timestamps with no label. Unlike
+#      ci.objects below this one IS recoverable without a JOIN — ci.entities has
+#      its own owner_user_id, so its Event-typed slice can be synced as a second
+#      table and joined on-device — but that is a second table with its own PII
+#      surface (names, birth dates, geography columns), not a column addition.
+#   2. vizier_patch rows cannot be folded on a device. They are index-based JSON
+#      Patches against a session's base snapshot, and PowerSync gives a client no
+#      ordering or fold primitive; a patch whose base is missing is inert. Sync
+#      cannot fix this — the lane would have to send whole snapshots.
+#   3. Volume is unbounded and cannot be bounded here. ci.events is not a
+#      hypertable, has no retention policy, and is_deleted is a tombstone that
+#      leaves the row. The capture lane alone produces roughly 70k rows/user/year
+#      at the default 300s tick and ~700k at the 30s floor. No cutoff predicate is
+#      expressible (see the header: bucket parameters are equality-only).
+#   4. metadata is the raw capture payload spread verbatim
+#      (BulkIngestController's materialize step), which for a vizier row carries
+#      every on-screen window title, the terminal cwd, and every established TCP
+#      connection with remote address — a machine fingerprint, not the user's own
+#      authored content, and a different class of data from the notes, messages
+#      and file metadata that already sync. It would have to be projected out.
+#
+# Bounding it, if this is ever picked up: the obvious "add a generated
+# updated_month and bucket on equality" does NOT work as stated. This publication
+# reports pubgencols='n', so PostgreSQL does not replicate generated columns at
+# all — a GENERATED period column would never reach the sync service (the same
+# reason ci.events.duration_minutes could never sync). It has to be a plain
+# column maintained by the writer, or the publication has to opt in with
+# `publish_generated_columns`.
+#
+# NOT YET synced — ci.objects: as of migration 20260811061402
+# (convert_inventory_to_cti), ci.objects no longer carries name/description; that
+# text lives on the matching ci.entities row (entities.entity_id = objects.object_id
+# AND entities.entity_type = 'Item'). PowerSync sync rules do not support JOINs in
+# data or parameter queries (docs.powersync.com/sync/supported-sql lists JOINs as
+# unsupported in both), so a nameless object row isn't worth syncing on its own.
+# Do not work around this by denormalizing name/description back onto ci.objects
+# (a trigger/dual-write would fight the CTI migration's whole point) or by
+# publishing a view (logical replication publishes tables only, never views). The
+# documented PowerSync path, if/when this is prioritized, is a Postgres `pg_ivm`
+# incrementally-maintained materialized view joining ci.objects + the Item-typed
+# slice of ci.entities, added as its own real relation to POWERSYNC_TABLES.
+#
+# Adding a table here is only half the change: POWERSYNC_TABLES in
+# infrastructure/setup-database/entrypoint.sh drives both the replication role's
+# SELECT grants and the `powersync` publication. A table listed here but missing
+# there fails at replication time with "permission denied".
+
+bucket_definitions:
+  user_data:
+    # user_id from the token subject. See the header on why there is no cutoff.
+    parameters: SELECT request.user_id() AS user_id
+
+    data:
+      - SELECT id, title, content, user_id, created_at, updated_at
+        FROM ci.notes
+        WHERE user_id = bucket.user_id
+
+      - SELECT id, label, description, user_id, created_at, updated_at, deleted_at
+        FROM ci_search.tags
+        WHERE user_id = bucket.user_id
+
+      # The device record: one row per searchable entity of a device-shown type
+      # (search-next DEVICE_INDEXED_ENTITIES), written beside the tsvector by the
+      # one shared statement in search-ingress VectorService (migrations
+      # 20261019212935, 20261021203300). The device builds its own FTS5 index
+      # over title/body (frontend api/powersync/searchIndex.ts), answers search
+      # from it when the appliance is unreachable, and renders the offline record
+      # page from the rest:
+      #   related_id  the row it belongs with (a message's conversation as a
+      #               uuid v5 — the raw thread id never leaves the server; a
+      #               sub-event's parent; a file's parent ...)
+      #   detail      jsonb of per-type display fields; arrives as JSON text
+      #               (PowerSync sends json/jsonb as their text form; there is
+      #               no nested-object type on the wire).
+      # NOT selected: detail_version (the server's refresh bookkeeping), and
+      # user_id / created_at / updated_at. The device never stored those three
+      # (the replica is one user's, wiped on sign-out), but every synced column
+      # is kept twice on the phone — in the row and in PowerSync's oplog copy —
+      # and the three cost ~50 MB of oplog JSON over 589k rows (measured
+      # 2026-10-22). The WHERE below still filters on user_id; a filter column
+      # need not be selected.
+      #
+      # Deliberately no window: 600k rows of names and snippets are ~25 MB of
+      # text, and a search that silently stops at 30 days is worse than none.
+      # Deletes propagate through the vectors FK (ON DELETE CASCADE) — a row
+      # that leaves this table leaves every device.
+      - SELECT id, entity_type, entity_id, title, body, occurred_at,
+               related_id, detail
+        FROM ci_search.mobile_search_documents
+        WHERE user_id = bucket.user_id
+      # The second thing a person authors in this app and may edit offline (see the
+      # notes above): a saved search is a name plus the filter set the offline Memory
+      # list already applies. Arrays and the filters JSON arrive on the device as JSON
+      # text, booleans as 0/1. The sharing posture columns (share_max_disclosure,
+      # share_expires_at) stay server-side: sharing is managed online only; is_public
+      # and share_token come down so the row's badge and its existing link render.
+      - SELECT id, name, description, query, entity_types, tags, filters,
+               is_public, share_token, is_seed, user_id, created_at, updated_at
+        FROM ci.saved_searches
+        WHERE user_id = bucket.user_id
+
+  # entity_tag has no user_id of its own — it is owned transitively via the tag it
+  # points at. Sync rules don't support JOINs (see header comment), so this follows
+  # PowerSync's documented many-to-many pattern: a parameter query picks the
+  # caller's own tag_ids from ci_search.tags, and the data query filters
+  # entity_tag rows by bucket.tag_id — one bucket instance per tag the user owns.
+  entity_tags:
+    parameters: SELECT id AS tag_id FROM ci_search.tags WHERE user_id = request.user_id()
+
+    data:
+      # id is BIGINT GENERATED ALWAYS AS IDENTITY — cast to text for PowerSync's
+      # required text `id` column.
+      - SELECT id::text AS id, entity_type, entity_id, tag_id, created_at
+        FROM ci_search.entity_tag
+        WHERE tag_id = bucket.tag_id

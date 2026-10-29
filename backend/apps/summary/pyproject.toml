@@ -1,0 +1,62 @@
+# Workspace member. Dependencies resolve through the single uv.lock at the
+# repo root, not a lock of this service's own. See the root pyproject.toml
+# for the naming and layout conventions.
+
+[project]
+name = "ci-summary"
+version = "0.1.0"
+description = "CI-Summary: Summarization service driven by the pg-boss function runner"
+requires-python = ">=3.11"
+dependencies = [
+    # Database
+    "psycopg2-binary",
+    "sqlalchemy",
+    "asyncpg",
+
+    # LLM Integration
+    "pydantic-ai",
+    "httpx",
+
+    # Function-runner callback auth — self-sign service JWTs with the shared
+    # secret (same pattern as ci-hbpe's graphql_client).
+    "PyJWT>=2.13.0",
+
+    # Environment & Configuration
+    "python-dotenv",
+    "pydantic",
+    "pydantic-settings",
+
+    # Utilities
+    "python-dateutil",
+    "pytz",
+    "tenacity",
+    "nest-asyncio",
+
+    # Logging
+    "structlog",
+
+    # Error reporting — shared with ci-hbpe; brings sentry-sdk with it.
+    "ci-telemetry",
+
+    # API / HTTP
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+
+    # Document parsing
+    "markitdown[all]",
+]
+
+# The test runner and linters come from the root workspace dev group, so
+# they are not repeated here.
+
+[tool.uv.sources]
+ci-telemetry = { workspace = true }
+
+[tool.uv.build-backend]
+module-name = "ci.summary"
+namespace = true
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"

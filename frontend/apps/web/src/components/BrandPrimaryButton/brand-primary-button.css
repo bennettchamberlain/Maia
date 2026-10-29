@@ -1,0 +1,32 @@
+/**
+ * Companion phthalo CTA — shared with the global primary button surface.
+ *
+ * The gradient, foreground and hover gradient are the canon button tokens
+ * (@companionintelligence/tokens) and the Server override in styles/index.css;
+ * only the hover glow is this component's own, so only it is declared here,
+ * under the --server-* prefix (the --ci-* namespace is reserved for canon).
+ */
+:root {
+  --server-brand-btn-shadow-hover: 0 4px 16px color-mix(in srgb, var(--phthalo-deep) 42%, transparent);
+}
+
+.dark {
+  --server-brand-btn-shadow-hover: 0 4px 16px color-mix(in srgb, var(--aqua-light) 35%, transparent);
+}
+
+button.ci-brand-btn-primary[data-slot='button'],
+button.ci-brand-btn-primary.ci-primary-surface[data-slot='button'] {
+  background-color: var(--ci-phthalo-green) !important;
+  background-image: var(--gradient-button) !important;
+  border-color: transparent !important;
+  color: var(--ci-button-foreground) !important;
+  box-shadow: none !important;
+}
+
+button.ci-brand-btn-primary[data-slot='button']:hover,
+button.ci-brand-btn-primary.ci-primary-surface[data-slot='button']:hover {
+  background-color: var(--phthalo-hover) !important;
+  background-image: var(--server-gradient-button-hover) !important;
+  color: var(--ci-button-foreground) !important;
+  box-shadow: var(--server-brand-btn-shadow-hover) !important;
+}

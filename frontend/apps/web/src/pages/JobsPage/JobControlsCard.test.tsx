@@ -1,0 +1,419 @@
+import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+
+import { renderWithProviders } from '@/test/renderWithProviders';
+
+import { JobControlsCard } from './JobControlsCard';
+import type { JobControlsResponse, JobCronControl, JobQueueControl } from './useJobControls';
+
+/**
+ * The Controls card.
+ *
+ * Every switch here makes the appliance do less, and "does less" and "is broken"
+ * look identical from the outside — so the properties worth pinning are the ones
+ * that keep a deliberate choice from reading as a fault, and the ones that keep
+ * an operator from picking the destructive option by accident:
+ *
+ *  1. **A switched-off queue says what it cost.** Not a greyed-out row: the
+ *     number of jobs dropped, because a queue silently evaporating work looks
+ *     exactly like a quiet queue on the dashboard above it.
+ *  2. **Off and paused are told apart.** Paused loses nothing; off drops work.
+ *     A card that rendered them the same way would be the most dangerous thing
+ *     on the page.
+ *  3. **The numbers shown are what the appliance will DO.** A cap of 8 on a
+ *     queue whose code declares 1 has to say 1.
+ *  4. **A protected job cannot be switched off from here**, and says why.
+ */
+
+function queue(overrides: Partial<JobQueueControl> = {}): JobQueueControl {
+  return {
+    name: 'search-index',
+    mode: 'enabled',
+    pausedByGlobal: false,
+    concurrency: { value: null, default: 6, max: 6, effective: 6 },
+    declaredConcurrency: null,
+    role: 'web',
+    interactive: false,
+    categories: ['search'],
+    jobTypes: [
+      {
+        event: 'note.created',
+        label: 'Index a new note',
+        category: 'search',
+        description: 'Make a new note findable.',
+      },
+    ],
+    locked: false,
+    lockedReason: null,
+    skippedCount: 0,
+    lastSkippedAt: null,
+    ...overrides,
+  };
+}
+
+function cron(overrides: Partial<JobCronControl> = {}): JobCronControl {
+  return {
+    name: 'PlanningJobsCron.todoScan',
+    cron: '0 */30 * * * *',
+    mode: 'enabled',
+    role: 'web',
+    servedHere: true,
+    locked: false,
+    lockedReason: null,
+    skippedCount: 0,
+    lastSkippedAt: null,
+    ...overrides,
+  };
+}
+
+function controls(overrides: Partial<JobControlsResponse> = {}): JobControlsResponse {
+  return {
+    global: {
+      // `max` mirrors `default` on the two global numbers: these controls only
+      // go down, so the shipped figure is also the ceiling.
+      concurrency: { value: null, default: 10, max: 10, effective: 10 },
+      perQueueConcurrency: { value: null, default: 6, max: 6, effective: 6 },
+      nonInteractive: 'enabled',
+    },
+    topology: { role: 'all', queueWorkerProcesses: 1, perProcessConcurrency: 10 },
+    queues: [queue()],
+    crons: [cron()],
+    maxConcurrency: 64,
+    ...overrides,
+  };
+}
+
+function renderCard(
+  response: JobControlsResponse | null,
+  onSave = vi.fn(async () => true),
+  failure: { error?: string | null; errorStatus?: number | null } = {},
+) {
+  renderWithProviders(
+    <JobControlsCard
+      controls={response}
+      loading={false}
+      saving={false}
+      error={failure.error ?? null}
+      errorStatus={failure.errorStatus ?? null}
+      onSave={onSave}
+    />,
+  );
+
+  return { onSave };
+}
+
+/** The queues and schedules live behind disclosures so the card is not a wall. */
+function openSection(name: RegExp) {
+  fireEvent.click(screen.getByRole('button', { name }));
+}
+
+describe('JobControlsCard global controls', () => {
+  it('offers pausing background work, and says nothing is lost', () => {
+    renderCard(controls());
+
+    expect(screen.getByLabelText('Pause background work')).toBeInTheDocument();
+    expect(screen.getByText(/Nothing is lost/)).toBeInTheDocument();
+  });
+
+  it('pauses rather than disabling when the switch is flipped', async () => {
+    const { onSave } = renderCard(controls());
+
+    fireEvent.click(screen.getByLabelText('Pause background work'));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave).toHaveBeenCalledWith({ global: { nonInteractive: 'paused' } });
+  });
+
+  it('says where the appliance cap lands when there is more than one worker process', () => {
+    renderCard(
+      controls({
+        global: {
+          concurrency: { value: 12, default: 20, max: 64, effective: 12 },
+          perQueueConcurrency: { value: null, default: 6, max: 64, effective: 6 },
+          nonInteractive: 'enabled',
+        },
+        topology: { role: 'web', queueWorkerProcesses: 2, perProcessConcurrency: 6 },
+      }),
+    );
+
+    // The global semaphore is per-process, so a cap of 12 on a split deployment
+    // is 6 per process. A control that did not say so would be describing a
+    // different appliance from the one enforcing it.
+    expect(screen.getByText(/Split across 2 worker processes/)).toBeInTheDocument();
+    expect(screen.getByText(/each gets 6/)).toBeInTheDocument();
+  });
+
+  it('says that the Hub CPU limit is a different ceiling, not a substitute', () => {
+    renderCard(controls());
+
+    expect(screen.getByText(/caps the/)).toHaveTextContent(/caps the queue.*Hub.*caps the container/i);
+  });
+
+  it('commits a typed concurrency on blur, not on every keystroke', async () => {
+    const { onSave } = renderCard(controls());
+
+    const input = screen.getByLabelText('Jobs at once, whole appliance');
+
+    fireEvent.change(input, { target: { value: '4' } });
+    expect(onSave).not.toHaveBeenCalled();
+
+    fireEvent.blur(input);
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith({ global: { concurrency: 4 } }));
+  });
+
+  it('resyncs the field to the stored value when the appliance rejects the save', async () => {
+    // The only re-sync path is a `useEffect` keyed on `control.value`, which by
+    // definition does not change when the save is refused or the request
+    // fails — so a discarded `false` used to leave the rejected number sitting
+    // in the box looking exactly like it had been stored.
+    const onSave = vi.fn(async () => false);
+
+    const { onSave: usedOnSave } = renderCard(
+      controls({
+        global: {
+          concurrency: { value: 4, default: 10, max: 64, effective: 4 },
+          perQueueConcurrency: { value: null, default: 6, max: 64, effective: 6 },
+          nonInteractive: 'enabled',
+        },
+      }),
+      onSave,
+    );
+
+    const input = screen.getByLabelText('Jobs at once, whole appliance');
+
+    fireEvent.change(input, { target: { value: '100' } });
+    fireEvent.blur(input);
+
+    await waitFor(() => expect(usedOnSave).toHaveBeenCalledWith({ global: { concurrency: 100 } }));
+
+    // The appliance never accepted 100 — it is still at 4, and the field has
+    // to say so rather than keep showing the rejected input.
+    await waitFor(() => expect(input).toHaveValue(4));
+  });
+
+  it('treats an emptied box as a reset to the shipped default', async () => {
+    const { onSave } = renderCard(
+      controls({
+        global: {
+          concurrency: { value: 4, default: 10, max: 64, effective: 4 },
+          perQueueConcurrency: { value: null, default: 6, max: 64, effective: 6 },
+          nonInteractive: 'enabled',
+        },
+      }),
+    );
+
+    const input = screen.getByLabelText('Jobs at once, whole appliance');
+
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.blur(input);
+
+    // Clearing the box IS the reset — there is no separate control to hunt for,
+    // and null has to reach the server as a real value rather than as "unchanged".
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith({ global: { concurrency: null } }));
+  });
+});
+
+describe('JobControlsCard queues', () => {
+  it('says what is on a queue before asking anyone to switch it off', () => {
+    renderCard(controls());
+    openSection(/Queues/);
+
+    expect(screen.getByText(/Index a new note/)).toBeInTheDocument();
+  });
+
+  it('reports how much work a disabled queue has dropped', () => {
+    renderCard(
+      controls({
+        queues: [queue({ mode: 'disabled', skippedCount: 12340, lastSkippedAt: '2026-09-01T14:02:00.000Z' })],
+      }),
+    );
+    openSection(/Queues/);
+
+    expect(screen.getByText(/new work for this queue is dropped, not queued/i)).toBeInTheDocument();
+    expect(screen.getByText(/12,340 jobs dropped/)).toBeInTheDocument();
+  });
+
+  it('describes a paused queue as keeping its work, not losing it', () => {
+    renderCard(controls({ queues: [queue({ mode: 'paused' })] }));
+    openSection(/Queues/);
+
+    expect(screen.getByText(/jobs are queuing up and nothing is being worked/i)).toBeInTheDocument();
+    expect(screen.queryByText(/dropped, not queued/i)).not.toBeInTheDocument();
+  });
+
+  it('points at the global switch when that is what stopped the queue', () => {
+    renderCard(
+      controls({
+        global: {
+          concurrency: { value: null, default: 10, max: 64, effective: 10 },
+          perQueueConcurrency: { value: null, default: 6, max: 64, effective: 6 },
+          nonInteractive: 'paused',
+        },
+        queues: [queue({ mode: 'paused', pausedByGlobal: true })],
+      }),
+    );
+    openSection(/Queues/);
+
+    // Which switch to flip to bring it back is a different answer than for a
+    // queue the operator paused by name, so the row names the global control
+    // instead of just saying "paused".
+    expect(screen.getByText(/will run when you switch that back/)).toBeInTheDocument();
+  });
+
+  it('sends the chosen mode for the queue that was clicked', async () => {
+    const { onSave } = renderCard(controls());
+
+    openSection(/Queues/);
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({ queues: [{ name: 'search-index', mode: 'paused' }] }),
+    );
+  });
+
+  it('will not let a protected queue be switched off', () => {
+    renderCard(
+      controls({
+        queues: [
+          queue({
+            name: 'dead-letter',
+            locked: true,
+            lockedReason: 'Where jobs that exhausted their retries are kept.',
+          }),
+        ],
+      }),
+    );
+    openSection(/Queues/);
+
+    expect(screen.getByRole('button', { name: 'Off' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeDisabled();
+    expect(screen.getByTitle(/exhausted their retries/)).toBeInTheDocument();
+  });
+
+  it('shows a code-declared ceiling as a fixed number rather than an editable box', () => {
+    renderCard(
+      controls({
+        queues: [
+          queue({
+            name: 'llm',
+            interactive: true,
+            declaredConcurrency: 1,
+            concurrency: { value: null, default: 1, max: 1, effective: 1 },
+          }),
+        ],
+      }),
+    );
+    openSection(/Queues/);
+
+    // An editable box here would be a control that silently does nothing: the
+    // declaration wins over whatever is typed.
+    expect(screen.queryByLabelText('llm concurrency')).not.toBeInTheDocument();
+    expect(screen.getByTitle(/declares a ceiling of 1 in code/)).toBeInTheDocument();
+  });
+
+  it('warns when a saved cap is not the number actually in force', () => {
+    renderCard(
+      controls({
+        queues: [queue({ concurrency: { value: 8, default: 6, max: 6, effective: 6 } })],
+      }),
+    );
+    openSection(/Queues/);
+
+    expect(screen.getByText(/Running at 6 — a lower ceiling applies/)).toBeInTheDocument();
+  });
+});
+
+describe('JobControlsCard concurrency ceilings', () => {
+  it('offers the shipped figure as the highest value either box will take', () => {
+    renderCard(controls());
+
+    // Both boxes used to carry max=64 against a shipped 10 and 6, so the page
+    // invited an operator to take the appliance six times past what the build
+    // allows — from the page they opened because it was already too hot.
+    expect(screen.getByLabelText(/Jobs at once, whole appliance/i)).toHaveAttribute('max', '10');
+    expect(screen.getByLabelText(/Jobs at once, per queue/i)).toHaveAttribute('max', '6');
+  });
+
+  it('says in words that the numbers only go down', () => {
+    renderCard(controls());
+
+    expect(screen.getByText(/only go/i)).toBeInTheDocument();
+    expect(screen.getByText(/10 appliance-wide and 6 per queue/)).toBeInTheDocument();
+  });
+
+  it('reports a stored value the appliance is not honouring', () => {
+    // A row can hold a number above the ceiling — written by an older build, or
+    // by hand — so the card has to show the disagreement rather than the request.
+    renderCard(
+      controls({
+        global: {
+          concurrency: { value: 64, default: 10, max: 10, effective: 10 },
+          perQueueConcurrency: { value: null, default: 6, max: 6, effective: 6 },
+          nonInteractive: 'enabled',
+        },
+      }),
+    );
+
+    expect(screen.getByText(/Running at 10 — a lower ceiling applies/)).toBeInTheDocument();
+  });
+});
+
+describe('JobControlsCard degradation', () => {
+  it('explains itself rather than rendering an empty form', () => {
+    renderCard(null);
+
+    expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument();
+    expect(screen.getByText(/shipped defaults/)).toBeInTheDocument();
+  });
+
+  // The card used to print ONE fixed sentence blaming an unmigrated settings
+  // table, whatever had actually gone wrong — so an appliance running a build
+  // from before job controls shipped was told to go and check its migrations.
+  // A 404 and a 500 need opposite actions.
+  it('blames the build, not the migrations, when the endpoint is not there', () => {
+    renderCard(
+      null,
+      vi.fn(async () => true),
+      {
+        error: 'Cannot GET /jobs/controls',
+        errorStatus: 404,
+      },
+    );
+
+    expect(screen.getByText(/before job controls shipped/i)).toBeInTheDocument();
+    expect(screen.getByText(/Update the server and restart it/i)).toBeInTheDocument();
+    expect(screen.queryByText(/may not have been migrated/i)).not.toBeInTheDocument();
+  });
+
+  it('blames the migration only when the endpoint answered and failed', () => {
+    renderCard(
+      null,
+      vi.fn(async () => true),
+      {
+        error: 'relation "ci.job_settings" does not exist',
+        errorStatus: 500,
+      },
+    );
+
+    expect(screen.getByText(/may not have been migrated/i)).toBeInTheDocument();
+    expect(screen.queryByText(/before job controls shipped/i)).not.toBeInTheDocument();
+  });
+
+  // A raw server string in a red alert reads as "you broke something". The
+  // section being empty is a STATE; the alert is reserved for a save that
+  // failed, which is the only thing here the operator actually did.
+  it('keeps the server text as a detail rather than a red alert when nothing loaded', () => {
+    renderCard(
+      null,
+      vi.fn(async () => true),
+      {
+        error: 'Cannot GET /jobs/controls',
+        errorStatus: 404,
+      },
+    );
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText(/404 · Cannot GET \/jobs\/controls/)).toBeInTheDocument();
+  });
+});

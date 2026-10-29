@@ -1,0 +1,1256 @@
+import type { EntityManager, Repository } from 'typeorm';
+
+import {
+  conflictUpdateSetClause,
+  bulkInsertIdempotent,
+  chunkedConflictInsert,
+  computeChunkSize,
+} from '../bulkUpsert';
+
+/**
+ * Minimal row used by the fake repository. Mirrors the shape the ingest services
+ * pass: a primary key plus the provenance triple.
+ */
+interface Row {
+  id: string;
+  sourceType: string | null;
+  sourceSystem: string | null;
+  sourceId: string | null;
+  userId: string;
+  // Source-derived mutable fields the communications upsert refreshes on conflict.
+  direction?: string;
+  participantsMetadata?: Record<string, unknown>;
+}
+
+// Identity is the (source_system, source_id) pair — source_type is provenance
+// and deliberately not part of the key (docs/design/cross-pipeline-identity.md).
+const tripleKey = (r: { sourceSystem: string | null; sourceId: string | null }) =>
+  `${r.sourceSystem ?? ''}|${r.sourceId ?? ''}`;
+
+/**
+ * A fake TypeORM repository backed by an in-memory table that enforces the partial
+ * unique index on the (source_type, source_system, source_id) triple WHERE
+ * source_id IS NOT NULL — enough to exercise the helper's pre-check, ON CONFLICT
+ * DO NOTHING insert, hydration SELECT, and inserted-flag logic. Reads are scoped to
+ * `userId` (mirroring the scope option) and triples are matched with NULL = NULL.
+ * Also fakes `manager.transaction` + `withRepository` and logs every statement so
+ * tests can assert the whole sequence runs inside ONE transaction on the tx-bound
+ * repository.
+ */
+function makeFakeRepository(initial: Row[] = []) {
+  const table = new Map<string, Row>(); // id -> row
+  for (const row of initial) {
+    table.set(row.id, row);
+  }
+
+  const statements: {
+    kind: 'select' | 'insert';
+    insideTx: boolean;
+    viaTxRepo: boolean;
+    viaExternalManager: boolean;
+  }[] = [];
+  const tx = { active: false, count: 0, boundTo: undefined as unknown };
+  // A caller-supplied `EntityManager` passed in as `options.manager` — distinct
+  // from `repo.manager.transaction`'s own `txManager` below, so tests can prove
+  // the helper binds to THIS one (and never opens a new transaction) when the
+  // caller wants to join its own transaction (see the `options.manager` branch
+  // in bulkInsertIdempotent).
+  const external = { calls: 0, boundTo: undefined as unknown };
+
+  const existsByTriple = (r: Row): Row | undefined => {
+    if (r.sourceId == null) {
+      return undefined; // outside the partial index — never deduped
+    }
+
+    for (const row of table.values()) {
+      if (row.sourceId != null && tripleKey(row) === tripleKey(r) && row.userId === r.userId) {
+        return row;
+      }
+    }
+
+    return undefined;
+  };
+
+  // Tracks WHERE predicates a SelectQueryBuilder accumulated, then resolves them
+  // against the table on getMany(). We only need triple-OR + userId scoping, so we
+  // capture the raw triples/pks the helper asks for via the bound parameters.
+  function makeSelectQB(viaTxRepo: boolean, viaExternalManager = false) {
+    const params: Record<string, unknown> = {};
+    let scopedUserId: string | undefined;
+    const qb: Record<string, unknown> = {};
+
+    qb.andWhere = (_sql: string, p?: Record<string, unknown>) => {
+      Object.assign(params, p ?? {});
+      // Capture the scope userId binding (scope_userId).
+      if (p && 'scope_userId' in p) {
+        scopedUserId = p.scope_userId as string;
+      }
+
+      return qb;
+    };
+
+    qb.orWhere = qb.andWhere;
+    qb.where = qb.andWhere;
+
+    qb.getMany = async (): Promise<Row[]> => {
+      statements.push({ kind: 'select', insideTx: tx.active, viaTxRepo, viaExternalManager });
+
+      // Reconstruct the set of requested triples from the bound params (pre_/post_).
+      const triples: { sourceType: string | null; sourceSystem: string | null; sourceId: string | null }[] =
+        [];
+      for (const key of Object.keys(params)) {
+        const m = key.match(/^(pre|post)_id_(\d+)$/);
+        if (m) {
+          const i = m[2];
+          const prefix = m[1];
+          triples.push({
+            sourceType: null,
+            sourceSystem: (params[`${prefix}_system_${i}`] as string | undefined) ?? null,
+            sourceId: params[`${prefix}_id_${i}`] as string | null,
+          });
+        }
+      }
+
+      const pks = (params.bulk_pks as string[] | undefined) ?? [];
+
+      const matched = new Map<string, Row>();
+      for (const row of table.values()) {
+        if (scopedUserId != null && row.userId !== scopedUserId) {
+          continue;
+        }
+
+        const byTriple =
+          row.sourceId != null && triples.some((t) => t.sourceId != null && tripleKey(t) === tripleKey(row));
+        const byPk = pks.includes(row.id);
+        if (byTriple || byPk) {
+          matched.set(row.id, row);
+        }
+      }
+
+      return [...matched.values()];
+    };
+
+    // Brackets passed to andWhere/orWhere are functions; invoke them so their inner
+    // orWhere calls register params.
+    const wrap =
+      (fn: (sql: unknown, p?: Record<string, unknown>) => unknown) =>
+      (sqlOrBrackets: unknown, p?: Record<string, unknown>) => {
+        if (
+          sqlOrBrackets &&
+          typeof (sqlOrBrackets as { whereFactory?: unknown }).whereFactory === 'function'
+        ) {
+          (sqlOrBrackets as { whereFactory: (b: unknown) => void }).whereFactory(qb);
+
+          return qb;
+        }
+
+        return fn(sqlOrBrackets as string, p);
+      };
+
+    qb.andWhere = wrap(qb.andWhere as never);
+    qb.orWhere = qb.andWhere;
+    qb.where = qb.andWhere;
+
+    return qb;
+  }
+
+  // Source-derived columns the DO UPDATE path refreshes. The fake mimics the
+  // conflict action conflictUpdateSetClause emits (its SQL text is asserted
+  // separately below; the integration spec proves it against Postgres):
+  //   same producer (source_type equal)  → incoming value unless null
+  //   other producer                      → existing value unless null
+  // with participantsMetadata treated as a 'json' bag (key merge, the same
+  // side winning on a shared key). (The helper only emits these for the
+  // columns the caller lists; the fake refreshing the superset is sufficient.)
+  const REFRESHABLE: (keyof Row)[] = ['direction', 'participantsMetadata'];
+
+  function makeInsertQB(viaTxRepo: boolean, viaExternalManager = false) {
+    let values: Row[] = [];
+    let conflictAction = '';
+    const iqb: Record<string, unknown> = {};
+    iqb.insert = () => iqb;
+    iqb.into = () => iqb;
+    iqb.values = (v: Row[]) => {
+      values = v;
+
+      return iqb;
+    };
+
+    iqb.onConflict = (action: string) => {
+      conflictAction = action;
+
+      return iqb;
+    };
+
+    iqb.returning = () => iqb;
+    iqb.execute = async () => {
+      statements.push({ kind: 'insert', insideTx: tx.active, viaTxRepo, viaExternalManager });
+
+      const doUpdate = / DO UPDATE /i.test(conflictAction);
+      // Mirror Postgres RETURNING (xmax = 0) AS bulk_inserted under DO UPDATE.
+      const insertedRaw: { id: string; bulk_inserted?: boolean }[] = [];
+      for (const row of values) {
+        const existing = row.sourceId != null ? existsByTriple(row) : undefined;
+
+        if (existing) {
+          if (doUpdate) {
+            const target = existing as Record<keyof Row, unknown>;
+            const sameProducer = row.sourceType === existing.sourceType;
+            for (const col of REFRESHABLE) {
+              if (!(col in row)) {
+                continue;
+              }
+
+              const incoming = row[col];
+              const current = target[col];
+              if (col === 'participantsMetadata') {
+                const a = (current ?? {}) as Record<string, unknown>;
+                const b = (incoming ?? {}) as Record<string, unknown>;
+                target[col] = sameProducer ? { ...a, ...b } : { ...b, ...a };
+              } else {
+                target[col] = sameProducer ? (incoming ?? current) : (current ?? incoming);
+              }
+            }
+
+            insertedRaw.push({ id: existing.id, bulk_inserted: false });
+          }
+
+          // DO NOTHING — skip entirely (no RETURNING row).
+          continue;
+        }
+
+        // Genuine insert (also covers the intra-batch dup guard the unique index
+        // would catch; the helper already collapses dups before this point).
+        table.set(row.id, row);
+        insertedRaw.push({ id: row.id, bulk_inserted: true });
+      }
+
+      return { raw: insertedRaw };
+    };
+
+    return iqb;
+  }
+
+  // Three views over the same table: the injected repository, the one the
+  // transaction manager's withRepository() hands back (self-managed tx path),
+  // and the one an EXTERNALLY-supplied manager's withRepository() hands back
+  // (the `options.manager` — caller's own transaction — path). Distinguishing
+  // the last from the other two is what lets a test prove the helper actually
+  // dispatches on `options.manager` rather than always opening its own tx.
+  const makeRepoView = (viaTxRepo: boolean, viaExternalManager = false) => ({
+    metadata: {
+      tableName: 'fake',
+      target: 'fake',
+      primaryColumns: [{ databaseName: 'id' }],
+      // Persisted-column count computeChunkSize reads to derive the param-budget
+      // cap. The Row shape has ~6 columns; the exact value doesn't matter for the
+      // chunk tests, which pass an explicit maxRowsPerChunk.
+      columns: Array.from({ length: 6 }, (_, i) => ({ databaseName: `c${i}` })),
+    },
+    create: (x: Partial<Row>) => x as Row,
+    createQueryBuilder: (alias?: string) =>
+      alias ? makeSelectQB(viaTxRepo, viaExternalManager) : makeInsertQB(viaTxRepo, viaExternalManager),
+    manager: {
+      transaction: async <T>(cb: (manager: unknown) => Promise<T>): Promise<T> => {
+        tx.count += 1;
+        tx.active = true;
+        try {
+          return await cb(txManager);
+        } finally {
+          tx.active = false;
+        }
+      },
+    },
+  });
+
+  const txRepo = makeRepoView(true);
+  const txManager = {
+    withRepository: (r: unknown) => {
+      tx.boundTo = r;
+
+      return txRepo;
+    },
+  };
+  const repo = makeRepoView(false);
+
+  // The caller-supplied `EntityManager` a test passes as `options.manager`.
+  // Bound repository statements run OUTSIDE `tx` entirely (tx.active stays
+  // false) — that is the point: the caller already owns a transaction, so
+  // `bulkInsertIdempotent` must never open a second one for this path.
+  const externalRepo = makeRepoView(false, true);
+  const externalManager = {
+    withRepository: (r: unknown) => {
+      external.calls += 1;
+      external.boundTo = r;
+
+      return externalRepo;
+    },
+  };
+
+  return { repo: repo as unknown as Repository<Row>, table, statements, tx, external, externalManager };
+}
+
+const opts = (
+  repo: Repository<Row>,
+  entities: Row[],
+  conflictUpdateColumns?: string[],
+  maxRowsPerChunk?: number,
+) => ({
+  repository: repo,
+  entities,
+  primaryKey: 'id' as const,
+  getTriple: (e: Row) => ({
+    sourceType: e.sourceType,
+    sourceSystem: e.sourceSystem,
+    sourceId: e.sourceId,
+  }),
+  scope: { userId: entities[0]?.userId ?? 'user-1' },
+  conflictTarget: '(source_system, source_id) WHERE source_id IS NOT NULL',
+  identityColumns: ['source_system', 'source_id'] as [string, string],
+  ...(conflictUpdateColumns ? { conflictUpdateColumns } : {}),
+  ...(maxRowsPerChunk != null ? { maxRowsPerChunk } : {}),
+});
+
+const row = (over: Partial<Row>): Row => ({
+  id: over.id ?? crypto.randomUUID(),
+  sourceType: 'ci-import',
+  sourceSystem: 'gmail',
+  sourceId: null,
+  userId: 'user-1',
+  ...over,
+});
+
+describe('bulkInsertIdempotent', () => {
+  it('inserts all new rows and flags every one as inserted, in input order', async () => {
+    const { repo, table } = makeFakeRepository();
+    const entities = [
+      row({ id: 'a', sourceId: 's1' }),
+      row({ id: 'b', sourceId: 's2' }),
+      row({ id: 'c', sourceId: 's3' }),
+    ];
+
+    const results = await bulkInsertIdempotent(opts(repo, entities));
+
+    expect(results.map((r) => r.entity.id)).toEqual(['a', 'b', 'c']);
+    expect(results.map((r) => r.inserted)).toEqual([true, true, true]);
+    expect(table.size).toBe(3);
+  });
+
+  it('is idempotent on re-push: existing triples return the existing row, no re-insert, inserted=false', async () => {
+    const existing = row({ id: 'existing', sourceId: 's1' });
+    const { repo, table } = makeFakeRepository([existing]);
+
+    const results = await bulkInsertIdempotent(
+      opts(repo, [row({ id: 'new-attempt', sourceId: 's1' }), row({ id: 'b', sourceId: 's2' })]),
+    );
+
+    // First row dedupes to the pre-existing row (existing id, not inserted).
+    expect(results[0].entity.id).toBe('existing');
+    expect(results[0].inserted).toBe(false);
+    // Second is genuinely new.
+    expect(results[1].entity.id).toBe('b');
+    expect(results[1].inserted).toBe(true);
+    expect(table.size).toBe(2); // existing + b, no duplicate
+  });
+
+  it('collapses an intra-batch duplicate triple to one inserted row and flags it once', async () => {
+    const { repo, table } = makeFakeRepository();
+    const results = await bulkInsertIdempotent(
+      opts(repo, [row({ id: 'first', sourceId: 'dup' }), row({ id: 'second', sourceId: 'dup' })]),
+    );
+
+    // Both inputs resolve to the single inserted DB row...
+    expect(results[0].entity.id).toBe('first');
+    expect(results[1].entity.id).toBe('first');
+    // ...but only one is flagged inserted (single *CreatedEvent).
+    expect(results.filter((r) => r.inserted)).toHaveLength(1);
+    expect(table.size).toBe(1);
+  });
+
+  it('always inserts rows without a source_id (outside the partial index), never deduped', async () => {
+    const { repo, table } = makeFakeRepository();
+    const results = await bulkInsertIdempotent(
+      opts(repo, [row({ id: 'n1', sourceId: null }), row({ id: 'n2', sourceId: null })]),
+    );
+
+    expect(results.map((r) => r.inserted)).toEqual([true, true]);
+    expect(table.size).toBe(2);
+  });
+
+  it('treats a NULL source_system as equal to a NULL source_system (NULL-safe match)', async () => {
+    const existing = row({ id: 'existing', sourceSystem: null, sourceId: 's1' });
+    const { repo } = makeFakeRepository([existing]);
+
+    const results = await bulkInsertIdempotent(
+      opts(repo, [row({ id: 'dupe', sourceSystem: null, sourceId: 's1' })]),
+    );
+
+    expect(results[0].entity.id).toBe('existing');
+    expect(results[0].inserted).toBe(false);
+  });
+
+  it('returns [] for an empty batch without touching the repository', async () => {
+    const { repo, statements, tx } = makeFakeRepository();
+    await expect(bulkInsertIdempotent(opts(repo, []))).resolves.toEqual([]);
+    expect(tx.count).toBe(0); // no transaction opened for an empty batch
+    expect(statements).toHaveLength(0);
+  });
+
+  it('runs the pre-check, insert, and hydration inside ONE transaction on the tx-bound repository', async () => {
+    const existing = row({ id: 'existing', sourceId: 's1' });
+    const { repo, statements, tx } = makeFakeRepository([existing]);
+
+    await bulkInsertIdempotent(
+      opts(repo, [row({ id: 'new-attempt', sourceId: 's1' }), row({ id: 'b', sourceId: 's2' })]),
+    );
+
+    expect(tx.count).toBe(1);
+    expect(tx.boundTo).toBe(repo); // re-bound via manager.withRepository(repository)
+    expect(statements.map((s) => s.kind)).toEqual(['select', 'insert', 'select']);
+    expect(statements.every((s) => s.insideTx && s.viaTxRepo)).toBe(true);
+  });
+
+  // Covers the `options.manager` branch (bulkUpsert.ts:208-213): when a caller
+  // is already inside its own transaction (e.g. ContentService/CalendarEventService
+  // wrapping a detail-row insert + CTI base-row write in one
+  // `manager.transaction(...)`), passing that manager in must make the WHOLE
+  // pre-check/insert/hydrate sequence join it via `manager.withRepository(...)`
+  // — never open a second, nested transaction. If this branch regressed to
+  // always calling `repository.manager.transaction(...)` regardless (or simply
+  // dropped `options.manager` on the floor), the detail row and its CTI base row
+  // would no longer commit/rollback atomically, and nothing here would fail
+  // loudly in production — it would just silently stop being one transaction.
+  it('when options.manager is supplied, joins the CALLER transaction instead of opening its own', async () => {
+    const existing = row({ id: 'existing', sourceId: 's1' });
+    const { repo, table, statements, tx, external, externalManager } = makeFakeRepository([existing]);
+
+    const results = await bulkInsertIdempotent({
+      ...opts(repo, [row({ id: 'new-attempt', sourceId: 's1' }), row({ id: 'b', sourceId: 's2' })]),
+      manager: externalManager as unknown as EntityManager,
+    });
+
+    // Correctness is unchanged via this path: still dedupes/inserts exactly as
+    // the self-managed-transaction path does.
+    expect(results[0].entity.id).toBe('existing');
+    expect(results[0].inserted).toBe(false);
+    expect(results[1].entity.id).toBe('b');
+    expect(results[1].inserted).toBe(true);
+    expect(table.size).toBe(2);
+
+    // No NEW transaction was opened...
+    expect(tx.count).toBe(0);
+    // ...instead the whole statement sequence bound to the CALLER's manager,
+    // exactly once, against the ORIGINAL repository (not some other view).
+    expect(external.calls).toBe(1);
+    expect(external.boundTo).toBe(repo);
+    expect(statements.length).toBeGreaterThan(0);
+    expect(statements.every((s) => s.viaExternalManager && !s.insideTx)).toBe(true);
+  });
+
+  it('options.manager also covers the chunked path — every chunk binds to the caller manager, no per-chunk transaction', async () => {
+    const { repo, table, statements, tx, external, externalManager } = makeFakeRepository();
+    const entities = Array.from({ length: 5 }, (_, i) => row({ id: `r${i}`, sourceId: `s${i}` }));
+
+    const results = await bulkInsertIdempotent({
+      ...opts(repo, entities, undefined, 2),
+      manager: externalManager as unknown as EntityManager,
+    });
+
+    expect(results.map((r) => r.inserted)).toEqual([true, true, true, true, true]);
+    expect(table.size).toBe(5);
+    expect(tx.count).toBe(0);
+    // withRepository() is called once up front (not once per chunk) — the same
+    // bound repository is reused for every chunk's statements.
+    expect(external.calls).toBe(1);
+    expect(statements.filter((s) => s.kind === 'insert')).toHaveLength(3);
+    expect(statements.every((s) => s.viaExternalManager && !s.insideTx)).toBe(true);
+  });
+});
+
+describe('bulkInsertIdempotent — DO UPDATE (conflictUpdateColumns) self-heal path', () => {
+  const REFRESH = ['direction', 'participants_metadata'];
+
+  it('refreshes the listed columns on a re-insert of the same triple (direction + participants)', async () => {
+    // A row imported before the direction fix: stored inbound, empty participants.
+    const existing = row({
+      id: 'existing',
+      sourceId: 's1',
+      direction: 'inbound',
+      participantsMetadata: {},
+    });
+    const { repo, table } = makeFakeRepository([existing]);
+
+    // Re-sync sends the corrected direction + populated recipients for that triple.
+    const results = await bulkInsertIdempotent(
+      opts(
+        repo,
+        [
+          row({
+            id: 'new-attempt',
+            sourceId: 's1',
+            direction: 'outbound',
+            participantsMetadata: { to: ['alice@example.com'] },
+          }),
+        ],
+        REFRESH,
+      ),
+    );
+
+    // Idempotent: dedupes to the pre-existing row, no duplicate inserted.
+    expect(results[0].entity.id).toBe('existing');
+    expect(table.size).toBe(1);
+    // ...but the mutable, source-derived fields are now corrected.
+    expect(results[0].entity.direction).toBe('outbound');
+    expect(results[0].entity.participantsMetadata).toEqual({ to: ['alice@example.com'] });
+    expect(table.get('existing')?.direction).toBe('outbound');
+  });
+
+  it('flags a refreshed (updated) row as inserted=false so NO new event fires', async () => {
+    const existing = row({ id: 'existing', sourceId: 's1', direction: 'inbound' });
+    const { repo } = makeFakeRepository([existing]);
+
+    const results = await bulkInsertIdempotent(
+      opts(repo, [row({ id: 'new-attempt', sourceId: 's1', direction: 'outbound' })], REFRESH),
+    );
+
+    // Updated, not inserted — caller must not emit a CommunicationCreatedEvent.
+    expect(results[0].inserted).toBe(false);
+  });
+
+  it('flags a genuinely new row as inserted=true even on the DO UPDATE path', async () => {
+    const { repo, table } = makeFakeRepository();
+
+    const results = await bulkInsertIdempotent(
+      opts(repo, [row({ id: 'fresh', sourceId: 's-new', direction: 'outbound' })], REFRESH),
+    );
+
+    expect(results[0].entity.id).toBe('fresh');
+    expect(results[0].inserted).toBe(true);
+    expect(table.size).toBe(1);
+  });
+
+  it('collapses an intra-batch duplicate triple to one row under DO UPDATE (no 21000, single insert flag)', async () => {
+    // Postgres rejects affecting the same arbiter row twice in one DO UPDATE; the
+    // helper must collapse the dup before the INSERT. Both inputs resolve to one
+    // row, flagged inserted exactly once.
+    const { repo, table } = makeFakeRepository();
+    const results = await bulkInsertIdempotent(
+      opts(
+        repo,
+        [
+          row({ id: 'first', sourceId: 'dup', direction: 'inbound' }),
+          row({ id: 'second', sourceId: 'dup', direction: 'outbound' }),
+        ],
+        REFRESH,
+      ),
+    );
+
+    expect(results[0].entity.id).toBe('first');
+    expect(results[1].entity.id).toBe('first');
+    expect(results.filter((r) => r.inserted)).toHaveLength(1);
+    expect(table.size).toBe(1);
+  });
+
+  it('keeps DO NOTHING callers unchanged: no conflictUpdateColumns means existing rows are never refreshed', async () => {
+    const existing = row({ id: 'existing', sourceId: 's1', direction: 'inbound' });
+    const { repo, table } = makeFakeRepository([existing]);
+
+    // Same triple, corrected direction, but NO conflictUpdateColumns (Item/Event path).
+    const results = await bulkInsertIdempotent(
+      opts(repo, [row({ id: 'new-attempt', sourceId: 's1', direction: 'outbound' })]),
+    );
+
+    expect(results[0].entity.id).toBe('existing');
+    expect(results[0].inserted).toBe(false);
+    // Untouched — the legacy find-or-return path must not refresh.
+    expect(results[0].entity.direction).toBe('inbound');
+    expect(table.get('existing')?.direction).toBe('inbound');
+    expect(table.size).toBe(1);
+  });
+
+  it('treats an EMPTY conflictUpdateColumns list (the centralized DO NOTHING entries) like omitting it', async () => {
+    const existing = row({ id: 'existing', sourceId: 's1', direction: 'inbound' });
+    const { repo, table } = makeFakeRepository([existing]);
+
+    const results = await bulkInsertIdempotent(
+      opts(repo, [row({ id: 'new-attempt', sourceId: 's1', direction: 'outbound' })], []),
+    );
+
+    expect(results[0].entity.id).toBe('existing');
+    expect(results[0].inserted).toBe(false);
+    expect(table.get('existing')?.direction).toBe('inbound');
+  });
+
+  it('runs the DO UPDATE sequence (no pre-check) inside ONE transaction too', async () => {
+    const existing = row({ id: 'existing', sourceId: 's1', direction: 'inbound' });
+    const { repo, statements, tx } = makeFakeRepository([existing]);
+
+    await bulkInsertIdempotent(
+      opts(repo, [row({ id: 'new-attempt', sourceId: 's1', direction: 'outbound' })], REFRESH),
+    );
+
+    expect(tx.count).toBe(1);
+    expect(statements.map((s) => s.kind)).toEqual(['insert', 'select']);
+    expect(statements.every((s) => s.insideTx && s.viaTxRepo)).toBe(true);
+  });
+});
+
+describe('bulkInsertIdempotent — a DIFFERENT producer only fills what is empty', () => {
+  const REFRESH = ['direction', 'participants_metadata'];
+
+  it("keeps the first producer's value and fills its nulls from the second", async () => {
+    // Imported first: direction known, participants unknown.
+    const existing = row({
+      id: 'existing',
+      sourceType: 'ci-import-tools',
+      sourceId: 's1',
+      direction: 'inbound',
+      participantsMetadata: undefined,
+    });
+    const { repo, table } = makeFakeRepository([existing]);
+
+    // A connection delivers the same message with the opposite direction and
+    // the participants the archive lacked.
+    const results = await bulkInsertIdempotent(
+      opts(
+        repo,
+        [
+          row({
+            id: 'new-attempt',
+            sourceType: 'connection',
+            sourceId: 's1',
+            direction: 'outbound',
+            participantsMetadata: { to: ['alice@example.com'] },
+          }),
+        ],
+        REFRESH,
+      ),
+    );
+
+    expect(results[0].entity.id).toBe('existing');
+    expect(results[0].inserted).toBe(false);
+    expect(table.size).toBe(1);
+    // First writer keeps its value; the gap is filled.
+    expect(table.get('existing')?.direction).toBe('inbound');
+    expect(table.get('existing')?.participantsMetadata).toEqual({ to: ['alice@example.com'] });
+  });
+
+  it('merges a json bag without letting the second producer overwrite shared keys', async () => {
+    const existing = row({
+      id: 'existing',
+      sourceType: 'ci-import-tools',
+      sourceId: 's1',
+      participantsMetadata: { from: 'archive@example.com' },
+    });
+    const { repo, table } = makeFakeRepository([existing]);
+
+    await bulkInsertIdempotent(
+      opts(
+        repo,
+        [
+          row({
+            id: 'new-attempt',
+            sourceType: 'connection',
+            sourceId: 's1',
+            participantsMetadata: { from: 'api@example.com', to: ['bob@example.com'] },
+          }),
+        ],
+        REFRESH,
+      ),
+    );
+
+    expect(table.get('existing')?.participantsMetadata).toEqual({
+      from: 'archive@example.com',
+      to: ['bob@example.com'],
+    });
+  });
+
+  // The interaction the null guard exists for: producer A re-syncs AFTER
+  // producer B filled a gap, and A still has nothing for that column.
+  it('a same-producer re-sync does not null out what another producer filled in', async () => {
+    const existing = row({
+      id: 'existing',
+      sourceType: 'ci-import-tools',
+      sourceId: 's1',
+      direction: 'inbound',
+      participantsMetadata: { to: ['from-the-connection@example.com'] },
+    });
+    const { repo, table } = makeFakeRepository([existing]);
+
+    await bulkInsertIdempotent(
+      opts(
+        repo,
+        [
+          row({
+            id: 'new-attempt',
+            sourceType: 'ci-import-tools',
+            sourceId: 's1',
+            direction: 'outbound',
+            participantsMetadata: undefined,
+          }),
+        ],
+        REFRESH,
+      ),
+    );
+
+    expect(table.get('existing')?.direction).toBe('outbound'); // refreshed
+    expect(table.get('existing')?.participantsMetadata).toEqual({ to: ['from-the-connection@example.com'] }); // kept
+  });
+});
+
+describe('conflictUpdateSetClause', () => {
+  const same = 'EXCLUDED."source_type" IS NOT DISTINCT FROM "t"."source_type"';
+
+  it('emits the null-guarded same/other CASE for a value column', () => {
+    expect(conflictUpdateSetClause('t', ['direction'])).toBe(
+      `"direction" = CASE WHEN ${same} THEN COALESCE(EXCLUDED."direction", "t"."direction") ELSE COALESCE("t"."direction", EXCLUDED."direction") END`,
+    );
+  });
+
+  it("ORs a flag across producers and takes the same producer's value", () => {
+    expect(conflictUpdateSetClause('t', ['is_incognito'], { is_incognito: 'flag' })).toBe(
+      `"is_incognito" = CASE WHEN ${same} THEN COALESCE(EXCLUDED."is_incognito", "t"."is_incognito") ` +
+        `ELSE (COALESCE("t"."is_incognito", false) OR COALESCE(EXCLUDED."is_incognito", false)) END`,
+    );
+  });
+
+  it('merges a json bag with the right side winning on shared keys', () => {
+    expect(conflictUpdateSetClause('t', ['properties'], { properties: 'json' })).toBe(
+      `"properties" = CASE WHEN ${same} ` +
+        `THEN (COALESCE("t"."properties", '{}'::jsonb) || COALESCE(EXCLUDED."properties", '{}'::jsonb)) ` +
+        `ELSE (COALESCE(EXCLUDED."properties", '{}'::jsonb) || COALESCE("t"."properties", '{}'::jsonb)) END`,
+    );
+  });
+
+  // The preference arm: between "same producer" and "other producer", a more
+  // trusted arriving producer takes the same-producer treatment.
+  const rank = (ref: string) =>
+    `COALESCE(array_position(ARRAY['ci-import-tools', 'capture']::text[], ${ref}."source_type"), 2147483647)`;
+  const outranks = `WHEN ${rank('EXCLUDED')} < ${rank('"t"')}`;
+
+  it('adds an "arriving producer outranks" arm for a value column with a preference', () => {
+    expect(
+      conflictUpdateSetClause(
+        't',
+        ['duration_seconds'],
+        {},
+        { duration_seconds: ['ci-import-tools', 'capture'] },
+      ),
+    ).toBe(
+      `"duration_seconds" = CASE WHEN ${same} THEN COALESCE(EXCLUDED."duration_seconds", "t"."duration_seconds") ` +
+        `${outranks} THEN COALESCE(EXCLUDED."duration_seconds", "t"."duration_seconds") ` +
+        `ELSE COALESCE("t"."duration_seconds", EXCLUDED."duration_seconds") END`,
+    );
+  });
+
+  it('gives a preferred producer the winning side of a json merge too', () => {
+    const incomingWins = `(COALESCE("t"."properties", '{}'::jsonb) || COALESCE(EXCLUDED."properties", '{}'::jsonb))`;
+    const currentWins = `(COALESCE(EXCLUDED."properties", '{}'::jsonb) || COALESCE("t"."properties", '{}'::jsonb))`;
+
+    expect(
+      conflictUpdateSetClause(
+        't',
+        ['properties'],
+        { properties: 'json' },
+        { properties: ['ci-import-tools', 'capture'] },
+      ),
+    ).toBe(
+      `"properties" = CASE WHEN ${same} THEN ${incomingWins} ${outranks} THEN ${incomingWins} ELSE ${currentWins} END`,
+    );
+  });
+
+  it('leaves a flag alone whatever the preference says (OR is symmetric)', () => {
+    expect(
+      conflictUpdateSetClause('t', ['is_incognito'], { is_incognito: 'flag' }, { is_incognito: ['capture'] }),
+    ).toBe(conflictUpdateSetClause('t', ['is_incognito'], { is_incognito: 'flag' }));
+  });
+
+  it('leaves a column with no preference entry on the arrival-order rule', () => {
+    expect(conflictUpdateSetClause('t', ['direction'], {}, { other_column: ['capture'] })).toBe(
+      conflictUpdateSetClause('t', ['direction']),
+    );
+  });
+
+  it('escapes a quote in a producer name rather than breaking the statement', () => {
+    expect(conflictUpdateSetClause('t', ['a'], {}, { a: ["o'clock"] })).toContain(
+      "ARRAY['o''clock']::text[]",
+    );
+  });
+
+  it('joins one assignment per column, in list order', () => {
+    const clause = conflictUpdateSetClause('t', ['a', 'b']);
+    expect(clause.startsWith('"a" = CASE')).toBe(true);
+    expect(clause).toContain(' END, "b" = CASE');
+    expect(clause.endsWith(' END')).toBe(true);
+  });
+});
+
+describe('computeChunkSize', () => {
+  it('honours the caller ceiling when the param budget is not the binding constraint', () => {
+    // 6 cols → budget cap floor(60000/6)=10000, so a 500 ceiling wins.
+    expect(computeChunkSize(6, 500)).toBe(500);
+  });
+
+  it('caps at the param budget when the requested ceiling is larger', () => {
+    // 6000 cols → budget cap floor(60000/6000)=10; a 1000 ceiling is clamped to 10.
+    expect(computeChunkSize(6000, 1000)).toBe(10);
+  });
+
+  it('defaults to 1000 rows when no ceiling is given and the budget allows it', () => {
+    expect(computeChunkSize(10)).toBe(1000);
+  });
+
+  it('never returns less than 1 even for an absurdly wide row', () => {
+    expect(computeChunkSize(1_000_000)).toBe(1);
+  });
+
+  it('ignores a non-positive requested ceiling and falls back to the default', () => {
+    expect(computeChunkSize(6, 0)).toBe(1000);
+  });
+});
+
+/**
+ * `chunkedConflictInsert` is the second exported helper in the module — "the
+ * one canonical copy of the chunk + insert().onConflict() loop" the CTI/STI
+ * bulk writers (CtiAggregate, ObjectObservationService, ConceptService,
+ * PersonService) all share. Unlike `bulkInsertIdempotent`, it has no dedup
+ * pre-check or hydration — just chunk-and-insert — so the fake repository only
+ * needs to record what `.values()` and `.onConflict()` were called with per
+ * chunk.
+ */
+describe('chunkedConflictInsert', () => {
+  interface FakeRow {
+    id: string;
+  }
+
+  function makeFakeRepo(columnsCount: number) {
+    const chunksInserted: FakeRow[][] = [];
+    const conflictActions: string[] = [];
+    const intoTargets: unknown[] = [];
+
+    const repo = {
+      metadata: {
+        target: 'fake_table',
+        columns: Array.from({ length: columnsCount }, (_, i) => ({ databaseName: `c${i}` })),
+      },
+      createQueryBuilder: () => {
+        let values: FakeRow[] = [];
+        const iqb: Record<string, unknown> = {};
+        iqb.insert = () => iqb;
+        iqb.into = (target: unknown) => {
+          intoTargets.push(target);
+
+          return iqb;
+        };
+
+        iqb.values = (v: FakeRow[]) => {
+          values = v;
+
+          return iqb;
+        };
+
+        iqb.onConflict = (action: string) => {
+          conflictActions.push(action);
+
+          return iqb;
+        };
+
+        iqb.execute = async () => {
+          chunksInserted.push(values);
+
+          return { raw: [] };
+        };
+
+        return iqb;
+      },
+    };
+
+    return { repo: repo as unknown as Repository<FakeRow>, chunksInserted, conflictActions, intoTargets };
+  }
+
+  it('splits rows into chunks at exactly the computeChunkSize boundary', async () => {
+    // 30000 "columns" pins the param-budget cap at floor(60000/30000) = 2 rows
+    // per chunk (well under the 1000-row default), so 5 rows must split into
+    // three INSERT statements of [2, 2, 1] — not, say, one oversized statement
+    // that would blow the 65535 bind-param limit on a real wide entity.
+    const { repo, chunksInserted } = makeFakeRepo(30000);
+    const rows = Array.from({ length: 5 }, (_, i) => ({ id: `r${i}` }));
+
+    await chunkedConflictInsert(repo, rows, '(id) DO NOTHING');
+
+    expect(chunksInserted.map((c) => c.length)).toEqual([2, 2, 1]);
+    // Every row appears exactly once, in input order, across the chunks.
+    expect(chunksInserted.flat().map((r) => r.id)).toEqual(['r0', 'r1', 'r2', 'r3', 'r4']);
+  });
+
+  it('passes the onConflict string through to .onConflict() verbatim, for every chunk', async () => {
+    const { repo, conflictActions } = makeFakeRepo(30000); // chunk size 2
+    const rows = Array.from({ length: 3 }, (_, i) => ({ id: `r${i}` }));
+    const conflictAction = '(source_type, source_system, source_id) DO UPDATE SET foo = EXCLUDED.foo';
+
+    await chunkedConflictInsert(repo, rows, conflictAction);
+
+    // 3 rows / chunk size 2 → two chunks, each must carry the SAME arbiter.
+    expect(conflictActions).toEqual([conflictAction, conflictAction]);
+  });
+
+  it('routes .into() through repository.metadata.target (so STI child repos emit their discriminator)', async () => {
+    const { repo, intoTargets } = makeFakeRepo(6);
+
+    await chunkedConflictInsert(repo, [{ id: 'x' }], '(id) DO NOTHING');
+
+    expect(intoTargets).toEqual(['fake_table']);
+  });
+
+  it('issues a single INSERT when the whole batch fits in one chunk', async () => {
+    const { repo, chunksInserted } = makeFakeRepo(6); // budget cap 10000 — batch of 3 fits easily
+    const rows = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+
+    await chunkedConflictInsert(repo, rows, '(id) DO NOTHING');
+
+    expect(chunksInserted).toHaveLength(1);
+    expect(chunksInserted[0].map((r) => r.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('issues no INSERT for an empty row list', async () => {
+    const { repo, chunksInserted } = makeFakeRepo(6);
+
+    await chunkedConflictInsert(repo, [], '(id) DO NOTHING');
+
+    expect(chunksInserted).toHaveLength(0);
+  });
+});
+
+describe('bulkInsertIdempotent — chunking (>maxRowsPerChunk splits into multiple INSERTs)', () => {
+  it('splits an over-chunk-size batch into multiple INSERT statements, still atomic in ONE transaction', async () => {
+    const { repo, table, statements, tx } = makeFakeRepository();
+    // 5 rows, chunk size 2 → chunks of [2, 2, 1] = 3 INSERT statements.
+    const entities = Array.from({ length: 5 }, (_, i) => row({ id: `r${i}`, sourceId: `s${i}` }));
+
+    const results = await bulkInsertIdempotent(opts(repo, entities, undefined, 2));
+
+    // Every row round-trips, in input order, each flagged inserted.
+    expect(results.map((r) => r.entity.id)).toEqual(['r0', 'r1', 'r2', 'r3', 'r4']);
+    expect(results.map((r) => r.inserted)).toEqual([true, true, true, true, true]);
+    expect(table.size).toBe(5);
+
+    // Three chunks → three INSERTs (plus each chunk's pre-check + hydration SELECT).
+    expect(statements.filter((s) => s.kind === 'insert')).toHaveLength(3);
+    // All chunks ran inside the SAME single transaction, on the tx-bound repository.
+    expect(tx.count).toBe(1);
+    expect(statements.every((s) => s.insideTx && s.viaTxRepo)).toBe(true);
+  });
+
+  it('still dedups correctly across chunk boundaries (existing + intra-batch dup)', async () => {
+    const existing = row({ id: 'existing', sourceId: 's-dup' });
+    const { repo, table } = makeFakeRepository([existing]);
+
+    // 4 inputs, chunk size 2. First chunk holds a re-push of the existing triple +
+    // a genuinely new row; second chunk holds two more new rows.
+    const entities = [
+      row({ id: 'a', sourceId: 's-dup' }), // dedupes to `existing`
+      row({ id: 'b', sourceId: 's1' }),
+      row({ id: 'c', sourceId: 's2' }),
+      row({ id: 'd', sourceId: 's3' }),
+    ];
+
+    const results = await bulkInsertIdempotent(opts(repo, entities, undefined, 2));
+
+    expect(results[0].entity.id).toBe('existing');
+    expect(results[0].inserted).toBe(false);
+    expect(results.slice(1).map((r) => r.entity.id)).toEqual(['b', 'c', 'd']);
+    expect(results.slice(1).map((r) => r.inserted)).toEqual([true, true, true]);
+    // existing + b + c + d, no duplicate of the re-pushed triple.
+    expect(table.size).toBe(4);
+  });
+
+  it('does not chunk when the batch fits (single INSERT, no slicing)', async () => {
+    const { repo, statements } = makeFakeRepository();
+    const entities = Array.from({ length: 3 }, (_, i) => row({ id: `r${i}`, sourceId: `s${i}` }));
+
+    await bulkInsertIdempotent(opts(repo, entities, undefined, 10));
+
+    expect(statements.filter((s) => s.kind === 'insert')).toHaveLength(1);
+  });
+});
+
+/** A primary column as TypeORM models it: a DB name plus an entity property path. */
+interface PkColumn {
+  databaseName: string;
+  propertyPath: string;
+}
+
+/**
+ * Fake repository that models the ONE TypeORM behaviour the plain fake above
+ * cannot see: how `.returning()` resolves its argument.
+ *
+ * typeorm 0.3.30 `QueryBuilder.getReturningColumns()` maps every entry of the
+ * ARRAY form through `EntityMetadata.findColumnsWithPropertyPath()`, which
+ * matches `column.propertyPath` and NEVER `column.databaseName`; unmatched
+ * entries resolve to zero columns and vanish from the emitted RETURNING clause.
+ * The STRING form is emitted verbatim. Postgres then keys the returned rows by
+ * DB column name.
+ *
+ * `pkColumn` is what makes this fake discriminating: EventEntity/ItemEntity
+ * declare `@PrimaryColumn('uuid', { name: 'event_id' | 'object_id' })`, so their
+ * pk databaseName differs from their property path — which is exactly the case
+ * the plain `{ databaseName: 'id' }` fake cannot reproduce.
+ */
+function makeReturningAwareRepository(pkColumn: PkColumn, initial: Row[] = []) {
+  const table = new Map<string, Row>();
+  for (const r of initial) {
+    table.set(r.id, r);
+  }
+
+  /** Columns the emitted RETURNING clause would actually carry. */
+  const emitted: { columns: string[] } = { columns: [] };
+
+  const existsByTriple = (r: Row): Row | undefined => {
+    if (r.sourceId == null) {
+      return undefined;
+    }
+
+    for (const existing of table.values()) {
+      if (existing.sourceId != null && tripleKey(existing) === tripleKey(r) && existing.userId === r.userId) {
+        return existing;
+      }
+    }
+
+    return undefined;
+  };
+
+  function makeSelectQB() {
+    const params: Record<string, unknown> = {};
+    let scopedUserId: string | undefined;
+    const qb: Record<string, unknown> = {};
+
+    const collect = (_sql: unknown, p?: Record<string, unknown>) => {
+      Object.assign(params, p ?? {});
+      if (p && 'scope_userId' in p) {
+        scopedUserId = p.scope_userId as string;
+      }
+
+      return qb;
+    };
+
+    const wrap =
+      (fn: (sql: unknown, p?: Record<string, unknown>) => unknown) =>
+      (sqlOrBrackets: unknown, p?: Record<string, unknown>) => {
+        const brackets = sqlOrBrackets as { whereFactory?: (b: unknown) => void } | undefined;
+        if (typeof brackets?.whereFactory === 'function') {
+          brackets.whereFactory(qb);
+
+          return qb;
+        }
+
+        return fn(sqlOrBrackets, p);
+      };
+
+    qb.andWhere = wrap(collect);
+    qb.orWhere = qb.andWhere;
+    qb.where = qb.andWhere;
+
+    qb.getMany = async (): Promise<Row[]> => {
+      const triples: { sourceType: string | null; sourceSystem: string | null; sourceId: string | null }[] =
+        [];
+      for (const key of Object.keys(params)) {
+        const m = key.match(/^(pre|post)_id_(\d+)$/);
+        if (m) {
+          triples.push({
+            sourceType: null,
+            sourceSystem: (params[`${m[1]}_system_${m[2]}`] as string | undefined) ?? null,
+            sourceId: params[`${m[1]}_id_${m[2]}`] as string | null,
+          });
+        }
+      }
+
+      const pks = (params.bulk_pks as string[] | undefined) ?? [];
+      const matched = new Map<string, Row>();
+      for (const r of table.values()) {
+        if (scopedUserId != null && r.userId !== scopedUserId) {
+          continue;
+        }
+
+        const byTriple =
+          r.sourceId != null && triples.some((t) => t.sourceId != null && tripleKey(t) === tripleKey(r));
+        if (byTriple || pks.includes(r.id)) {
+          matched.set(r.id, r);
+        }
+      }
+
+      return [...matched.values()];
+    };
+
+    return qb;
+  }
+
+  function makeInsertQB() {
+    let values: Row[] = [];
+    let conflictAction = '';
+    let returning: string | string[] | undefined;
+    const iqb: Record<string, unknown> = {};
+    iqb.insert = () => iqb;
+    iqb.into = () => iqb;
+    iqb.values = (v: Row[]) => {
+      values = v;
+
+      return iqb;
+    };
+
+    iqb.onConflict = (action: string) => {
+      conflictAction = action;
+
+      return iqb;
+    };
+
+    iqb.returning = (arg: string | string[]) => {
+      returning = arg;
+
+      return iqb;
+    };
+
+    iqb.execute = async () => {
+      const doUpdate = / DO UPDATE /i.test(conflictAction);
+      // String form: emitted verbatim (the DO UPDATE branch's
+      // `pk, (xmax = 0) AS bulk_inserted`). Array form: property-path resolution.
+      const verbatim = typeof returning === 'string';
+      const requested = verbatim ? [] : ((returning as string[] | undefined) ?? []);
+      emitted.columns = verbatim
+        ? [pkColumn.databaseName]
+        : requested.filter((e) => e === pkColumn.propertyPath).map(() => pkColumn.databaseName);
+
+      const raw: Record<string, unknown>[] = [];
+      const build = (id: string, insertedFlag: boolean) => {
+        const out: Record<string, unknown> = {};
+        for (const col of emitted.columns) {
+          out[col] = id;
+        }
+
+        if (verbatim) {
+          out.bulk_inserted = insertedFlag;
+        }
+
+        return out;
+      };
+
+      for (const r of values) {
+        const existing = r.sourceId != null ? existsByTriple(r) : undefined;
+        if (existing) {
+          if (doUpdate) {
+            raw.push(build(existing.id, false));
+          }
+
+          continue;
+        }
+
+        table.set(r.id, r);
+        raw.push(build(r.id, true));
+      }
+
+      return { raw };
+    };
+
+    return iqb;
+  }
+
+  const view = {
+    metadata: {
+      tableName: 'fake',
+      target: 'fake',
+      primaryColumns: [pkColumn],
+      columns: Array.from({ length: 6 }, (_, i) => ({ databaseName: `c${i}` })),
+    },
+    create: (x: Partial<Row>) => x as Row,
+    createQueryBuilder: (alias?: string) => (alias ? makeSelectQB() : makeInsertQB()),
+    manager: {
+      transaction: async <T>(cb: (manager: unknown) => Promise<T>): Promise<T> => cb(txManager),
+    },
+  };
+  const txManager = { withRepository: () => view };
+
+  return { repo: view as unknown as Repository<Row>, table, emitted };
+}
+
+// EventEntity: @PrimaryColumn('uuid', { name: 'event_id' }) id!: string
+const RENAMED_PK: PkColumn = { databaseName: 'event_id', propertyPath: 'id' };
+// ContentEntity/CommunicationEntity/BrowserActivityEntity: @PrimaryColumn('uuid') id
+const PLAIN_PK: PkColumn = { databaseName: 'id', propertyPath: 'id' };
+
+describe('bulkInsertIdempotent — inserted flag when the pk COLUMN is renamed (events / objects)', () => {
+  it('emits the pk in RETURNING for a renamed pk column', async () => {
+    const { repo, emitted } = makeReturningAwareRepository(RENAMED_PK);
+
+    await bulkInsertIdempotent(opts(repo, [row({ id: 'e1', sourceId: 's1' })]));
+
+    // Passing the DB name to the array form resolves to zero columns and drops
+    // the pk from RETURNING, which is what silently broke the inserted flag.
+    expect(emitted.columns).toEqual(['event_id']);
+  });
+
+  it('flags a genuine insert as inserted=true (the gate CTI base-row writes hang off)', async () => {
+    const { repo } = makeReturningAwareRepository(RENAMED_PK);
+
+    const results = await bulkInsertIdempotent(opts(repo, [row({ id: 'e1', sourceId: 's1' })]));
+
+    expect(results[0].inserted).toBe(true);
+  });
+
+  it('still reports inserted=false for an idempotent re-ingest of the same triple', async () => {
+    const existing = [row({ id: 'existing', sourceId: 's1' })];
+    const { repo, table } = makeReturningAwareRepository(RENAMED_PK, existing);
+
+    const results = await bulkInsertIdempotent(
+      opts(repo, [row({ id: 'retry', sourceId: 's1' }), row({ id: 'e2', sourceId: 's2' })]),
+    );
+
+    expect(results[0].entity.id).toBe('existing');
+    expect(results[0].inserted).toBe(false);
+    expect(results[1].inserted).toBe(true);
+    expect(table.size).toBe(2);
+  });
+
+  it('flags an intra-batch duplicate triple exactly once', async () => {
+    const { repo, table } = makeReturningAwareRepository(RENAMED_PK);
+
+    const results = await bulkInsertIdempotent(
+      opts(repo, [row({ id: 'first', sourceId: 'dup' }), row({ id: 'second', sourceId: 'dup' })]),
+    );
+
+    expect(results.filter((r) => r.inserted)).toHaveLength(1);
+    expect(table.size).toBe(1);
+  });
+
+  it('keeps non-dedupable (null source_id) rows at inserted=true', async () => {
+    const { repo } = makeReturningAwareRepository(RENAMED_PK);
+
+    const results = await bulkInsertIdempotent(
+      opts(repo, [row({ id: 'n1', sourceId: null }), row({ id: 'n2', sourceId: null })]),
+    );
+
+    expect(results.map((r) => r.inserted)).toEqual([true, true]);
+  });
+
+  it('leaves the DO UPDATE (string RETURNING) branch untouched', async () => {
+    const seeded = [row({ id: 'existing', sourceId: 's1' })];
+    const { repo } = makeReturningAwareRepository(RENAMED_PK, seeded);
+
+    const refreshed = await bulkInsertIdempotent(
+      opts(repo, [row({ id: 'retry', sourceId: 's1' })], ['direction']),
+    );
+    const fresh = await bulkInsertIdempotent(
+      opts(repo, [row({ id: 'brand-new', sourceId: 's2' })], ['direction']),
+    );
+
+    expect(refreshed[0].inserted).toBe(false);
+    expect(fresh[0].inserted).toBe(true);
+  });
+
+  it('is unchanged when the pk column is plainly named `id` (content, communications)', async () => {
+    const { repo, emitted } = makeReturningAwareRepository(PLAIN_PK);
+
+    const results = await bulkInsertIdempotent(opts(repo, [row({ id: 'c1', sourceId: 's1' })]));
+
+    expect(emitted.columns).toEqual(['id']);
+    expect(results[0].inserted).toBe(true);
+  });
+});

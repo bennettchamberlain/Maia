@@ -1,0 +1,1250 @@
+import {
+  type FormEvent,
+  type ReactNode,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+
+import { Button, Input, Tooltip, cn } from '@ci/shadcn';
+
+import type { ForecastBucket } from '@/api/useForecastService';
+import type { RhythmDay, ScheduleEvent } from '@/api/useScheduleService';
+import { SlotTooltip } from '@/components/ForecastStrip';
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat';
+import {
+  type ColorMode,
+  CLASS_LABEL,
+  chipBorder,
+  chipFill,
+  classColor,
+  classifyEvent,
+  eventColor,
+  normalizeClass,
+  sourceOf,
+} from '@/lib/activityPalette';
+import type { DateTimeFormatter } from '@/lib/dateTimeFormat';
+import { EVENT_DRAG_TYPE, parseEventDrag } from '@/lib/scheduleDrag';
+import { detectBrowserTimeZone } from '@/lib/timezone';
+
+import { EventPeek } from './EventPeek';
+import { addDays, formatClock, sameLocalDay, startOfLocalDay } from './nowNext';
+import { foldMicroClusters, packItemLanes, type PackedItem } from './scheduleClusters';
+import {
+  type CalendarSlot,
+  RHYTHM_NOISE_FLOOR,
+  cellOpacity,
+  describes,
+  dropInstant,
+  eventUrl,
+  movedStart,
+  occupancyClaims,
+  occupancyLabel,
+  rhythmClaims,
+  rhythmLabel,
+  rhythmWaitingLabel,
+  PHONE_SHEET_VH,
+  scrollTopForSelectedHour,
+  spanForDay,
+  topClusters,
+  utcDateKey,
+} from './scheduleGeometry';
+import {
+  instantAtDayMinutes,
+  zonedDayKey,
+  zonedDayOfMonth,
+  zonedMinutesOfDay,
+  zonedParts,
+  zonedWallTimeToInstant,
+} from './zonedClock';
+
+const MINUTES_PER_DAY = 24 * 60;
+const HOURS_PER_DAY = 24;
+const HOUR_HEIGHT_PX = 52;
+const GRID_HEIGHT_PX = HOUR_HEIGHT_PX * HOURS_PER_DAY;
+const AXIS_HOURS = Array.from({ length: HOURS_PER_DAY }, (_, hour) => hour);
+
+/**
+ * An hour-axis label: "1 PM" / "13" by the person's hour cycle. The axis is wall-clock hours of
+ * the day being drawn, not instants, so only the cycle applies — the rows are already in `zone`.
+ */
+function formatHour(hour: number, fmt: DateTimeFormatter): string {
+  return fmt.clock(hour, 0, { hour: 'numeric' });
+}
+
+function isExternallyOwned(event: ScheduleEvent): boolean {
+  return Boolean(event.sourceSystem);
+}
+
+function blockLabel(
+  event: ScheduleEvent,
+  colorMode: ColorMode,
+  zone: string,
+  fmt: DateTimeFormatter,
+): string {
+  const start = new Date(event.startTime);
+  const end = event.endTime ? new Date(event.endTime) : null;
+  const parts = [
+    event.title,
+    event.isAllDay
+      ? 'all day'
+      : `${formatClock(start, fmt, zone)}${end ? ` to ${formatClock(end, fmt, zone)}` : ''}`,
+    colorMode === 'source' ? sourceOf(event) : CLASS_LABEL[classifyEvent(event)],
+  ];
+
+  if (event.locationName) {
+    parts.push(event.locationName);
+  }
+
+  if (event.status === 'tentative') {
+    parts.push('tentative');
+  }
+
+  return parts.join(', ');
+}
+
+/** Ratio down a day column for a pointer event, from the column's own box. */
+function ratioFor(event: { clientY: number; currentTarget: HTMLElement }): number {
+  const box = event.currentTarget.getBoundingClientRect();
+
+  return box.height === 0 ? 0 : (event.clientY - box.top) / box.height;
+}
+
+function isScheduleChip(target: EventTarget | null): boolean {
+  return Boolean((target as HTMLElement | null)?.closest?.('[data-schedule-chip]'));
+}
+
+/**
+ * Did this click begin on the element the handler sits on, or inside it?
+ *
+ * React bubbles a portal's synthetic events up the COMPONENT tree, not the DOM
+ * tree. A chip's peek dialog is rendered under `<body>` yet is a React child of
+ * the lane, so a tap on the dialog's own date field, X or backdrop reaches the
+ * lane's `onClick` with a `target` that is nowhere inside the lane — and
+ * `isScheduleChip` cannot tell, it only finds no chip. Asking the DOM is what
+ * separates "the slot was tapped" from "something floating above it was".
+ */
+function startedInside(event: { currentTarget: HTMLElement; target: EventTarget | null }): boolean {
+  return event.currentTarget.contains(event.target as Node | null);
+}
+
+function slotPct(instant: Date, zone: string): number {
+  return (zonedMinutesOfDay(instant, zone) / MINUTES_PER_DAY) * 100;
+}
+
+interface EventTooltipProps {
+  event: ScheduleEvent;
+  color: string;
+  colorMode: ColorMode;
+  movable: boolean;
+  zone: string;
+}
+
+function EventTooltipBody({ event, color, colorMode, movable, zone }: EventTooltipProps) {
+  const url = eventUrl(event);
+  const fmt = useDateTimeFormat();
+
+  return (
+    <div className="max-w-64 space-y-1 text-left">
+      {url ? (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block text-xs font-medium underline-offset-2 hover:underline"
+          onClick={(clickEvent) => clickEvent.stopPropagation()}
+        >
+          {event.title}
+        </a>
+      ) : (
+        <p className="text-xs font-medium">{event.title}</p>
+      )}
+      <p className="text-[10px] opacity-75">
+        {event.isAllDay
+          ? 'All day'
+          : `${formatClock(new Date(event.startTime), fmt, zone)}${
+              event.endTime ? ` – ${formatClock(new Date(event.endTime), fmt, zone)}` : ''
+            }`}
+      </p>
+      {describes(event) && <p className="text-[11px] leading-snug opacity-90">{event.description}</p>}
+      {event.locationName && <p className="text-[10px] opacity-60">{event.locationName}</p>}
+      {event.status === 'tentative' && <p className="text-[10px] opacity-60">Tentative</p>}
+      <p className="flex items-center gap-1.5 text-[10px] opacity-60">
+        <span aria-hidden className="h-2 w-2 shrink-0 rounded-[2px]" style={{ backgroundColor: color }} />
+        {colorMode === 'source' ? sourceOf(event) : CLASS_LABEL[classifyEvent(event)]}
+      </p>
+      {url && <p className="truncate text-[10px] opacity-60">{url}</p>}
+      {movable && isExternallyOwned(event) && (
+        <p className="border-t border-current/20 pt-1 text-[10px] opacity-60">
+          {event.externalSyncStatus === 'pending'
+            ? `Moved here — not yet pushed back to ${event.sourceSystem}.`
+            : `From ${event.sourceSystem}. Moving it here won't change the source.`}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ClusterBlock({
+  item,
+  lane,
+  laneCount,
+  colorMode,
+  zone,
+  onMoveEvent,
+}: {
+  item: Extract<PackedItem, { kind: 'cluster' }>;
+  lane: number;
+  laneCount: number;
+  colorMode: ColorMode;
+  zone: string;
+  onMoveEvent?: (eventId: string, startTime: Date) => void;
+}) {
+  const fmt = useDateTimeFormat();
+  const lead = item.spans[0]?.event;
+  const color = lead ? eventColor(lead, colorMode) : 'var(--activity-none)';
+  const count = item.spans.length;
+  const label = `${count} overlapping activities`;
+
+  return (
+    <EventPeek
+      label={label}
+      side="right"
+      content={
+        <div className="max-w-64 space-y-1 text-left">
+          <p className="text-xs font-medium">{label}</p>
+          <ul className="space-y-0.5">
+            {item.spans.map(({ event }) => (
+              <li key={event.id} className="text-[11px] leading-snug">
+                <span className="font-medium">{event.title}</span>
+                <span className="ml-1.5 text-[10px] opacity-75 tabular-nums">
+                  {formatClock(new Date(event.startTime), fmt, zone)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      }
+      // A folded event has no chip of its own to grab, so without a form per
+      // member the only way to reschedule anything in a busy hour was to widen
+      // the window until the cluster broke apart.
+      actions={
+        onMoveEvent
+          ? (close) => (
+              <div className="space-y-2">
+                {item.spans.map(({ event }) => (
+                  <MoveEventForm
+                    key={event.id}
+                    event={event}
+                    name={event.title}
+                    zone={zone}
+                    onMoveEvent={onMoveEvent}
+                    onDone={close}
+                  />
+                ))}
+              </div>
+            )
+          : undefined
+      }
+    >
+      <div
+        role="listitem"
+        data-schedule-chip
+        tabIndex={0}
+        aria-label={label}
+        title={label}
+        className={cn(
+          'absolute z-[5] cursor-pointer overflow-hidden rounded-md border text-[11px] leading-5',
+          'text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          'hover:z-30 focus-within:z-30 hover:brightness-110',
+        )}
+        style={{
+          top: `${item.leftPct}%`,
+          height: `${Math.max(item.widthPct, (18 / GRID_HEIGHT_PX) * 100)}%`,
+          left: `calc(${(lane / laneCount) * 100}% + 2px)`,
+          width: `calc(${(1 / laneCount) * 100}% - 4px)`,
+          backgroundColor: color,
+          borderColor: chipBorder(color),
+          borderLeftWidth: '3px',
+          borderLeftColor: color,
+        }}
+      >
+        <span className="px-1.5 font-semibold tabular-nums text-background mix-blend-difference">
+          {count}
+        </span>
+      </div>
+    </EventPeek>
+  );
+}
+
+/** `yyyy-mm-dd` for a Date in the drawn zone — `toISOString` would say UTC's day. */
+function dateInputValue(date: Date, zone: string): string {
+  return zonedDayKey(date, zone);
+}
+
+/** `HH:mm` for a Date in the drawn zone. */
+function clockInputValue(date: Date, zone: string): string {
+  const { hour, minute } = zonedParts(date, zone);
+
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+/**
+ * The instant a `yyyy-mm-dd` + `HH:mm` pair names in the drawn zone.
+ *
+ * Not `EventForm`'s `combineDateAndClock`, which builds the instant with the
+ * browser's `new Date(y, m, d, hh, mm)`: the form's own fields were filled from
+ * the PROFILE zone above, so reading them back in the browser's zone would move
+ * every typed move by the offset between the two.
+ */
+function instantFromInputs(date: string, clock: string, allDay: boolean, zone: string): Date | null {
+  if (date.trim() === '') {
+    return null;
+  }
+
+  const [year, month, day] = date.split('-').map(Number);
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return null;
+  }
+
+  let hours = 0;
+  let minutes = 0;
+
+  if (!allDay && clock.trim() !== '') {
+    const [rawHours, rawMinutes] = clock.split(':').map(Number);
+
+    if (Number.isFinite(rawHours) && Number.isFinite(rawMinutes)) {
+      hours = rawHours;
+      minutes = rawMinutes;
+    }
+  }
+
+  const combined = zonedWallTimeToInstant(year, month, day, hours, minutes, 0, zone);
+
+  return Number.isNaN(combined.getTime()) ? null : combined;
+}
+
+/**
+ * Move a placed event without a drag.
+ *
+ * ═══ WHAT THIS USED TO DO ═══
+ * Nothing — there was no way at all. Dragging a chip is HTML5 drag-and-drop,
+ * which never fires on touch, so on a phone the chip's peek dialog was
+ * read-only and a placed event could not be rescheduled from this surface.
+ * This writes through the same `onMoveEvent` the desktop drop does.
+ *
+ * `name` distinguishes one form from its siblings — a micro-cluster dialog
+ * carries one per folded event, and "Move to date" three times over names
+ * nothing.
+ */
+function MoveEventForm({
+  event,
+  name,
+  zone,
+  onMoveEvent,
+  onDone,
+}: {
+  event: ScheduleEvent;
+  name?: string;
+  zone: string;
+  onMoveEvent: (eventId: string, startTime: Date) => void;
+  onDone: () => void;
+}) {
+  const start = new Date(event.startTime);
+  const [date, setDate] = useState(() => dateInputValue(start, zone));
+  const [clock, setClock] = useState(() => clockInputValue(start, zone));
+  const allDay = Boolean(event.isAllDay);
+  const suffix = name ? ` ${name}` : '';
+
+  const submit = (form: FormEvent<HTMLFormElement>) => {
+    form.preventDefault();
+
+    // An all-day event has no clock to move, so it lands on midnight local —
+    // the same instant the all-day row hands `onSelectSlot`.
+    const at = instantFromInputs(date, clock, allDay, zone);
+
+    if (!at) {
+      return;
+    }
+
+    onMoveEvent(event.id, at);
+    onDone();
+  };
+
+  return (
+    <form onSubmit={submit} className="flex flex-wrap items-end gap-2 border-t border-current/20 pt-2">
+      {name ? <p className="w-full truncate text-[11px] font-medium">{name}</p> : null}
+      <Input
+        type="date"
+        aria-label={`Move${suffix} to date`}
+        value={date}
+        onChange={(change) => setDate(change.target.value)}
+        className="h-8 w-[9.5rem] text-xs"
+      />
+      {allDay ? null : (
+        <Input
+          type="time"
+          aria-label={`Move${suffix} to time`}
+          value={clock}
+          onChange={(change) => setClock(change.target.value)}
+          className="h-8 w-[6.5rem] text-xs"
+        />
+      )}
+      <Button type="submit" size="sm" className="h-8" aria-label={name ? `Move ${name}` : undefined}>
+        Move
+      </Button>
+    </form>
+  );
+}
+
+function TimedBlock({
+  item,
+  lane,
+  laneCount,
+  dayStart,
+  colorMode,
+  zone,
+  onMoveEvent,
+}: {
+  item: Extract<PackedItem, { kind: 'single' }>;
+  lane: number;
+  laneCount: number;
+  dayStart: Date;
+  colorMode: ColorMode;
+  zone: string;
+  onMoveEvent?: (eventId: string, startTime: Date) => void;
+}) {
+  const { event, leftPct, widthPct, continuesFrom, continuesTo } = item.span;
+  const color = eventColor(event, colorMode);
+  const url = eventUrl(event);
+  // An expanded recurring occurrence backs no row, so there is nothing to
+  // reschedule: offering the drag would only ever end in a snap-back.
+  const movable = Boolean(onMoveEvent) && !event.seriesMasterId;
+  const short = widthPct < (45 / MINUTES_PER_DAY) * 100;
+  const fmt = useDateTimeFormat();
+  const label = blockLabel(event, colorMode, zone, fmt);
+
+  return (
+    <EventPeek
+      label={label}
+      side="right"
+      content={
+        <EventTooltipBody event={event} color={color} colorMode={colorMode} movable={movable} zone={zone} />
+      }
+      actions={
+        movable && onMoveEvent
+          ? (close) => <MoveEventForm event={event} zone={zone} onMoveEvent={onMoveEvent} onDone={close} />
+          : undefined
+      }
+    >
+      <div
+        role="listitem"
+        data-schedule-chip
+        tabIndex={0}
+        aria-label={label}
+        draggable={movable}
+        onDragStart={
+          movable
+            ? (e) => {
+                if ((e.target as Element | null)?.closest?.('a')) {
+                  e.preventDefault();
+
+                  return;
+                }
+
+                const box = e.currentTarget.getBoundingClientRect();
+                const withinChip = box.height > 0 ? (e.clientY - box.top) / box.height : 0;
+                const grabDayRatio = (leftPct + Math.max(0, Math.min(1, withinChip)) * widthPct) / 100;
+                const grabbedAt = instantAtDayMinutes(dayStart, grabDayRatio * MINUTES_PER_DAY, zone);
+                const grabOffsetMs = event.isAllDay
+                  ? 0
+                  : grabbedAt.getTime() - new Date(event.startTime).getTime();
+
+                e.dataTransfer.setData(EVENT_DRAG_TYPE, JSON.stringify({ id: event.id, grabOffsetMs }));
+                e.dataTransfer.setData('text/plain', event.title);
+                e.dataTransfer.effectAllowed = 'move';
+              }
+            : undefined
+        }
+        className={cn(
+          'absolute z-[5] overflow-hidden border text-[11px] leading-4',
+          'text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          'hover:z-30 focus-within:z-30',
+          movable && 'cursor-grab active:cursor-grabbing hover:brightness-110',
+          short ? 'px-1 py-0.5' : 'px-1.5 py-1',
+          event.status === 'tentative' && 'border-dashed text-muted-foreground',
+          continuesFrom ? 'rounded-t-none border-t-0' : 'rounded-t-md',
+          continuesTo ? 'rounded-b-none border-b-0' : 'rounded-b-md',
+        )}
+        style={{
+          top: `${leftPct}%`,
+          height: `${widthPct}%`,
+          left: `calc(${(lane / laneCount) * 100}% + 2px)`,
+          width: `calc(${(1 / laneCount) * 100}% - 4px)`,
+          backgroundColor: chipFill(color),
+          borderColor: chipBorder(color),
+          ...(continuesFrom ? {} : { borderLeftWidth: '3px', borderLeftColor: color }),
+        }}
+      >
+        {url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            draggable={false}
+            className="block truncate font-medium text-foreground underline-offset-2 hover:underline"
+            onClick={(clickEvent) => clickEvent.stopPropagation()}
+            onPointerDown={(pointerEvent) => pointerEvent.stopPropagation()}
+          >
+            {event.title}
+          </a>
+        ) : (
+          <span className="block truncate font-medium">{event.title}</span>
+        )}
+        {!short && (
+          <span className="block truncate text-[10px] tabular-nums text-muted-foreground">
+            {formatClock(new Date(event.startTime), fmt, zone)}
+            {event.endTime ? ` – ${formatClock(new Date(event.endTime), fmt, zone)}` : ''}
+          </span>
+        )}
+      </div>
+    </EventPeek>
+  );
+}
+
+function AllDayChip({
+  event,
+  colorMode,
+  zone,
+  onMoveEvent,
+}: {
+  event: ScheduleEvent;
+  colorMode: ColorMode;
+  zone: string;
+  onMoveEvent?: (eventId: string, startTime: Date) => void;
+}) {
+  const color = eventColor(event, colorMode);
+  const url = eventUrl(event);
+  const fmt = useDateTimeFormat();
+  const label = blockLabel(event, colorMode, zone, fmt);
+  // See TimedBlock: an expanded occurrence has no row to move.
+  const movable = Boolean(onMoveEvent) && !event.seriesMasterId;
+
+  return (
+    <EventPeek
+      label={label}
+      side="bottom"
+      content={
+        <EventTooltipBody event={event} color={color} colorMode={colorMode} movable={movable} zone={zone} />
+      }
+      // The all-day row sits outside the hour grid, so nothing drops onto it and
+      // an all-day event had no move path on ANY pointer — this is the only one.
+      actions={
+        movable && onMoveEvent
+          ? (close) => <MoveEventForm event={event} zone={zone} onMoveEvent={onMoveEvent} onDone={close} />
+          : undefined
+      }
+    >
+      <div
+        role="listitem"
+        data-schedule-chip
+        tabIndex={0}
+        aria-label={label}
+        className={cn(
+          'truncate rounded-md border px-1.5 py-0.5 text-[11px] leading-5',
+          'outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          event.status === 'tentative' && 'border-dashed text-muted-foreground',
+        )}
+        style={{
+          backgroundColor: chipFill(color),
+          borderColor: chipBorder(color),
+          borderLeftWidth: '3px',
+          borderLeftColor: color,
+        }}
+      >
+        {url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium underline-offset-2 hover:underline"
+            onClick={(clickEvent) => clickEvent.stopPropagation()}
+          >
+            {event.title}
+          </a>
+        ) : (
+          <span className="font-medium">{event.title}</span>
+        )}
+      </div>
+    </EventPeek>
+  );
+}
+
+interface RhythmWashProps {
+  dayStart: Date;
+  lookup: (utcDate: string) => RhythmDay | undefined;
+  colorMode: ColorMode;
+  zone: string;
+  /** Day-ahead 96-bin histogram. Bins whose startTime falls on this day replace climate. */
+  occupancy?: ForecastBucket[] | null;
+  /** True while nightly/Predict is in a named step and this day has no ink yet. */
+  waiting?: boolean;
+}
+
+/**
+ * Pattern rhythm (HBPE) for one day, painted behind the hours.
+ *
+ * One cell per 15-minute slot, the colour of the behaviour that claims it,
+ * the weight in the ink. It sits under committed chips so the day itself
+ * reads as color-coded time rather than as a second gutter of boxes.
+ * Cells are positioned rather than flexed so every one lands on the slot
+ * it describes.
+ */
+function RhythmWash({
+  dayStart,
+  lookup,
+  colorMode,
+  zone,
+  occupancy = null,
+  waiting = false,
+}: RhythmWashProps) {
+  const occupancyCells = useMemo(
+    () => (occupancy?.length ? occupancyClaims(dayStart, occupancy, zone) : null),
+    [dayStart, occupancy, zone],
+  );
+  const climateClaims = useMemo(() => rhythmClaims(dayStart, lookup, zone), [dayStart, lookup, zone]);
+  const claims = occupancyCells ?? climateClaims;
+  const slotCount = claims.length || 1;
+  const clusters = useMemo(() => topClusters(lookup(utcDateKey(dayStart))), [dayStart, lookup]);
+  const hasRhythm = claims.some((claim) => claim.weight >= RHYTHM_NOISE_FLOOR);
+  const waitingForRhythm = waiting && !hasRhythm;
+  const usingOccupancy = occupancyCells !== null;
+  const label = waitingForRhythm
+    ? rhythmWaitingLabel(dayStart, zone)
+    : usingOccupancy
+      ? occupancyLabel(dayStart, zone)
+      : rhythmLabel(dayStart, clusters, zone);
+
+  const wash = (
+    <div
+      data-testid="vertical-rhythm-wash"
+      className={cn(
+        'absolute inset-0 z-0',
+        hasRhythm && !usingOccupancy && !waitingForRhythm ? 'pointer-events-auto' : 'pointer-events-none',
+      )}
+      {...(hasRhythm || waitingForRhythm ? { role: 'img', 'aria-label': label } : { 'aria-hidden': true })}
+    >
+      {claims.map((claim, slot) => {
+        const lit = claim.weight >= RHYTHM_NOISE_FLOOR;
+        const inspect = occupancyCells?.[slot];
+        const show = lit || waitingForRhythm;
+
+        if (!show) {
+          return null;
+        }
+
+        const cellClass = cn(
+          'absolute inset-x-0',
+          !lit && waitingForRhythm && 'rhythm-cell-waiting',
+          inspect?.bucket && inspect.bucket.l0Probs.length > 0 && 'pointer-events-auto',
+        );
+        const cellStyle = {
+          top: `${(slot / slotCount) * 100}%`,
+          height: `${100 / slotCount}%`,
+          animationDelay: waitingForRhythm ? `${slot * 12}ms` : undefined,
+          ...(lit
+            ? {
+                backgroundColor: colorMode === 'type' ? classColor(claim.l0Class) : 'var(--primary)',
+                opacity: cellOpacity(claim.weight),
+              }
+            : {}),
+        };
+
+        if (inspect?.bucket && inspect.bucket.l0Probs.length > 0) {
+          return (
+            <Tooltip key={slot}>
+              <Tooltip.Trigger asChild>
+                <div data-testid="occupancy-bin" tabIndex={-1} className={cellClass} style={cellStyle} />
+              </Tooltip.Trigger>
+              <Tooltip.Content side="right" sideOffset={6} className="max-w-none p-3">
+                <SlotTooltip bucket={inspect.bucket} localMin={inspect.localMin} minutes={inspect.minutes} />
+              </Tooltip.Content>
+            </Tooltip>
+          );
+        }
+
+        return <div key={slot} className={cellClass} style={cellStyle} />;
+      })}
+    </div>
+  );
+
+  if (!hasRhythm || usingOccupancy || waitingForRhythm) {
+    return wash;
+  }
+
+  return (
+    <EventPeek
+      label={label}
+      side="right"
+      content={
+        <div className="w-52 space-y-1 text-left">
+          <p className="text-xs font-medium">
+            {dayStart.toLocaleDateString([], { weekday: 'long', timeZone: zone })} — usually
+          </p>
+          {clusters.map((cluster) => (
+            <div key={cluster.clusterId} className="flex items-center justify-between gap-2">
+              <span className="flex min-w-0 items-center gap-1.5">
+                {colorMode === 'type' && (
+                  <span
+                    aria-hidden
+                    className="h-2 w-2 shrink-0 rounded-[2px]"
+                    style={{ backgroundColor: classColor(normalizeClass(cluster.l0Class)) }}
+                  />
+                )}
+                <span className="truncate text-[10px] opacity-75">{cluster.name}</span>
+              </span>
+              <span className="shrink-0 text-[10px] tabular-nums opacity-60">
+                {Math.round(cluster.pOccur * 100)}%
+              </span>
+            </div>
+          ))}
+        </div>
+      }
+    >
+      {wash}
+    </EventPeek>
+  );
+}
+
+interface DayLaneProps {
+  dayStart: Date;
+  dayEvents: ScheduleEvent[];
+  isToday: boolean;
+  nowPct: number | null;
+  colorMode: ColorMode;
+  zone: string;
+  lookup: (utcDate: string) => RhythmDay | undefined;
+  occupancy?: ForecastBucket[] | null;
+  waiting?: boolean;
+  onMoveEvent?: (eventId: string, startTime: Date) => void;
+  selectedSlot?: CalendarSlot | null;
+  onSelectSlot?: (slot: CalendarSlot) => void;
+}
+
+const DayLane = memo(function DayLane({
+  dayStart,
+  dayEvents,
+  isToday,
+  nowPct,
+  colorMode,
+  zone,
+  lookup,
+  occupancy = null,
+  waiting = false,
+  onMoveEvent,
+  selectedSlot,
+  onSelectSlot,
+}: DayLaneProps) {
+  const fmt = useDateTimeFormat();
+  const [dropPct, setDropPct] = useState<number | null>(null);
+  const timedSpans = useMemo(
+    () =>
+      dayEvents
+        .filter((event) => !event.isAllDay)
+        .map((event) => spanForDay(event, dayStart, zone))
+        .filter((span): span is NonNullable<typeof span> => span !== null)
+        .sort((a, b) => a.leftPct - b.leftPct),
+    [dayEvents, dayStart, zone],
+  );
+  const packed = useMemo(() => foldMicroClusters(timedSpans), [timedSpans]);
+  const lanes = useMemo(() => packItemLanes(packed), [packed]);
+  const laneCount = Math.max(1, ...lanes.map((lane) => lane + 1));
+  const dayLabel = dayStart.toLocaleDateString([], {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    timeZone: zone,
+  });
+  const acceptsDrops = Boolean(onMoveEvent);
+
+  const carriesEvent = (types: readonly string[]) => acceptsDrops && types.includes(EVENT_DRAG_TYPE);
+
+  const selectedPct =
+    selectedSlot && !selectedSlot.allDay && sameLocalDay(selectedSlot.instant, dayStart, zone)
+      ? slotPct(selectedSlot.instant, zone)
+      : null;
+  const markerPct = dropPct ?? selectedPct;
+  const markerAt =
+    dropPct !== null
+      ? dropInstant(dayStart, dropPct / 100, zone)
+      : selectedSlot && !selectedSlot.allDay
+        ? selectedSlot.instant
+        : null;
+
+  return (
+    <div
+      role="listitem"
+      aria-label={dayLabel}
+      data-testid="vertical-day-lane"
+      className={cn('relative min-w-0 flex-1 border-l border-border/60', onSelectSlot && 'cursor-cell')}
+      style={{ height: GRID_HEIGHT_PX }}
+      onClick={
+        onSelectSlot
+          ? (click) => {
+              if (!startedInside(click) || isScheduleChip(click.target)) {
+                return;
+              }
+
+              onSelectSlot({ instant: dropInstant(dayStart, ratioFor(click), zone), allDay: false });
+            }
+          : undefined
+      }
+      onDragOver={
+        acceptsDrops
+          ? (e) => {
+              if (!carriesEvent(e.dataTransfer.types)) {
+                return;
+              }
+
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              setDropPct(Math.max(0, Math.min(1, ratioFor(e))) * 100);
+            }
+          : undefined
+      }
+      // ═══ WHAT THIS USED TO DO ═══
+      // Clear the marker on every dragleave. dragenter/dragover bubble up from
+      // the chips inside the lane, so crossing onto an existing event made the
+      // slot line and its time label flicker on a day that already had one.
+      onDragLeave={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) {
+          return;
+        }
+
+        setDropPct(null);
+      }}
+      onDrop={
+        acceptsDrops
+          ? (e) => {
+              setDropPct(null);
+
+              if (!carriesEvent(e.dataTransfer.types)) {
+                return;
+              }
+
+              e.preventDefault();
+
+              const payload = parseEventDrag(e.dataTransfer.getData(EVENT_DRAG_TYPE));
+
+              if (payload) {
+                onMoveEvent?.(payload.id, movedStart(dayStart, ratioFor(e), payload.grabOffsetMs, zone));
+              }
+            }
+          : undefined
+      }
+    >
+      <RhythmWash
+        dayStart={dayStart}
+        lookup={lookup}
+        colorMode={colorMode}
+        zone={zone}
+        occupancy={occupancy}
+        waiting={waiting}
+      />
+
+      {AXIS_HOURS.map((hour) => (
+        <div
+          key={hour}
+          aria-hidden
+          className={cn(
+            'pointer-events-none absolute inset-x-0 border-t',
+            hour === 0 ? 'border-transparent' : hour === 12 ? 'border-border' : 'border-border/40',
+          )}
+          style={{ top: `${(hour / HOURS_PER_DAY) * 100}%` }}
+        />
+      ))}
+
+      {isToday && nowPct !== null && (
+        <div
+          aria-hidden
+          data-testid="vertical-now"
+          className="pointer-events-none absolute inset-x-0 z-10 flex items-center"
+          style={{ top: `${nowPct}%` }}
+        >
+          <span className="absolute -left-1.5 h-2.5 w-2.5 rounded-full bg-destructive" />
+          <span className="h-px w-full bg-destructive" />
+        </div>
+      )}
+
+      {markerPct !== null && markerAt && (
+        <>
+          <div
+            aria-hidden
+            data-testid="slot-marker"
+            className="pointer-events-none absolute inset-x-0 z-20 h-0.5 bg-primary"
+            style={{ top: `${markerPct}%` }}
+          />
+          <div
+            aria-hidden
+            className="pointer-events-none absolute left-1 z-20 -translate-y-1/2 rounded bg-primary px-1 py-px text-[10px] text-primary-foreground tabular-nums"
+            style={{ top: `${markerPct}%` }}
+          >
+            {formatClock(markerAt, fmt, zone)}
+          </div>
+        </>
+      )}
+
+      <div role="list" aria-label={`Committed time on ${dayLabel}`} className="absolute inset-0">
+        {packed.map((item, index) =>
+          item.kind === 'cluster' ? (
+            <ClusterBlock
+              key={`cluster-${item.leftPct}-${item.spans[0]?.event.id ?? index}`}
+              item={item}
+              lane={lanes[index]}
+              laneCount={laneCount}
+              colorMode={colorMode}
+              zone={zone}
+              onMoveEvent={onMoveEvent}
+            />
+          ) : (
+            <TimedBlock
+              key={`${item.span.event.id}-${dayStart.toDateString()}`}
+              item={item}
+              lane={lanes[index]}
+              laneCount={laneCount}
+              dayStart={dayStart}
+              colorMode={colorMode}
+              zone={zone}
+              onMoveEvent={onMoveEvent}
+            />
+          ),
+        )}
+      </div>
+    </div>
+  );
+});
+
+interface VerticalCalendarProps {
+  start: Date;
+  days: number;
+  events: ScheduleEvent[];
+  rhythm: RhythmDay[];
+  onMoveEvent?: (eventId: string, startTime: Date) => void;
+  selectedSlot?: CalendarSlot | null;
+  onSelectSlot?: (slot: CalendarSlot) => void;
+  selectedDay?: Date;
+  onSelectDay?: (dayStart: Date) => void;
+  colorMode?: ColorMode;
+  /** Day-ahead HBPE histogram. Bins land on the local day their startTime falls in. */
+  occupancy?: ForecastBucket[] | null;
+  /** Nightly/Predict is in a named step (`NIGHTLY:label`, …). Empty cells shimmer. */
+  pipelineRunning?: boolean;
+  /**
+   * IANA zone the grid draws in — the owner's profile zone, the same one the
+   * backend places planned blocks in. Defaults to the browser's so a caller
+   * with no profile to read keeps today's reading; see {@link ./zonedClock}.
+   */
+  timeZone?: string;
+  footer?: ReactNode;
+  className?: string;
+  /**
+   * The phone add sheet is open. Scroll the tapped hour to just above it.
+   * Does not lengthen the day — midnight stays the end of the scroller.
+   */
+  liftSelectedHour?: boolean;
+}
+
+/**
+ * The week (or a single day), as hours-down / days-across.
+ *
+ * This is the conventional calendar geometry — Google Calendar, Apple Calendar,
+ * Outlook. Timed blocks sit on a 24-hour column; all-day rows sit above it,
+ * outside the scroll, so a busy all-day lane cannot shove one day's hours out
+ * of line. This is the one schedule surface on the page: what the day is
+ * predicted to hold rides in as a {@link RhythmWash} behind the hours so the
+ * column itself is the forecast, not a second gutter of boxes.
+ */
+export function VerticalCalendar({
+  start,
+  days,
+  events,
+  rhythm,
+  onMoveEvent,
+  selectedSlot,
+  onSelectSlot,
+  selectedDay,
+  onSelectDay,
+  colorMode = 'type',
+  occupancy = null,
+  pipelineRunning = false,
+  timeZone,
+  footer,
+  className,
+  liftSelectedHour = false,
+}: VerticalCalendarProps) {
+  const fmt = useDateTimeFormat();
+  const zone = timeZone ?? detectBrowserTimeZone();
+  const now = new Date();
+  const today = startOfLocalDay(now, zone);
+  const nowPct = (zonedMinutesOfDay(now, zone) / MINUTES_PER_DAY) * 100;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrolledDayKey = useRef<string | null>(null);
+
+  const rhythmByDate = useMemo(() => new Map(rhythm.map((day) => [day.date, day])), [rhythm]);
+  const lookup = useCallback((utcDate: string) => rhythmByDate.get(utcDate), [rhythmByDate]);
+
+  const dayStarts = useMemo(
+    () => Array.from({ length: days }, (_, index) => addDays(start, index, zone)),
+    [start, days, zone],
+  );
+
+  const eventsByDayKey = useMemo(() => {
+    const map = new Map<string, ScheduleEvent[]>();
+
+    for (const dayStart of dayStarts) {
+      const key = dayStart.toISOString();
+      map.set(
+        key,
+        events.filter((entry) => spanForDay(entry, dayStart, zone) !== null),
+      );
+    }
+
+    return map;
+  }, [dayStarts, events, zone]);
+
+  const allDayByDayKey = useMemo(() => {
+    const map = new Map<string, ScheduleEvent[]>();
+
+    for (const dayStart of dayStarts) {
+      const key = dayStart.toISOString();
+      map.set(
+        key,
+        (eventsByDayKey.get(key) ?? []).filter((event) => event.isAllDay),
+      );
+    }
+
+    return map;
+  }, [dayStarts, eventsByDayKey]);
+
+  useEffect(() => {
+    const pane = scrollRef.current;
+
+    if (!pane) {
+      return;
+    }
+
+    // A slot tap replaces `start` with a new Date for the same day. That used
+    // to run this effect and yank the viewport back to now.
+    const dayKey = dayStarts.map((day) => day.getTime()).join(',');
+
+    if (scrolledDayKey.current === dayKey) {
+      return;
+    }
+
+    scrolledDayKey.current = dayKey;
+
+    const clock = new Date();
+    const lookingAtToday = dayStarts.some((day) => sameLocalDay(day, clock, zone));
+    const minutes = lookingAtToday ? zonedMinutesOfDay(clock, zone) : 7 * 60;
+    const y = (minutes / MINUTES_PER_DAY) * GRID_HEIGHT_PX - pane.clientHeight / 3;
+    pane.scrollTop = Math.max(0, y);
+  }, [dayStarts, zone]);
+
+  const selectedMinute = selectedSlot && !selectedSlot.allDay ? selectedSlot.instant.getTime() : null;
+
+  useEffect(() => {
+    if (selectedMinute === null) {
+      return;
+    }
+
+    const pane = scrollRef.current;
+
+    if (!pane || pane.clientHeight === 0) {
+      return;
+    }
+
+    const y = (zonedMinutesOfDay(new Date(selectedMinute), zone) / MINUTES_PER_DAY) * GRID_HEIGHT_PX;
+    const paneBottom = pane.getBoundingClientRect().bottom;
+    const sheetTop = window.innerHeight * (1 - PHONE_SHEET_VH);
+    const occlusion = liftSelectedHour ? Math.max(0, paneBottom - sheetTop) : 0;
+
+    pane.scrollTop = scrollTopForSelectedHour({
+      hourY: y,
+      scrollTop: pane.scrollTop,
+      clientHeight: pane.clientHeight,
+      scrollHeight: pane.scrollHeight,
+      occlusionPx: occlusion,
+    });
+  }, [liftSelectedHour, selectedMinute, zone]);
+
+  const handleMoveEvent = useCallback(
+    (eventId: string, startTime: Date) => {
+      onMoveEvent?.(eventId, startTime);
+    },
+    [onMoveEvent],
+  );
+
+  return (
+    <div
+      role="group"
+      aria-label="Calendar"
+      data-testid="vertical-calendar"
+      className={cn('flex flex-col overflow-hidden rounded-xl border border-border bg-card', className)}
+    >
+      {/* One-column views (phone Calendar) already name the day in WeekDayChips. */}
+      {days > 1 ? (
+        <div className="flex min-w-0 border-b border-border">
+          <div className="w-16 shrink-0" />
+          {dayStarts.map((dayStart) => {
+            const isToday = sameLocalDay(dayStart, today, zone);
+            const isSelected = sameLocalDay(dayStart, selectedDay ?? today, zone);
+            const dayLabel = dayStart.toLocaleDateString([], {
+              weekday: 'long',
+              month: 'long',
+              day: 'numeric',
+              timeZone: zone,
+            });
+
+            return (
+              <button
+                key={dayStart.toISOString()}
+                type="button"
+                className={cn(
+                  'flex min-w-0 flex-1 flex-col items-center gap-0.5 px-1 py-1.5',
+                  'outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring',
+                  isSelected && 'bg-accent/20',
+                )}
+                aria-pressed={isSelected}
+                aria-label={`Show ${dayLabel}`}
+                onClick={() => onSelectDay?.(dayStart)}
+              >
+                <span
+                  className={cn(
+                    'text-[10px] font-medium uppercase tracking-wide',
+                    isSelected || isToday ? 'text-foreground' : 'text-muted-foreground',
+                  )}
+                >
+                  {dayStart.toLocaleDateString([], { weekday: 'short', timeZone: zone })}
+                </span>
+                <span
+                  className={cn(
+                    'flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold tabular-nums',
+                    isToday && 'bg-primary text-primary-foreground',
+                    isSelected && !isToday && 'bg-accent text-accent-foreground',
+                  )}
+                >
+                  {zonedDayOfMonth(dayStart, zone)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <div className="flex min-w-0 border-b border-border">
+        <div className="flex w-16 shrink-0 items-start justify-end pr-1.5 pt-1.5">
+          <span className="text-[10px] leading-5 text-muted-foreground">All day</span>
+        </div>
+        {dayStarts.map((dayStart) => {
+          const key = dayStart.toISOString();
+          const allDay = allDayByDayKey.get(key) ?? [];
+          const dayLabel = dayStart.toLocaleDateString([], { weekday: 'long', timeZone: zone });
+
+          return (
+            <div key={key} className="min-w-0 flex-1">
+              <div
+                role="list"
+                aria-label={`All day on ${dayLabel}`}
+                data-testid="vertical-all-day"
+                className={cn(
+                  'flex min-h-10 min-w-0 flex-1 flex-col gap-0.5 border-l border-border/60 px-1 py-1',
+                  onSelectSlot && 'cursor-cell',
+                  selectedSlot?.allDay &&
+                    sameLocalDay(selectedSlot.instant, dayStart, zone) &&
+                    'bg-primary/10 ring-1 ring-inset ring-primary/40',
+                )}
+                onClick={
+                  onSelectSlot
+                    ? (click) => {
+                        if (!startedInside(click) || isScheduleChip(click.target)) {
+                          return;
+                        }
+
+                        onSelectSlot({ instant: dayStart, allDay: true });
+                      }
+                    : undefined
+                }
+              >
+                {allDay.map((event) => (
+                  <AllDayChip
+                    key={event.id}
+                    event={event}
+                    colorMode={colorMode}
+                    zone={zone}
+                    onMoveEvent={onMoveEvent ? handleMoveEvent : undefined}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto" data-testid="vertical-calendar-scroll">
+        <div className="flex min-w-0">
+          {/* Hours the days read against. Predicted colour lives in each
+              column, behind committed time, so the axis stays a clock. */}
+          <div className="sticky left-0 z-10 flex w-16 shrink-0 items-start justify-end bg-card pr-1.5">
+            <div className="relative w-full" style={{ height: GRID_HEIGHT_PX }}>
+              {AXIS_HOURS.map((hour) => (
+                <span
+                  key={hour}
+                  className="absolute right-0 -translate-y-1/2 text-[10px] tabular-nums text-muted-foreground"
+                  style={{ top: `${(hour / HOURS_PER_DAY) * 100}%` }}
+                >
+                  {hour === 0 ? '' : formatHour(hour, fmt)}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div role="list" aria-label="Days" className="flex min-w-0 flex-1">
+            {dayStarts.map((dayStart) => {
+              const key = dayStart.toISOString();
+              const isToday = sameLocalDay(dayStart, today, zone);
+
+              return (
+                <div key={key} className="min-w-0 flex-1">
+                  <DayLane
+                    dayStart={dayStart}
+                    dayEvents={eventsByDayKey.get(key) ?? []}
+                    isToday={isToday}
+                    nowPct={isToday ? nowPct : null}
+                    colorMode={colorMode}
+                    zone={zone}
+                    lookup={lookup}
+                    occupancy={occupancy}
+                    waiting={pipelineRunning}
+                    onMoveEvent={onMoveEvent ? handleMoveEvent : undefined}
+                    selectedSlot={selectedSlot}
+                    onSelectSlot={onSelectSlot}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {footer && (
+        <div className="border-t border-border px-3 py-2 text-[10px] text-muted-foreground">{footer}</div>
+      )}
+    </div>
+  );
+}
+
+export { GRID_HEIGHT_PX, HOUR_HEIGHT_PX };

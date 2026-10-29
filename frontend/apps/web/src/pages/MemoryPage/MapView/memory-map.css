@@ -1,0 +1,143 @@
+/* Custom styles for Leaflet map */
+
+/* Custom popup styling */
+.custom-popup .leaflet-popup-content-wrapper {
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  color: var(--card-foreground);
+  box-shadow: 0 10px 32px rgb(0 0 0 / 22%);
+}
+
+.custom-popup .leaflet-popup-content {
+  margin: 0;
+  padding: 0;
+  color: inherit;
+}
+
+.custom-popup .leaflet-popup-tip {
+  background-color: var(--card);
+}
+
+.memory-map-cluster-popup .leaflet-popup-content-wrapper {
+  background-color: var(--card);
+  color: var(--card-foreground);
+  overflow: hidden;
+  padding-right: 0 !important;
+  padding-left: 0 !important;
+}
+
+.memory-map-cluster-popup .leaflet-popup-tip {
+  background-color: var(--card);
+}
+
+/* Marker animation */
+.custom-map-marker {
+  transition: transform 0.2s ease-out;
+  cursor: pointer;
+}
+
+.custom-map-marker:hover {
+  transform: scale(1.15);
+}
+
+.custom-map-marker .custom-map-marker-pin {
+  box-shadow: var(--ci-button-shadow), 0 2px 8px rgb(0 0 0 / 20%);
+  transition: box-shadow 0.2s ease-out;
+}
+
+.custom-map-marker:hover .custom-map-marker-pin {
+  box-shadow: var(--ci-button-shadow), 0 4px 16px rgb(0 0 0 / 30%);
+}
+
+.memory-map-cluster > div {
+  transition: transform 200ms ease-out;
+}
+
+.memory-map-cluster:hover > div {
+  transform: scale(1.15);
+}
+
+/* Zoom controls */
+.leaflet-control-zoom {
+  overflow: hidden !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-md) !important;
+  background: var(--card) !important;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 18%) !important;
+}
+
+.leaflet-control-zoom a {
+  display: flex !important;
+  width: 36px !important;
+  height: 36px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-bottom: 0 !important;
+  border-bottom: 1px solid var(--border) !important;
+  border-radius: var(--radius-md) !important;
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+  transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1), color 150ms cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.leaflet-control-zoom a:last-child {
+  border-bottom: 0 !important;
+}
+
+.leaflet-control-zoom a:hover,
+.leaflet-control-zoom a:focus {
+  background: var(--accent) !important;
+  color: var(--accent-foreground) !important;
+}
+
+/* Map container. The background shows wherever a tile has not loaded yet —
+   the moment after a pan or zoom. The basemap is satellite imagery, so a
+   dark sea tone reads as "more map" there; the page background read as a
+   white flash. */
+.leaflet-container {
+  font-family: inherit;
+  z-index: 1 !important;
+  background-color: #0f1a24;
+}
+
+/* Ensure all Leaflet elements have lower z-index */
+.leaflet-map-pane,
+.leaflet-tile-pane,
+.leaflet-objects-pane,
+.leaflet-shadow-pane,
+.leaflet-overlay-pane,
+.leaflet-marker-pane,
+.leaflet-tooltip-pane {
+  z-index: 1 !important;
+}
+
+.leaflet-popup-pane {
+  z-index: 450 !important;
+}
+
+/* Leaflet controls should also have lower z-index */
+.leaflet-control-container {
+  z-index: 1 !important;
+}
+
+/* The remove handle on an editable searched area (AreaLayer): a small round
+   button at the rectangle's top-right corner, above geoman's corner handle. */
+.memory-map-area-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  color: var(--card-foreground);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 25%);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.memory-map-area-remove:hover {
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+}

@@ -1,0 +1,22 @@
+{
+  "db": {
+    "host": "localhost"
+  },
+  "staticfiles": {
+    "storageUrl": "http://localhost:9000"
+  },
+  "services": {
+    "ollama": {
+      "host": "http://localhost:11434"
+    },
+    "hbpe": {
+      "host": "http://localhost:8002"
+    },
+    "parser": {
+      "host": "http://localhost:8003"
+    }
+  },
+  "features": {
+    "smart.rotation": true
+  }
+}

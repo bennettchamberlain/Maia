@@ -1,0 +1,55 @@
+import dotenv from 'dotenv';
+import path from 'node:path';
+import { defineConfig, devices } from '@playwright/test';
+
+dotenv.config({
+  path: path.resolve(__dirname, '.env'),
+  quiet: true,
+});
+
+/**
+ * See https://playwright.dev/docs/test-configuration.
+ */
+export default defineConfig({
+  testDir: './tests',
+  // This config drives ONLY the external Checkly smoke check (it hits a deployed
+  // URL). Local full-stack E2E lives in tests/e2e/ and is driven by
+  // playwright.e2e.config.ts — restrict the match so those specs never run here.
+  testMatch: 'BetaOneLoginFlow.spec.ts',
+  outputDir: './playwright-report',
+  /* Run tests in files in parallel */
+  fullyParallel: true,
+  /* Fail the build on CI if you accidentally left test.only in the source code. */
+  forbidOnly: !!process.env.CI,
+  /* Retry on CI only */
+  retries: process.env.CI ? 2 : 0,
+  /* Opt out of parallel tests on CI. */
+  workers: process.env.CI ? 1 : undefined,
+  /* Reporter to use. See https://playwright.dev/docs/test-reporters */
+  reporter: 'html',
+  /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
+  use: {
+    /* Base URL to use in actions like `await page.goto('')`. */
+    // baseURL: 'http://localhost:3000',
+
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+    /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
+    trace: 'on-first-retry',
+  },
+
+  /* Configure projects for major browsers */
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    },
+
+    // Deliberately no mobile project here. This config runs exactly one spec
+    // (the Checkly login smoke check above), so a second viewport would only
+    // re-run that same login against the deployed URL and double the Checkly
+    // bill for no extra signal. Mobile-viewport coverage is the enabled
+    // `mobile` project in playwright.e2e.config.ts (Pixel 5, tests/e2e/mobile.spec.ts),
+    // which runs against the local full-stack. Anything mobile belongs there.
+  ],
+});

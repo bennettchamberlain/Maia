@@ -1,0 +1,1065 @@
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import {
+  DataSource,
+  Repository,
+  In,
+  IsNull,
+  type FindOptionsOrder,
+  type FindOptionsWhere,
+  type SelectQueryBuilder,
+} from 'typeorm';
+import { v7 as uuidv7 } from 'uuid';
+
+import { type ServiceContext, type UserServiceContext, SYSTEM_USER } from '@ci/common/context';
+import { HbpeNotifyService } from '@ci/common/hbpe';
+import { LoggerService } from '@ci/common/logging';
+import {
+  INGEST_MERGE_KINDS,
+  INGEST_PRODUCER_PREFERENCE,
+  INGEST_REFRESH_COLUMNS,
+  type BulkInsertResult,
+  appendRecordSources,
+  bulkInsertIdempotent,
+  keysetOrderOf,
+  keysetPaginate,
+  keysetSeek,
+  type KeysetPageArgs,
+  type KeysetPage,
+} from '@ci/common/persistence';
+import { EventService } from '@ci/domains/events';
+import { FileRemovedEvent } from '@ci/domains/files/events';
+import type { EntityIdentifier, IndexableEntity } from '@ci/domains/search-next';
+
+import { CommunicationBaseEntity } from '../entities/CommunicationBaseEntity';
+import { CommunicationEntity, Communication, previewFromContent } from '../entities/CommunicationEntity';
+import {
+  CommunicationCreatedEvent,
+  CommunicationUpdatedEvent,
+  CommunicationRemovedEvent,
+  ContentRemovedEvent,
+} from '../events';
+import { ledgerPlatform } from '../identity';
+import { CreateCommunicationDto, UpdateCommunicationDto } from '../types';
+
+import { type PurgedCommunications, purgeCommunicationAggregates } from './communicationPurge';
+import { CtiAggregate, detailChanged, type RepositoryProvider } from './CtiAggregate';
+import { STORED_OBJECTS, StoredObjectsDeletedError, type StoredObjects } from './filePurge';
+import { GraphDeltaWriter } from './GraphDeltaWriter';
+import { nothingWrapped, type WrappedFilesPurged } from './wrappedFilePurge';
+
+interface Options {
+  limit?: number;
+  order?: FindOptionsOrder<CommunicationEntity>;
+  startTime?: Date;
+  endTime?: Date;
+  /** The How filter: `source_system` values to keep (the explorer's connectors). */
+  connectors?: string[];
+  /**
+   * The Who filter: person name patterns (case-insensitive substring) matched
+   * against the Person entities the message's sender / recipients resolved to
+   * — the same rule CalendarEventService applies to an event's participants.
+   * Any one pattern matching is enough (OR). With `direction` set the match
+   * binds to the role the direction implies; see applyPeopleFilter.
+   */
+  people?: string[];
+  /**
+   * Message direction to keep: `inbound` (received) or `outbound` (sent),
+   * relative to the user. Alongside `people` it also decides which role the
+   * person must hold: received *from* them, sent *to* them.
+   */
+  direction?: string;
+  /** Composite keyset cursor for the timed search path (see CalendarEventService). */
+  afterTime?: Date;
+  afterId?: string;
+}
+
+/**
+ * Hourly UTC per-user communication count. Declared locally so this domain
+ * carries no dependency on aggregating consumers; they enforce the shape
+ * structurally where they consume it.
+ */
+export interface HourlyCommunicationCount {
+  userId: string;
+  bucketStart: Date;
+  count: number;
+}
+
+/**
+ * Spanning-aggregate service for the communications CTI split: every
+ * `ci.communications` row has a `Communication`-discriminated base row in
+ * `ci.entities` sharing its uuid (see {@link CommunicationBaseEntity}). Unlike
+ * Item/Event, nothing was normalized away — the base row's `name` is a DERIVED
+ * display label re-computed here whenever its source fields change.
+ */
+@Injectable()
+export class CommunicationService {
+  private readonly aggregate: CtiAggregate<CommunicationEntity, CommunicationBaseEntity>;
+
+  constructor(
+    @InjectRepository(CommunicationEntity)
+    private readonly communicationRepository: Repository<CommunicationEntity>,
+    private readonly eventService: EventService,
+    private readonly logger: LoggerService,
+    private readonly dataSource: DataSource,
+    private readonly graphDeltaWriter: GraphDeltaWriter,
+    @Optional() private readonly hbpeNotify?: HbpeNotifyService,
+    /**
+     * The object store, which {@link purge} deletes the stored files of a message's attachments from.
+     * Optional so that a service built without one still does everything else; a purge that would have to
+     * delete stored bytes and has no store is refused before it changes anything.
+     */
+    @Optional() @Inject(STORED_OBJECTS) private readonly storedObjects?: StoredObjects,
+  ) {
+    this.logger.setContext(CommunicationService.name);
+    this.aggregate = new CtiAggregate({
+      detailRepository: this.communicationRepository,
+      detailEntity: CommunicationEntity,
+      baseEntity: CommunicationBaseEntity,
+      // No baseRepository: the Communication egress composes from the detail
+      // row alone (nothing was normalized away).
+      linkedTable: 'communications',
+      scopedWhere: (context, id) => ({
+        id,
+        ...(context.userId !== SYSTEM_USER && {
+          userId: context.userId,
+        }),
+      }),
+    });
+  }
+
+  /** The base row's derived display label: subject, else preview, else a content clip. */
+  private labelFor(entity: Pick<CommunicationEntity, 'subject' | 'preview' | 'content'>): string | null {
+    // Importers commonly store no-subject messages as '' (not null); a blank
+    // subject/preview must fall through to the next branch, matching the
+    // migration backfill's NULLIF(trim(...), '').
+    const blankToNull = (value: string | null | undefined): string | null => {
+      const trimmed = value?.trim();
+
+      return trimmed ? trimmed : null;
+    };
+
+    return blankToNull(entity.subject) ?? blankToNull(entity.preview) ?? previewFromContent(entity.content);
+  }
+
+  /** Builds the `ci.entities` half of the aggregate from a (hydrated) detail row. */
+  private baseRowFor(manager: RepositoryProvider, entity: CommunicationEntity): CommunicationBaseEntity {
+    return this.aggregate.createBaseRow(manager, {
+      id: entity.id,
+      userId: entity.userId,
+      name: this.labelFor(entity),
+      description: entity.summary ?? null,
+    });
+  }
+
+  /**
+   * The identity-pair lookup shared by the find-before-insert check and
+   * the race-loss fallback below — mirrors EventService.createOne's
+   * sourceWhere. Matches (source_system, source_id) only: source_type is
+   * provenance, and an existing row written by the OTHER pipeline is a hit
+   * (docs/design/cross-pipeline-identity.md). Communications have no
+   * soft-delete column, so unlike Event this doesn't need to special-case
+   * tombstoned rows.
+   */
+  private sourceWhereFor(
+    context: UserServiceContext,
+    data: Pick<CreateCommunicationDto, 'source_type' | 'source_system' | 'source_id'>,
+  ): FindOptionsWhere<CommunicationEntity> | null {
+    return data.source_id
+      ? {
+          userId: context.userId,
+          sourceSystem: data.source_system ?? IsNull(),
+          sourceId: data.source_id,
+        }
+      : null;
+  }
+
+  /**
+   * Ledger an arrival that {@link create} did not see: a producer that found
+   * the row itself via {@link findBySource} and refreshed it with
+   * {@link update} (the connection transforms' find-then-update path). Without
+   * this the ledger shows only the pipeline that inserted the row, and a
+   * cross-pipeline dedup hit leaves no evidence that it happened.
+   */
+  async recordArrival(
+    context: UserServiceContext,
+    recordId: string,
+    data: Pick<
+      CreateCommunicationDto,
+      'source_type' | 'source_system' | 'source_id' | 'source_platform' | 'connection_id'
+    >,
+  ): Promise<void> {
+    await this.ledgerArrival(context, recordId, data);
+  }
+
+  /**
+   * Ledger one arrival of a communication (insert, dedup hit, or lost race —
+   * all three evidence the record; see ci.record_sources). No-op when the
+   * arrival carries an incomplete triple.
+   */
+  private async ledgerArrival(
+    context: UserServiceContext,
+    recordId: string,
+    data: Pick<
+      CreateCommunicationDto,
+      'source_type' | 'source_system' | 'source_id' | 'source_platform' | 'connection_id'
+    >,
+  ): Promise<void> {
+    if (!data.source_type || !data.source_system || !data.source_id) {
+      return;
+    }
+
+    await appendRecordSources(
+      this.communicationRepository.manager,
+      { table: 'communications', userId: context.userId },
+      [
+        {
+          recordId,
+          sourceType: data.source_type,
+          sourceSystem: data.source_system,
+          sourceId: data.source_id,
+          connectionId: data.connection_id ?? null,
+          importRunId: context.importRunId ?? null,
+          platform: ledgerPlatform(data.source_system, data.source_platform),
+        },
+      ],
+    );
+  }
+
+  async create(context: UserServiceContext, data: CreateCommunicationDto): Promise<Communication> {
+    // Idempotency: re-sending an existing (source_type, source_system,
+    // source_id) triple — a flaky-client retry, a webhook re-delivery like
+    // MemoryController.turn() — must return the existing row instead of
+    // hitting communications_source_identity_uniq's unhandled 23505.
+    const sourceWhere = this.sourceWhereFor(context, data);
+    if (sourceWhere) {
+      const existing = await this.communicationRepository.findOne({ where: sourceWhere });
+      if (existing) {
+        await this.ledgerArrival(context, existing.id, data);
+
+        return CommunicationEntity.toEgressType(existing);
+      }
+    }
+
+    const id = data.id ?? uuidv7();
+
+    const communication = this.communicationRepository.create({
+      id,
+      time: data.time,
+      communicationType: data.communication_type,
+      userId: context.userId,
+      deviceId: data.device_id,
+      direction: data.direction,
+      threadId: data.thread_id,
+      fromEntityId: data.from_entity_id,
+      toEntityIds: data.to_entity_ids || [],
+      participantsMetadata: data.participants_metadata || {},
+      metadata: data.metadata || {},
+      subject: data.subject,
+      content: data.content,
+      durationSeconds: data.duration_seconds,
+      sentimentScore: data.sentiment_score,
+      importanceScore: data.importance_score,
+      urgencyScore: data.urgency_score,
+      category: data.category,
+      summary: data.summary,
+      connectionId: data.connection_id,
+      attachments: data.attachments || [],
+      isEncrypted: data.is_encrypted || false,
+      isArchived: data.is_archived || false,
+      preview: data.preview ?? null,
+      sourceType: data.source_type ?? null,
+      sourceSystem: data.source_system ?? null,
+      sourceId: data.source_id ?? null,
+    });
+
+    // People-linking — from_entity_id / to_entity_ids are resolved out-of-band
+    // by CommunicationParticipantLinkListener (consuming the
+    // CommunicationCreatedEvent emitted below). The listener classifies the
+    // raw participants in `participants_metadata`, creates stub Person entities
+    // for previously-unseen identifiers, and writes the resolved ids back.
+    // Bulk createMany does not emit per-row events, so its rows are linked by
+    // the matching backfill pair instead (see MaintenanceController).
+    //
+    // One transaction across both halves of the CTI aggregate: the base row
+    // (derived display label) first, then the detail.
+    let communicationResult: CommunicationEntity;
+    try {
+      communicationResult = await this.communicationRepository.manager.transaction(async (manager) => {
+        await manager.getRepository(CommunicationBaseEntity).save(this.baseRowFor(manager, communication));
+
+        const saved = await manager.getRepository(CommunicationEntity).save(communication);
+        await this.graphDeltaWriter.entityCreated({
+          entityId: id,
+          entityType: 'Communication',
+          name: this.labelFor(saved),
+          description: saved.summary ?? null,
+          ownerUserId: context.userId,
+          changeSource: 'CommunicationService.create',
+          changedByUserId: typeof context.userId === 'string' ? context.userId : null,
+          manager,
+        });
+
+        return saved;
+      });
+    } catch (err) {
+      // Lost a race to a concurrent insert of the same triple — fetch and
+      // return the winner rather than surfacing the raw 23505.
+      if (sourceWhere && (err as { code?: string })?.code === '23505') {
+        const existing = await this.communicationRepository.findOne({ where: sourceWhere });
+        if (existing) {
+          await this.ledgerArrival(context, existing.id, data);
+
+          return CommunicationEntity.toEgressType(existing);
+        }
+      }
+
+      throw err;
+    }
+
+    await this.ledgerArrival(context, communicationResult.id, data);
+    await this.eventService.send(CommunicationCreatedEvent, {
+      communicationId: communicationResult.id,
+    });
+    await this.hbpeNotify?.notifyCommunications(communicationResult.userId, communicationResult.time);
+
+    return CommunicationEntity.toEgressType(communicationResult);
+  }
+
+  /**
+   * Batch, idempotent communication ingest for the importer, keyed on the
+   * identity pair via {@link bulkInsertIdempotent} — the same set-based
+   * INSERT ... ON CONFLICT path as content/events/items/browser_activity.
+   * The arbiter is communications_source_identity_uniq, the
+   * `(user_id, source_system, source_id)` partial unique index:
+   * `time` is deliberately NOT part of the key, because the importer cannot
+   * keep it stable across re-syncs for sources whose row body lacks a usable
+   * timestamp (iMessage attachment-only entries fall back to import
+   * wall-clock). A time-bearing key minted 35,018 duplicate rows once — see
+   * migration 20260807072321 and docs/architecture/hypertable-audit.md, which
+   * de-hypertabled this table precisely so the clean index (and this plain
+   * code path) became possible. For the same reason no `timeColumn` bound is
+   * passed: a re-sent
+   * triple's time may differ from the stored row's, and the plain table needs
+   * no chunk exclusion.
+   *
+   * Re-sends of an existing triple self-heal the source-derived columns
+   * (INGEST_REFRESH_COLUMNS.communication) via ON CONFLICT DO UPDATE instead
+   * of being a find-or-return no-op.
+   *
+   * Bulk ingest does NOT emit per-row CommunicationCreatedEvent: at import
+   * volume the per-row pgboss fan-out (one job per registered queue per row)
+   * was the dominant cost. Search indexing for bulk-loaded rows is deferred to
+   * the post-load batch embed (POST /api/maintenance/search-index/backfill).
+   * Single-row create() still emits, so interactive creates index live.
+   */
+  async createMany(context: UserServiceContext, data: CreateCommunicationDto[]): Promise<Communication[]> {
+    return (await this.createManyDetailed(context, data)).map(({ entity }) => entity);
+  }
+
+  /**
+   * Same ingest as {@link createMany}, reporting which rows this call actually
+   * INSERTED rather than found already present.
+   *
+   * The batch paths upsert, so a re-sent row resolves silently and is
+   * indistinguishable in the returned entities from one written for the first
+   * time. The importer needs the difference: without it a push of 7,339 content
+   * records that collapsed onto 2,354 rows reports 7,339 writes, and its
+   * "already saved" count reads zero on an import that was almost entirely
+   * repeats.
+   */
+  async createManyDetailed(
+    context: UserServiceContext,
+    data: CreateCommunicationDto[],
+  ): Promise<Array<BulkInsertResult<Communication>>> {
+    if (data.length === 0) {
+      return [];
+    }
+
+    const entities = data.map((item) =>
+      this.communicationRepository.create({
+        id: item.id ?? uuidv7(),
+        time: item.time,
+        communicationType: item.communication_type,
+        userId: context.userId,
+        deviceId: item.device_id,
+        direction: item.direction,
+        threadId: item.thread_id,
+        fromEntityId: item.from_entity_id,
+        toEntityIds: item.to_entity_ids || [],
+        participantsMetadata: item.participants_metadata || {},
+        metadata: item.metadata || {},
+        subject: item.subject,
+        content: item.content,
+        durationSeconds: item.duration_seconds,
+        sentimentScore: item.sentiment_score,
+        importanceScore: item.importance_score,
+        urgencyScore: item.urgency_score,
+        category: item.category,
+        summary: item.summary,
+        connectionId: item.connection_id,
+        attachments: item.attachments || [],
+        isEncrypted: item.is_encrypted || false,
+        isArchived: item.is_archived || false,
+        preview: item.preview ?? null,
+        sourceType: item.source_type ?? null,
+        sourceSystem: item.source_system ?? null,
+        sourceId: item.source_id ?? null,
+      }),
+    );
+
+    // Ledger platform per input row (entities[i] was built from data[i]); keyed
+    // by id so the hydrated twin of an input entity resolves to the same value.
+    const platformById = new Map(
+      entities.map((entity, i) => [
+        entity.id,
+        ledgerPlatform(data[i].source_system, data[i].source_platform),
+      ]),
+    );
+
+    // One transaction spans both halves of the CTI aggregate. The base phase
+    // UPSERTS for every result row — not just inserts — because the detail
+    // conflict action refreshes subject/preview/content on re-ingest
+    // (INGEST_REFRESH_COLUMNS.communication) and the base row's derived label
+    // must follow. Labels are derived from the HYDRATED rows, so they reflect
+    // what actually landed (refreshed values applied, stored summary kept).
+    const results = await this.communicationRepository.manager.transaction(async (manager) => {
+      const detailResults = await bulkInsertIdempotent({
+        repository: this.communicationRepository,
+        manager,
+        entities,
+        primaryKey: 'id',
+        getTriple: (entity) => ({
+          sourceType: entity.sourceType,
+          sourceSystem: entity.sourceSystem,
+          sourceId: entity.sourceId,
+          sourcePlatform: platformById.get(entity.id) ?? null,
+        }),
+        scope: { userId: context.userId },
+        conflictTarget: '(user_id, source_system, source_id) WHERE source_id IS NOT NULL',
+        identityColumns: ['source_system', 'source_id'],
+        conflictUpdateColumns: INGEST_REFRESH_COLUMNS.communication,
+        conflictMergeKinds: INGEST_MERGE_KINDS.communication,
+        conflictProducerPreference: INGEST_PRODUCER_PREFERENCE.communication,
+        sourceLedger: {
+          table: 'communications',
+          userId: context.userId,
+          importRunId: context.importRunId ?? null,
+          getConnectionId: (entity) => entity.connectionId,
+        },
+      });
+
+      // One base row per distinct id: intra-batch duplicate triples resolve to
+      // the same hydrated row, and ON CONFLICT DO UPDATE rejects touching one
+      // arbiter row twice in a single statement (SQLSTATE 21000).
+      const baseRows = [
+        ...new Map(detailResults.map(({ entity }) => [entity.id, this.baseRowFor(manager, entity)])).values(),
+      ];
+
+      // The WHERE skips identical-value rewrites: an unchanged re-sync of
+      // the largest table in the schema would otherwise churn a dead tuple
+      // and a search-vector/GIN recompute per row for no change.
+      await this.aggregate.insertBaseRows(
+        manager,
+        baseRows,
+        '(entity_id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description ' +
+          'WHERE (entities.name, entities.description) IS DISTINCT FROM (EXCLUDED.name, EXCLUDED.description)',
+      );
+
+      await this.graphDeltaWriter.recordMany(
+        detailResults
+          .filter(({ inserted }) => inserted)
+          .map(({ entity }) => ({
+            nodeType: 'entity' as const,
+            changeType: 'created' as const,
+            entityId: entity.id,
+            entityType: 'Communication',
+            ownerUserId: context.userId,
+            changeSource: 'CommunicationService.createMany',
+            changedByUserId: typeof context.userId === 'string' ? context.userId : null,
+            changedFields: {
+              name: { new: this.labelFor(entity) },
+              description: { new: entity.summary ?? null },
+              entity_type: { new: 'Communication' },
+              properties: { new: {} },
+            },
+          })),
+        manager,
+      );
+
+      return detailResults;
+    });
+
+    const egress = results.map(({ entity, inserted }) => ({
+      entity: CommunicationEntity.toEgressType(entity),
+      inserted,
+    }));
+    await this.hbpeNotify?.notifyCommunications(
+      context.userId,
+      results.map(({ entity }) => entity.time),
+    );
+
+    return egress;
+  }
+
+  async findAll(context: UserServiceContext): Promise<Communication[]> {
+    const result = await this.communicationRepository.find({
+      where: {
+        userId: context.userId,
+      },
+    });
+
+    return result.map((entity) => CommunicationEntity.toEgressType(entity));
+  }
+
+  /**
+   * Keyset-paginated page for the GraphQL connection — ordered by (time, id)
+   * DESC, only one page (+1 sentinel) is read from Postgres via the
+   * (user_id, time) index instead of loading every row into memory.
+   */
+  async findPage(context: UserServiceContext, args: KeysetPageArgs): Promise<KeysetPage<Communication>> {
+    const page = await keysetPaginate(this.communicationRepository, args, {
+      alias: 'communication',
+      timeProp: 'time',
+      userId: context.userId,
+    });
+
+    return {
+      ...page,
+      entities: page.entities.map((entity) => CommunicationEntity.toEgressType(entity)),
+    };
+  }
+
+  async findById(context: ServiceContext, id: string): Promise<Communication | null> {
+    const result = await this.communicationRepository.findOne({
+      where: {
+        id,
+        ...(context.userId !== SYSTEM_USER && {
+          userId: context.userId,
+        }),
+      },
+    });
+
+    return result ? CommunicationEntity.toEgressType(result) : null;
+  }
+
+  async findByIds(context: ServiceContext, ids: string[]): Promise<(Communication | null)[]> {
+    const result = await this.communicationRepository.find({
+      where: {
+        id: In(ids),
+        ...(context.userId !== SYSTEM_USER && {
+          userId: context.userId,
+        }),
+      },
+    });
+
+    const map = new Map(result.map((entity) => [entity.id, CommunicationEntity.toEgressType(entity)]));
+
+    return ids.map((id) => map.get(id) ?? null);
+  }
+
+  async update(
+    context: ServiceContext,
+    id: string,
+    data: UpdateCommunicationDto,
+  ): Promise<Communication | null> {
+    const updateData: Partial<CommunicationEntity> = {};
+
+    if (data.device_id) {
+      updateData.deviceId = data.device_id;
+    }
+
+    if (data.direction) {
+      updateData.direction = data.direction;
+    }
+
+    if (data.thread_id) {
+      updateData.threadId = data.thread_id;
+    }
+
+    if (data.from_entity_id) {
+      updateData.fromEntityId = data.from_entity_id;
+    }
+
+    if (data.to_entity_ids) {
+      updateData.toEntityIds = data.to_entity_ids;
+    }
+
+    if (data.participants_metadata) {
+      updateData.participantsMetadata = data.participants_metadata;
+    }
+
+    // Was never mapped, so a connector re-transform could refresh a post's
+    // text and attachments but not the metadata beside them — a permalink
+    // that arrived on a later sync stayed missing on every existing row.
+    if (data.metadata !== undefined) {
+      updateData.metadata = data.metadata;
+    }
+
+    // An empty string is how the message page clears the subject, and one that
+    // is only whitespace counts as empty, as it does in labelFor; the label
+    // then falls back to the preview or content. A missing or null subject
+    // still leaves it alone.
+    if (data.subject != null) {
+      updateData.subject = data.subject.trim() ? data.subject : null;
+    }
+
+    if (data.content) {
+      updateData.content = data.content;
+    }
+
+    if (data.attachments) {
+      updateData.attachments = data.attachments;
+    }
+
+    // Numbers and booleans are checked against `undefined`, not truthiness.
+    // A truthiness guard cannot express "set this to zero" or "set this to
+    // false": a 0-second call (every missed call), a neutral sentiment of 0.0,
+    // an importance or urgency of 0, and un-archiving or un-encrypting a
+    // conversation were all silently dropped — the PATCH returned success and
+    // the old value stayed. `preview` below was already fixed for the same
+    // reason; these are the rest of the same bug.
+    if (data.duration_seconds !== undefined) {
+      updateData.durationSeconds = data.duration_seconds;
+    }
+
+    if (data.sentiment_score !== undefined) {
+      updateData.sentimentScore = data.sentiment_score;
+    }
+
+    if (data.importance_score !== undefined) {
+      updateData.importanceScore = data.importance_score;
+    }
+
+    if (data.urgency_score !== undefined) {
+      updateData.urgencyScore = data.urgency_score;
+    }
+
+    if (data.category) {
+      updateData.category = data.category;
+    }
+
+    if (data.summary) {
+      updateData.summary = data.summary;
+    }
+
+    if (data.connection_id) {
+      updateData.connectionId = data.connection_id;
+    }
+
+    if (data.is_encrypted !== undefined) {
+      updateData.isEncrypted = data.is_encrypted;
+    }
+
+    if (data.is_archived !== undefined) {
+      updateData.isArchived = data.is_archived;
+    }
+
+    // (Previously compared against the STRING 'undefined', which is always
+    // true — the guard never guarded.)
+    if (data.preview !== undefined) {
+      updateData.preview = data.preview;
+    }
+
+    // One transaction across both halves of the aggregate; when any source of
+    // the derived label (subject/preview/content) or of the description
+    // (summary) changed, the base row is re-derived from the updated detail.
+    const labelSourcesTouched =
+      data.subject !== undefined ||
+      data.preview !== undefined ||
+      data.content !== undefined ||
+      data.summary !== undefined;
+
+    const updated = await this.aggregate.applyUpdate(
+      context,
+      id,
+      {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        detail: updateData as any, // TypeORM will handle JSON serialization
+        // The base patch derives from the PATCHED detail values, so the label
+        // reflects what is actually being persisted.
+        base: labelSourcesTouched
+          ? (after) => ({
+              name: this.labelFor(after),
+              description: after.summary ?? null,
+            })
+          : undefined,
+      },
+      {
+        withinTx: async ({ manager, before, after }) => {
+          if (!after) {
+            return;
+          }
+
+          // Only what moved. A connector re-sync and the message page's save
+          // hand back what is stored; recorded as given, each read as a rename.
+          const label = { old: this.labelFor(before), new: this.labelFor(after) };
+          const changedFields = {
+            ...(label.old !== label.new ? { name: label } : {}),
+            ...(detailChanged(before, after, Object.keys(updateData))
+              ? { detail_updated: { new: true } }
+              : {}),
+          };
+
+          if (Object.keys(changedFields).length === 0) {
+            return;
+          }
+
+          await this.graphDeltaWriter.entityUpdated({
+            entityId: id,
+            entityType: 'Communication',
+            name: this.labelFor(after),
+            changedFields,
+            ownerUserId: typeof context.userId === 'string' ? context.userId : null,
+            changeSource: 'CommunicationService.update',
+            changedByUserId: typeof context.userId === 'string' ? context.userId : null,
+            manager,
+          });
+        },
+      },
+    );
+
+    if (!updated) {
+      return null;
+    }
+
+    await this.eventService.send(CommunicationUpdatedEvent, {
+      communicationId: id,
+    });
+    await this.hbpeNotify?.notifyCommunications(updated.userId, updated.time);
+
+    // The transaction already reloaded the detail row; the Communication
+    // egress composes from it alone.
+    return CommunicationEntity.toEgressType(updated);
+  }
+
+  async remove(context: ServiceContext, id: string): Promise<boolean> {
+    // Authorized load + base-row delete — the communications_id_entities_fk
+    // ON DELETE CASCADE removes the detail in the same statement.
+    let removedAt: { userId: string; time: Date } | undefined;
+    const removed = await this.aggregate.remove(context, id, {
+      withinTx: async ({ manager, before }) => {
+        removedAt = { userId: before.userId, time: before.time };
+        await this.graphDeltaWriter.entityDeleted({
+          entityId: id,
+          entityType: 'Communication',
+          name: this.labelFor(before),
+          ownerUserId: context.userId !== SYSTEM_USER ? context.userId : before.userId,
+          changeSource: 'CommunicationService.remove',
+          changedByUserId: typeof context.userId === 'string' ? context.userId : null,
+          manager,
+        });
+      },
+    });
+
+    if (!removed) {
+      return false;
+    }
+
+    await this.eventService.send(CommunicationRemovedEvent, {
+      communicationId: id,
+    });
+    if (removedAt) {
+      await this.hbpeNotify?.notifyCommunications(removedAt.userId, removedAt.time);
+    }
+
+    return true;
+  }
+
+  /**
+   * Permanently deletes communications, with everything that only exists because
+   * of them. This is `memory.forget`'s `archive_and_delete` for a `Communication`
+   * node, and the other end from {@link remove}: see
+   * {@link purgeCommunicationAggregates} for what goes, and for how it differs
+   * from `remove`.
+   *
+   * What a message's attachments name goes with it: the content rows over its files, and the stored
+   * files themselves when nothing else uses them. A file that something else still uses stays,
+   * reported in `files.kept` ({@link planWrappedFiles}). The objects are deleted from the object store
+   * inside the transaction, while the rows are locked, and before any row is.
+   *
+   * Everything is one transaction. Search is told afterwards, and so is HBPE, which
+   * re-serialises the days the messages fell on. The ids that were not the caller's,
+   * or no longer exist, are simply left out of the result.
+   *
+   * @throws {StoredObjectsDeletedError} if the stored files were deleted and the rows
+   *   then could not be. The messages named in it are still there, still naming files that
+   *   no longer open, and purging them again finishes the job. Anything that failed before
+   *   that left everything as it was.
+   * @returns the ids that were purged, the content rows that went with them, and what was
+   *   done about the files.
+   */
+  async purge(
+    context: UserServiceContext,
+    ids: string[],
+  ): Promise<{ communicationIds: string[]; contentIds: string[]; files: WrappedFilesPurged }> {
+    const requested = Array.from(new Set(ids));
+
+    if (requested.length === 0) {
+      return { communicationIds: [], contentIds: [], files: nothingWrapped() };
+    }
+
+    // Named by the purge itself once the objects are gone, and read here rather than there
+    // because the commit that follows can fail too.
+    let objectsGoneFor: string[] = [];
+    let purged: PurgedCommunications;
+
+    try {
+      purged = await this.communicationRepository.manager.transaction((manager) =>
+        purgeCommunicationAggregates(manager, context.userId, requested, {
+          objects: this.storedObjects,
+          onObjectsDeleted: (named) => {
+            objectsGoneFor = named;
+          },
+        }),
+      );
+    } catch (error) {
+      throw objectsGoneFor.length > 0 ? new StoredObjectsDeletedError(objectsGoneFor, error) : error;
+    }
+
+    // The index rows were deleted in the transaction. This tells anything else
+    // that listens, and is what announces a removal everywhere else in the app.
+    for (const { id } of purged.communications) {
+      await this.eventService.send(CommunicationRemovedEvent, { communicationId: id });
+    }
+
+    for (const contentId of purged.contentIds) {
+      await this.eventService.send(ContentRemovedEvent, { contentId });
+    }
+
+    for (const fileId of purged.files.fileIds) {
+      await this.eventService.send(FileRemovedEvent, { fileId });
+    }
+
+    if (purged.communications.length > 0) {
+      await this.hbpeNotify?.notifyCommunications(
+        context.userId,
+        purged.communications.map((communication) => communication.time),
+      );
+    }
+
+    return {
+      communicationIds: purged.communications.map((communication) => communication.id),
+      contentIds: purged.contentIds,
+      files: purged.files,
+    };
+  }
+
+  /**
+   * The communication a provenance triple already resolves to, if any.
+   *
+   * The per-row ETL transforms use `create()` (so the row is indexed live —
+   * see the note in Slack's TransformMessages) and therefore cannot use the
+   * ON CONFLICT path `createMany` has. Until this existed, a re-synced row's
+   * only signal was the 23505 from communications_source_identity_uniq, which
+   * every connector swallowed — fine for a chat message that never changes,
+   * useless for a post whose attachments are catalogued after the row exists.
+   * This is the read half of "find, then update" for those callers.
+   */
+  async findBySource(
+    context: ServiceContext,
+    source: { source_type?: string; source_system: string; source_id: string },
+  ): Promise<Communication | null> {
+    // Identity is (source_system, source_id); source_type is provenance and
+    // deliberately not matched — the row may have been written by the other
+    // pipeline (docs/design/cross-pipeline-identity.md).
+    const entity = await this.communicationRepository.findOne({
+      where: {
+        ...(context.userId !== SYSTEM_USER && {
+          userId: context.userId,
+        }),
+        sourceSystem: source.source_system,
+        sourceId: source.source_id,
+      },
+    });
+
+    return entity ? CommunicationEntity.toEgressType(entity) : null;
+  }
+
+  async findByThreadId(context: ServiceContext, threadId: string): Promise<CommunicationEntity[]> {
+    return this.communicationRepository.find({
+      where: {
+        ...(context.userId !== SYSTEM_USER && {
+          userId: context.userId,
+        }),
+        threadId: threadId,
+      },
+      order: { time: 'ASC' },
+    });
+  }
+
+  async findByUserId(context: UserServiceContext, limit = 100): Promise<CommunicationEntity[]> {
+    return this.communicationRepository.find({
+      where: {
+        userId: context.userId,
+      },
+      order: { time: 'DESC' },
+      take: limit,
+    });
+  }
+
+  async getEntitiesForCommunications(
+    context: ServiceContext,
+    options: Options,
+  ): Promise<EntityIdentifier<IndexableEntity>[]> {
+    let query = this.dataSource
+      .getRepository(CommunicationEntity)
+      .createQueryBuilder('communications')
+      .select(['communications.id'])
+      .where('communications.user_id = :userId', { userId: context.userId });
+
+    if (options.limit) {
+      query = query.limit(options.limit);
+    }
+
+    // The direction `order` asks for (its first key, as for the primary sort); the tiebreak and the
+    // keyset below run the same way, so a page is always the rows PAST the cursor in that direction.
+    const direction = keysetOrderOf(options.order);
+
+    if (options.order) {
+      for (const [field, fieldDirection] of Object.entries(options.order)) {
+        query = query.orderBy(`communications.${field}`, fieldDirection as 'ASC' | 'DESC');
+      }
+
+      // Deterministic tiebreak so same-timestamp rows page consistently.
+      query = query.addOrderBy('communications.id', direction);
+    }
+
+    // Composite keyset: page strictly past (afterTime, afterId) in (time, id), in `order` — see keysetSeek.
+    if (options.afterTime && options.afterId) {
+      query = query.andWhere(
+        ...keysetSeek(
+          'communications.time',
+          'communications.id',
+          direction,
+          options.afterTime,
+          options.afterId,
+        ),
+      );
+    }
+
+    if (options.connectors && options.connectors.length > 0) {
+      query = query.andWhere('communications.source_system IN (:...connectors)', {
+        connectors: options.connectors,
+      });
+    }
+
+    if (options.people && options.people.length > 0) {
+      query = this.applyPeopleFilter(query, context, options.people, options.direction);
+    }
+
+    if (options.direction) {
+      query = query.andWhere('communications.direction = :direction', { direction: options.direction });
+    }
+
+    if (options.startTime) {
+      query = query.andWhere('communications.time >= :startTime', { startTime: options.startTime });
+    }
+
+    if (options.endTime) {
+      query = query.andWhere('communications.time <= :endTime', { endTime: options.endTime });
+    }
+
+    const results = await query.getRawMany();
+
+    return results.map((row: { communications_id: string; type: IndexableEntity }) => ({
+      id: row.communications_id,
+      type: 'communication' as IndexableEntity,
+    }));
+  }
+
+  /**
+   * True total of communications matching the same filters {@link getEntitiesForCommunications}
+   * applies (minus the pagination-only `limit`/`order`/`afterTime`/`afterId`) — a real `COUNT(*)`,
+   * not the length of one `limit`-bounded page of identifiers. See CalendarEventService.countEntitiesForEvents.
+   */
+  async countEntitiesForCommunications(
+    context: ServiceContext,
+    options: Pick<Options, 'startTime' | 'endTime' | 'connectors' | 'people' | 'direction'>,
+  ): Promise<number> {
+    let query = this.dataSource
+      .getRepository(CommunicationEntity)
+      .createQueryBuilder('communications')
+      .where('communications.user_id = :userId', { userId: context.userId });
+
+    if (options.connectors && options.connectors.length > 0) {
+      query = query.andWhere('communications.source_system IN (:...connectors)', {
+        connectors: options.connectors,
+      });
+    }
+
+    if (options.people && options.people.length > 0) {
+      query = this.applyPeopleFilter(query, context, options.people, options.direction);
+    }
+
+    if (options.direction) {
+      query = query.andWhere('communications.direction = :direction', { direction: options.direction });
+    }
+
+    if (options.startTime) {
+      query = query.andWhere('communications.time >= :startTime', { startTime: options.startTime });
+    }
+
+    if (options.endTime) {
+      query = query.andWhere('communications.time <= :endTime', { endTime: options.endTime });
+    }
+
+    return query.getCount();
+  }
+
+  /**
+   * "Who": keep the messages the named person is party to. Without a
+   * direction that is either role — sender (`from_entity_id`) or any recipient
+   * (`to_entity_ids`, as linked by PersonLinkStage). With one, the person must
+   * hold the role the direction implies: `inbound` (received) keeps messages
+   * *from* them, `outbound` (sent) keeps messages *to* them. Otherwise a group
+   * chat the person merely belongs to would surface everyone else's messages
+   * under "Received", since those are inbound to the user and list the person
+   * among the recipients. The direction column itself is matched by the
+   * callers. Shared by the timed fetch and its COUNT(*) so a page and its total
+   * agree.
+   */
+  private applyPeopleFilter(
+    query: SelectQueryBuilder<CommunicationEntity>,
+    context: ServiceContext,
+    people: string[],
+    direction?: string,
+  ): SelectQueryBuilder<CommunicationEntity> {
+    const matchingPeople = `
+      SELECT entity_id FROM ci.entities
+      WHERE owner_user_id = :userId AND entity_type = 'Person' AND name ILIKE ANY(:peoplePatterns)
+    `;
+    const sentByPerson = `communications.from_entity_id IN (${matchingPeople})`;
+    const sentToPerson = `communications.to_entity_ids && ARRAY(${matchingPeople})::uuid[]`;
+
+    const predicate =
+      direction === 'inbound'
+        ? sentByPerson
+        : direction === 'outbound'
+          ? sentToPerson
+          : `(${sentByPerson} OR ${sentToPerson})`;
+
+    return query.andWhere(predicate, {
+      userId: context.userId,
+      peoplePatterns: people.map((name) => `%${name}%`),
+    });
+  }
+
+  /**
+   * Hourly UTC activity buckets for the activity rollup: communications
+   * counted by their event `time`, per user.
+   */
+  async aggregateHourlyActivity(): Promise<HourlyCommunicationCount[]> {
+    const rows: Array<{ user_id: string; bucket_start: Date; count: number }> =
+      await this.communicationRepository
+        .createQueryBuilder('communication')
+        .select('communication.userId', 'user_id')
+        .addSelect(`date_trunc('hour', communication.time, 'UTC')`, 'bucket_start')
+        .addSelect('COUNT(*)::int', 'count')
+        .groupBy('user_id')
+        .addGroupBy('bucket_start')
+        .getRawMany();
+
+    return rows.map((row) => ({ userId: row.user_id, bucketStart: row.bucket_start, count: row.count }));
+  }
+}

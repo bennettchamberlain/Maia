@@ -1,0 +1,256 @@
+import { Injectable } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, MoreThan, Repository } from 'typeorm';
+import { v7 as uuid7 } from 'uuid';
+
+import { SYSTEM_USER, type ServiceContext, type UserServiceContext } from '@ci/common/context';
+import { EventService } from '@ci/domains/events';
+
+import { ThreadEntity, type Thread } from '../entities/ThreadEntity';
+import { ThreadCreatedEvent, ThreadUpdatedEvent, ThreadRemovedEvent } from '../events';
+import type { CreateThreadDto, UpdateThreadDto } from '../types';
+
+import { MessageService } from './MessageService';
+
+@Injectable()
+export class ThreadService {
+  constructor(
+    @InjectRepository(ThreadEntity)
+    private readonly threadRepository: Repository<ThreadEntity>,
+    private readonly messageService: MessageService,
+    private readonly eventService: EventService,
+    private readonly eventEmitter: EventEmitter2,
+  ) {}
+
+  async create(context: UserServiceContext, data: CreateThreadDto): Promise<Thread> {
+    const id = data.id ?? uuid7();
+
+    const instance = this.threadRepository.create({
+      ...data,
+      id,
+      user: {
+        id: context.userId,
+      },
+    });
+
+    const entity = await this.threadRepository.save(instance);
+
+    await this.eventService.send(ThreadCreatedEvent, {
+      threadId: entity.id,
+    });
+
+    return ThreadEntity.toEgressType(entity);
+  }
+
+  async findAll(context: ServiceContext): Promise<Thread[]> {
+    const entities = await this.threadRepository.find({
+      where: {
+        ...(context.userId !== SYSTEM_USER && {
+          user: {
+            id: context.userId,
+          },
+        }),
+        isArchived: false,
+      },
+      order: {
+        updatedAt: 'DESC',
+      },
+      relations: ['user'],
+    });
+
+    return entities.map((entity) => ThreadEntity.toEgressType(entity));
+  }
+
+  async findByIds(context: ServiceContext, ids: string[]): Promise<(Thread | null)[]> {
+    const entities = await this.threadRepository.find({
+      where: {
+        id: In(ids),
+        ...(context.userId !== SYSTEM_USER && {
+          user: {
+            id: context.userId,
+          },
+        }),
+        isArchived: false,
+      },
+      relations: ['user'],
+    });
+
+    const map = new Map(entities.map((entity) => [entity.id, ThreadEntity.toEgressType(entity)]));
+
+    return ids.map((id) => map.get(id) ?? null);
+  }
+
+  async findById(context: ServiceContext, id: string): Promise<Thread | null> {
+    const result = await this.threadRepository.findOne({
+      where: {
+        id,
+        ...(context.userId !== SYSTEM_USER && {
+          user: {
+            id: context.userId,
+          },
+        }),
+        isArchived: false,
+      },
+      relations: ['user'],
+    });
+
+    if (result == null) {
+      return null;
+    }
+
+    return ThreadEntity.toEgressType(result);
+  }
+
+  /**
+   * How many threads, for any user, currently have a chat turn queued or
+   * running — the signal background GPU work yields to.
+   *
+   * `generation_status` is written `queued` at enqueue and `running`/`idle`
+   * by the turn itself, so it is the app's own statement that someone is
+   * waiting on the model. Bounded by `freshWithinMs` on `updated_at` because
+   * the status is not always cleaned up: a process that dies mid-turn leaves
+   * `running` behind until pg-boss retries the job (which rewrites it) or
+   * gives up (which never does). Without the bound, one such row would hold
+   * every yielding queue off the GPU for good.
+   */
+  countPendingGenerations(freshWithinMs: number): Promise<number> {
+    return this.threadRepository.count({
+      where: {
+        generationStatus: In(['queued', 'running']),
+        updatedAt: MoreThan(new Date(Date.now() - freshWithinMs)),
+      },
+    });
+  }
+
+  exists(context: ServiceContext, id: string): Promise<boolean> {
+    return this.threadRepository.exists({
+      where: {
+        id,
+        ...(context.userId !== SYSTEM_USER && {
+          user: {
+            id: context.userId,
+          },
+        }),
+        isArchived: false,
+      },
+    });
+  }
+
+  async update(context: ServiceContext, id: string, data: UpdateThreadDto): Promise<Thread | null> {
+    const result = await this.threadRepository.update(
+      {
+        id,
+        ...(context.userId !== SYSTEM_USER && {
+          user: {
+            id: context.userId,
+          },
+        }),
+        isArchived: false,
+      },
+      data,
+    );
+
+    if (result.affected === 0) {
+      return null;
+    }
+
+    await this.eventService.send(ThreadUpdatedEvent, {
+      threadId: id,
+    });
+
+    return this.findById(context, id);
+  }
+
+  /**
+   * Give a thread a title, and ONLY if it still has none. Returns whether it wrote.
+   *
+   * One conditional UPDATE, not a read followed by a write: a stand-in title (the person's first words, written when
+   * the model could not name the thread) must never replace a real one, and a title job takes seconds — a later turn's
+   * job, or a rename, can land inside that gap. Here the row decides, atomically.
+   */
+  async nameIfUnnamed(context: ServiceContext, id: string, name: string): Promise<boolean> {
+    const query = this.threadRepository
+      .createQueryBuilder()
+      .update(ThreadEntity)
+      .set({ name })
+      .where('thread_id = :id', { id })
+      .andWhere('is_archived = false')
+      .andWhere("(title IS NULL OR btrim(title) = '')");
+
+    if (context.userId !== SYSTEM_USER) {
+      query.andWhere('user_id = :userId', { userId: context.userId });
+    }
+
+    const result = await query.execute();
+
+    if (!result.affected) {
+      return false;
+    }
+
+    await this.eventService.send(ThreadUpdatedEvent, {
+      threadId: id,
+    });
+
+    return true;
+  }
+
+  async remove(context: ServiceContext, id: string): Promise<boolean> {
+    const result = await this.threadRepository.delete({
+      id,
+      ...(context.userId !== SYSTEM_USER && {
+        user: {
+          id: context.userId,
+        },
+      }),
+    });
+
+    if (result.affected === 0) {
+      return false;
+    }
+
+    this.eventEmitter.emit(ThreadRemovedEvent, { threadId: id });
+
+    await this.eventService.send(ThreadRemovedEvent, {
+      threadId: id,
+    });
+
+    return true;
+  }
+
+  async softRemove(context: ServiceContext, id: string): Promise<boolean> {
+    // Update is_archived instead of using TypeORM's softDelete
+    const result = await this.threadRepository.update(
+      {
+        id,
+        ...(context.userId !== SYSTEM_USER && {
+          user: {
+            id: context.userId,
+          },
+        }),
+      },
+      {
+        isArchived: true,
+      },
+    );
+
+    if (result.affected === 0) {
+      return false;
+    }
+
+    this.eventEmitter.emit(ThreadRemovedEvent, { threadId: id });
+
+    await this.eventService.send(ThreadRemovedEvent, {
+      threadId: id,
+    });
+
+    // We should not be doing this here, this is a MessageService concern.
+    // Consider this an anti-pattern, hence why the thread deleted event is
+    // emitted before this happens. We can circle back to fix this.
+    const messages = await this.messageService.findByThreadId(context, id);
+
+    await Promise.all(messages.map((message) => this.messageService.softRemove(context, message.id)));
+
+    return true;
+  }
+}

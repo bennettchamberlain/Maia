@@ -1,0 +1,194 @@
+import { UseGuards } from '@nestjs/common';
+import { Args, ID, Mutation, Parent, Query, Resolver, ResolveField } from '@nestjs/graphql';
+
+import { Context, type RequestContext, toServiceContext } from '@ci/common/context';
+import { JwtOrApiKeyAuthGuard } from '@ci/common/guards';
+import { MaxArraySizePipe } from '@ci/common/pipes';
+import { BrowserActivityService, type CreateBrowserActivityDto } from '@ci/domains/browser-activity';
+import { adoptIngestIdentity } from '@ci/domains/memory';
+
+import { GraphqlPrivacy } from '../decorators/GraphqlPrivacy';
+import { TagLoader } from '../loaders/TagLoader';
+import { BrowserActivityConnection } from '../types/BrowserActivityConnection';
+import { BrowserActivityEdge } from '../types/BrowserActivityEdge';
+import { BrowserActivityType } from '../types/BrowserActivityType';
+import { CreateBrowserActivityInput } from '../types/CreateBrowserActivityInput';
+import { DeleteByIdInput } from '../types/DeleteByIdInput';
+import { DeleteByIdPayload } from '../types/DeleteByIdPayload';
+import { EntityTagType } from '../types/EntityTagType';
+import { GlobalUID } from '../types/GlobalUID';
+import { PaginationArgs } from '../types/PaginationArgs';
+import { UpdateBrowserActivityInput } from '../types/UpdateBrowserActivityInput';
+
+@UseGuards(JwtOrApiKeyAuthGuard)
+@Resolver(() => BrowserActivityType)
+export class BrowserActivityResolver {
+  constructor(
+    private readonly browserActivityService: BrowserActivityService,
+    private readonly tagLoader: TagLoader,
+  ) {}
+
+  @Query(() => BrowserActivityConnection)
+  async browserActivities(
+    @Context() context: RequestContext,
+    @Args() pagination: PaginationArgs,
+  ): Promise<BrowserActivityConnection> {
+    const serviceContext = toServiceContext(context);
+
+    const { entities, hasNextPage, hasPreviousPage, totalCount } = await this.browserActivityService.findPage(
+      serviceContext,
+      {
+        first: pagination.first,
+        last: pagination.last,
+        afterId: pagination.after ? GlobalUID.decode(pagination.after).id : null,
+        beforeId: pagination.before ? GlobalUID.decode(pagination.before).id : null,
+      },
+    );
+
+    const edges: BrowserActivityEdge[] = entities.map((entity) => {
+      const node = BrowserActivityType.toType(entity);
+
+      return {
+        node,
+        cursor: node.id,
+      };
+    });
+
+    const pageInfo = {
+      hasNextPage,
+      hasPreviousPage,
+      startCursor: edges.length > 0 ? edges[0].cursor : null,
+      endCursor: edges.length > 0 ? edges[edges.length - 1].cursor : null,
+    };
+
+    return {
+      edges,
+      pageInfo,
+      totalCount,
+    };
+  }
+
+  @Query(() => BrowserActivityType, { nullable: true })
+  async browserActivity(
+    @Context() context: RequestContext,
+    @Args('id', { type: () => ID }) gid: string,
+  ): Promise<BrowserActivityType | null> {
+    const serviceContext = toServiceContext(context);
+
+    const id = GlobalUID.parse('browser-activity', gid);
+
+    const entity = await this.browserActivityService.findById(serviceContext, id);
+
+    return entity ? BrowserActivityType.toType(entity) : null;
+  }
+
+  /**
+   * Batch, idempotent browser-activity ingest for the importer. Each input dedupes
+   * on the provenance triple (user, sourceType, sourceSystem, sourceId) so a
+   * re-sync returns the existing activity instead of inserting a duplicate.
+   * Returns created-or-existing rows in input order.
+   */
+  @Mutation(() => [BrowserActivityType])
+  // Idempotent bulk ingest: inserts new rows, and a re-sync only self-heals a
+  // fixed set of capture-derived columns on conflict (INGEST_REFRESH_COLUMNS) —
+  // never a delete or a wholesale overwrite of unrelated data.
+  @GraphqlPrivacy({ destructive: false })
+  async createBrowserActivities(
+    @Context() context: RequestContext,
+    @Args('input', { type: () => [CreateBrowserActivityInput] }, new MaxArraySizePipe())
+    input: CreateBrowserActivityInput[],
+  ): Promise<BrowserActivityType[]> {
+    const serviceContext = toServiceContext(context);
+
+    const activities = await this.browserActivityService.createMany(
+      serviceContext,
+      input.map((item) => ({
+        time: item.time.toISOString(),
+        url: item.url,
+        title: item.title,
+        action_type: item.actionType as CreateBrowserActivityDto['action_type'],
+        properties: item.properties,
+        duration_seconds: item.durationSeconds,
+        scroll_depth_percent: item.scrollDepthPercent,
+        page_summary: item.pageSummary,
+        category: item.category,
+        productivity_score: item.productivityScore,
+        is_incognito: item.isIncognito,
+        contains_sensitive: item.containsSensitive,
+        device_id: item.deviceId,
+        source_type: item.sourceType,
+        // Canonicalize the extension's system spelling (e.g. chrome ->
+        // chromium) so browser rows share a namespace with the history
+        // importers — docs/design/cross-pipeline-identity.md.
+        source_system: adoptIngestIdentity(item.sourceSystem, item.sourceId).system,
+        source_id: adoptIngestIdentity(item.sourceSystem, item.sourceId).id,
+      })),
+    );
+
+    return activities.map((activity) => BrowserActivityType.toType(activity));
+  }
+
+  @Mutation(() => BrowserActivityType, { nullable: true })
+  // Patches only this row's own title/url; nothing else is touched or removed.
+  @GraphqlPrivacy({ destructive: false })
+  async updateBrowserActivity(
+    @Context() context: RequestContext,
+    @Args('input') input: UpdateBrowserActivityInput,
+  ): Promise<BrowserActivityType | null> {
+    const serviceContext = toServiceContext(context);
+
+    const id = GlobalUID.parse('browser-activity', input.id);
+
+    const entity = await this.browserActivityService.update(serviceContext, id, {
+      title: input.title,
+      url: input.url,
+    });
+
+    return entity ? BrowserActivityType.toType(entity) : null;
+  }
+
+  /**
+   * Deletes a browsing record addressed by its global id. A HARD delete — the
+   * visit and its `ci.entities` base row are destroyed and cannot be restored.
+   */
+  @Mutation(() => DeleteByIdPayload)
+  // Confirmed HARD delete per the method's own doc comment above: BrowserActivityService.remove
+  // issues a `repository.delete`, with no restore path in the schema.
+  @GraphqlPrivacy({ access: 'delete', destructive: true })
+  async deleteBrowserActivity(
+    @Context() context: RequestContext,
+    @Args('input') input: DeleteByIdInput,
+  ): Promise<DeleteByIdPayload> {
+    const serviceContext = toServiceContext(context);
+
+    const id = GlobalUID.parse('browser-activity', input.id);
+
+    const success = await this.browserActivityService.remove(serviceContext, id);
+
+    if (!success) {
+      return {
+        success: false,
+      };
+    }
+
+    return {
+      success,
+      deletedId: input.id,
+    };
+  }
+
+  @ResolveField(() => [EntityTagType])
+  async tags(
+    @Context() context: RequestContext,
+    @Parent() parent: BrowserActivityType,
+  ): Promise<EntityTagType[]> {
+    const serviceContext = toServiceContext(context);
+
+    const tags = await this.tagLoader.load(serviceContext, {
+      type: 'browser-activity',
+      id: parent.__source.id,
+    });
+
+    return tags.map((tag) => EntityTagType.toType(tag));
+  }
+}

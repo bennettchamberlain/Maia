@@ -1,0 +1,963 @@
+import { Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Brackets, Repository } from 'typeorm';
+
+import { RequestContext } from '@ci/common/context';
+
+import { DEAD_LETTER_QUEUE } from '../constants';
+import { JobCategoryMetricEntity } from '../entities/JobCategoryMetricEntity';
+import { JobMetricEntity } from '../entities/JobMetricEntity';
+import { PgBossArchiveEntity } from '../entities/PgBossArchiveEntity';
+import { PgBossJobEntity } from '../entities/PgBossJobEntity';
+import {
+  categoryOfJob,
+  describeJob,
+  jobCategorySelector,
+  JOB_TYPES,
+  UNCLASSIFIED_CATEGORY,
+} from '../taxonomy';
+
+export interface JobListItemDto {
+  readonly id: string;
+  readonly queue: string;
+  readonly state: string;
+  readonly event: string | null;
+  readonly workType: string | null;
+  /** Human label from the taxonomy — what this job actually does. */
+  readonly label: string;
+  readonly category: string;
+  readonly description: string;
+  readonly interactive: boolean;
+  readonly createdOn: string;
+  readonly startedOn: string | null;
+  readonly completedOn: string | null;
+  /** Wall-clock run time in ms, when the job has both timestamps. */
+  readonly durationMs: number | null;
+  readonly retryCount: number;
+  readonly retryLimit: number;
+  readonly payloadBytes: number;
+  readonly failure: { message: string; stack?: string; failedAt?: string } | null;
+  /** True when this row is the dead-letter copy rather than the original. */
+  readonly deadLettered: boolean;
+}
+
+export interface JobListDto {
+  readonly items: readonly JobListItemDto[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+  /** Distinct queues present, so the filter can be populated without a second call. */
+  readonly queues: readonly string[];
+  /** Per-state counts for the CURRENT filter, minus the state filter itself. */
+  readonly stateCounts: Readonly<Record<string, number>>;
+  /**
+   * Per-category counts for the CURRENT filter, minus the category and type
+   * filters — so a category chip shows what selecting it would yield, the same
+   * contract {@link stateCounts} gives the state tabs.
+   *
+   * `type` is dropped as well as `category` because picking a category clears
+   * the type filter in the UI; leaving `type` applied would make every chip but
+   * one read zero.
+   *
+   * Includes the {@link UNCLASSIFIED_CATEGORY} key for jobs whose event name has
+   * no taxonomy entry. Without it the chips cannot sum to the "All" state tab
+   * and the shortfall is unexplainable on screen — measured on a live appliance
+   * as 587 of 9,557 jobs, and 54% of everything not dead-lettered.
+   */
+  readonly categoryCounts: Readonly<Record<string, number>>;
+}
+
+export interface JobHistoryPointDto {
+  readonly at: string;
+  readonly pending: number;
+  readonly active: number;
+  readonly retry: number;
+  readonly deadLettered: number;
+  readonly completed: number;
+  readonly failed: number;
+  readonly avgDurationMs: number | null;
+  readonly p95DurationMs: number | null;
+}
+
+export interface JobHistoryDto {
+  readonly points: readonly JobHistoryPointDto[];
+  readonly queues: readonly string[];
+  readonly bucketMinutes: number;
+  readonly windowHours: number;
+}
+
+export interface JobCategoryHistoryPointDto {
+  readonly at: string;
+  /**
+   * Jobs of each category ENQUEUED in this bucket. Zero-filled across every key
+   * in {@link JobCategoryHistoryDto.categories}, so a chart can read a series
+   * straight off the points without deciding what an absent key means.
+   */
+  readonly counts: Readonly<Record<string, number>>;
+}
+
+export interface JobCategoryHistoryDto {
+  readonly points: readonly JobCategoryHistoryPointDto[];
+  /** Categories actually present in the window, sorted — the chart's series. */
+  readonly categories: readonly string[];
+  readonly bucketMinutes: number;
+  readonly windowHours: number;
+  /**
+   * Which store the returned buckets came from.
+   *
+   * `live` — every bucket was counted from `pgboss.job`/`archive` directly.
+   * `metrics` — every bucket came from the sampled `ci.job_category_metrics`.
+   * `mixed` — the recent end is live and the older end is sampled.
+   *
+   * Reported rather than inferred because the two differ in kind: the live
+   * count is exact and the sampled one is only as complete as the collector's
+   * uptime, and a reader cannot tell which they are looking at from the shape
+   * of the curve.
+   */
+  readonly source: 'live' | 'metrics' | 'mixed';
+}
+
+export interface JobQuery {
+  readonly state?: string;
+  readonly queue?: string;
+  readonly category?: string;
+  /** Exact event name, e.g. `smart.rotation.work`. Narrower than `category`. */
+  readonly type?: string;
+  readonly search?: string;
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+/** Hard ceiling on a page, whatever the caller asks for. */
+const MAX_LIMIT = 200;
+const DEFAULT_LIMIT = 50;
+
+/** Window bounds shared by every chart endpoint. 30 days is the collector's retention. */
+const MIN_WINDOW_HOURS = 1;
+const MAX_WINDOW_HOURS = 24 * 30;
+const DEFAULT_WINDOW_HOURS = 24;
+
+/**
+ * Bucket width for a window, so a 30-day chart is not 8,640 points.
+ *
+ * Shared by every series on the Jobs dashboard: two charts drawn from the same
+ * window must land on the SAME x-axis, and they only do if they round time with
+ * the same divisor. 5 minutes is the floor because that is the collector's
+ * sample interval — a narrower bucket would draw gaps that are an artefact of
+ * the sampler rather than of the queue.
+ */
+function bucketMinutesFor(windowHours: number): number {
+  return windowHours <= 6 ? 5 : windowHours <= 48 ? 30 : 180;
+}
+
+/** Clamp a caller-supplied window to what the stores can actually answer for. */
+function clampWindowHours(windowHours: number | undefined): number {
+  return Math.min(Math.max(windowHours ?? DEFAULT_WINDOW_HOURS, MIN_WINDOW_HOURS), MAX_WINDOW_HOURS);
+}
+
+/**
+ * The queryable view of the job tables.
+ *
+ * Split from `JobMonitorService` (which answers "how is the appliance doing?")
+ * because this answers a different question — "find me these specific jobs" —
+ * and it needs filtering, paging and a stable ordering that the summary does
+ * not. Both read the same tables. The one write is {@link clearTerminal}: an
+ * operator clearing exhausted dead-letter or failed rows from the Health card.
+ *
+ * As with the dashboard summary, job payloads never leave the list path: rows
+ * are projected to their taxonomy description plus a parsed failure. See
+ * `JobRecordDto` in JobMonitorService for the reasoning.
+ */
+export type TerminalJobClearScope = 'dead-letter' | 'failed';
+
+export interface TerminalJobClearDto {
+  readonly scope: TerminalJobClearScope;
+  /** Rows actually removed for this scope, across every table it touches. */
+  readonly deleted: number;
+  /**
+   * Rows this scope deliberately LEFT BEHIND, so the caller can say why the
+   * number on screen did not reach zero rather than leaving an operator to
+   * click again.
+   *
+   * Only `dead-letter` can be non-zero: it is the count of dead letters the
+   * reaper has not copied into `ci.pipeline_dead_letters` yet, which this
+   * refuses to delete. Always 0 for `failed`.
+   */
+  readonly retained: number;
+}
+
+/**
+ * The one predicate standing between `Clear` and permanent data loss.
+ *
+ * Schema-qualified rather than aliased on purpose: TypeORM's DELETE builder
+ * emits `DELETE FROM "pgboss"."job"` with no alias, so the correlated reference
+ * has to name the table. Writing it as `"pgboss"."job"."id"` also survives
+ * TypeORM later choosing to emit one.
+ */
+const HARVESTED_DEAD_LETTER =
+  'EXISTS (SELECT 1 FROM ci.pipeline_dead_letters d WHERE d.id = "pgboss"."job"."id")';
+
+@Injectable()
+export class JobQueryService {
+  constructor(
+    @InjectRepository(PgBossJobEntity)
+    private readonly jobRepository: Repository<PgBossJobEntity>,
+    @InjectRepository(PgBossArchiveEntity)
+    private readonly archiveRepository: Repository<PgBossArchiveEntity>,
+    @InjectRepository(JobMetricEntity)
+    private readonly metricRepository: Repository<JobMetricEntity>,
+    @InjectRepository(JobCategoryMetricEntity)
+    private readonly categoryMetricRepository: Repository<JobCategoryMetricEntity>,
+  ) {}
+
+  /**
+   * Permanently delete terminal jobs the Health card has already named.
+   *
+   * `dead-letter` removes dead-letter rows **that have already been harvested**;
+   * `failed` removes the origin rows that minted those copies, wherever they
+   * currently live. Neither touches live work (`created` / `active` / `retry`)
+   * or completed history. Irreversible; the Health card asks before calling.
+   */
+  async clearTerminal(context: RequestContext, scope: TerminalJobClearScope): Promise<TerminalJobClearDto> {
+    if (!context.userId) {
+      throw new UnauthorizedException('A user context is required.');
+    }
+
+    return scope === 'dead-letter' ? this.clearHarvestedDeadLetters() : this.clearFailedOrigins();
+  }
+
+  /**
+   * Delete only the dead letters `DeadLetterReaperListener` has already copied
+   * into `ci.pipeline_dead_letters`.
+   *
+   * ── Why this cannot be an unqualified DELETE ───────────────────────────────
+   *
+   * It shipped as one — `DELETE FROM pgboss.job WHERE name = 'dead-letter'`,
+   * no predicate — and the dead-letter queue is not unconsumed. The reaper
+   * copies at most DEAD_LETTER_REAP_BATCH (500) rows every two minutes into
+   * `ci.pipeline_dead_letters`, which is the table the Dead letters card on this
+   * same page renders and replays from. So `Clear` was racing a harvest it could
+   * not see: at 20,000 dead letters the reaper needs ~80 minutes to drain, and a
+   * click ten minutes in destroyed ~19,500 payloads plus their failure output
+   * from BOTH tables, with no ledger row and no replay path.
+   *
+   * It is worst in exactly the case the button is most tempting. When the worker
+   * is down the reaper's cron is not ticking either, so nothing has been
+   * harvested at all and an unqualified Clear destroys 100% of the evidence
+   * about what died — during the incident that produced it.
+   *
+   * `DeadLetterReaperListener`'s own header states the invariant this broke:
+   * it never deletes, so pg-boss's copy stays inspectable alongside ours, and
+   * `purgeReplayed` refuses to touch an unreplayed letter at ANY age because the
+   * payload is frequently the only surviving copy of a record the source will
+   * not re-send. A Clear button is not a licence to make that decision for the
+   * operator, so it deletes only what the ledger already holds.
+   *
+   * The predicate is exact rather than approximate: `ci.pipeline_dead_letters.id`
+   * IS the originating `pgboss.job.id` (the reaper sets it deliberately, as its
+   * idempotency key), so `EXISTS (… WHERE d.id = job.id)` matches a row if and
+   * only if its payload is safe in our table. There is no clock and no window
+   * involved, so nothing about it can be too aggressive under load.
+   */
+  private async clearHarvestedDeadLetters(): Promise<TerminalJobClearDto> {
+    // Fail CLOSED when the ledger is absent. `ci.pipeline_dead_letters` is
+    // created by a migration, so it is missing on a node that started before
+    // `migrate-database` finished — and on such a node "nothing is harvested" is
+    // indistinguishable from "everything is", which is precisely the confusion
+    // that must not end in a DELETE. Raising here is also what keeps the
+    // predicate honest: without the guard the missing relation would surface as
+    // a raw Postgres error an operator would reasonably read as a UI bug.
+    const [ledger] = await this.jobRepository.query<Array<{ present: boolean }>>(
+      `SELECT to_regclass('ci.pipeline_dead_letters') IS NOT NULL AS present`,
+    );
+
+    if (ledger?.present !== true) {
+      throw new ServiceUnavailableException(
+        'Dead letters cannot be cleared until ci.pipeline_dead_letters exists — run the database ' +
+          'migrations first. Clearing without it would delete payloads nothing has copied.',
+      );
+    }
+
+    const result = await this.jobRepository
+      .createQueryBuilder()
+      .delete()
+      .from(PgBossJobEntity)
+      .where('name = :deadLetter', { deadLetter: DEAD_LETTER_QUEUE })
+      .andWhere(HARVESTED_DEAD_LETTER)
+      .execute();
+
+    // Counted AFTER the delete, so it is what is still there rather than what we
+    // predicted would be: every dead-letter row left is by definition one the
+    // reaper has not reached. Slightly racy against a concurrent harvest, which
+    // is the harmless direction — it can only over-report, and the next tick
+    // fixes it.
+    const retained = await this.jobRepository
+      .createQueryBuilder('job')
+      .where('job.name = :deadLetter', { deadLetter: DEAD_LETTER_QUEUE })
+      .getCount();
+
+    return { scope: 'dead-letter', deleted: result.affected ?? 0, retained };
+  }
+
+  /**
+   * Delete the `failed` origin rows — from `pgboss.archive` as well as
+   * `pgboss.job`.
+   *
+   * The archive half is not an extension of scope, it is what makes the button
+   * finish. The number this clears is `JobMonitorService.getSummary`'s
+   * `failed`, which is `job('failed') + archived('failed')`; the delete covered
+   * only the first term, so on any appliance old enough for pg-boss's
+   * maintenance to have archived a failure — which is every appliance, the
+   * archive being where finished rows go — the count could not reach zero. The
+   * operator clicks, watches a number that does not move, and clicks again.
+   *
+   * Safe to widen precisely because of what the OTHER scope now refuses to
+   * touch: every queue is created with `deadLetter: 'dead-letter'`, so a job
+   * that exhausts its retries mints an independent dead-letter copy carrying the
+   * same payload, and that copy is a different row with a different id which
+   * nothing here deletes. A failed origin row is a duplicate of evidence held
+   * elsewhere; an unharvested dead letter is the evidence.
+   *
+   * `name != 'dead-letter'` on both tables for the same reason it was always
+   * there: a dead letter that pg-boss has since archived is still a dead letter,
+   * and it is the other scope's business, under the other scope's predicate.
+   */
+  private async clearFailedOrigins(): Promise<TerminalJobClearDto> {
+    const live = await this.jobRepository
+      .createQueryBuilder()
+      .delete()
+      .from(PgBossJobEntity)
+      .where('state = :failed', { failed: 'failed' })
+      .andWhere('name != :deadLetter', { deadLetter: DEAD_LETTER_QUEUE })
+      .execute();
+
+    const archived = await this.archiveRepository
+      .createQueryBuilder()
+      .delete()
+      .from(PgBossArchiveEntity)
+      .where('state = :failed', { failed: 'failed' })
+      .andWhere('name != :deadLetter', { deadLetter: DEAD_LETTER_QUEUE })
+      .execute();
+
+    return {
+      scope: 'failed',
+      deleted: (live.affected ?? 0) + (archived.affected ?? 0),
+      retained: 0,
+    };
+  }
+
+  async list(context: RequestContext, query: JobQuery): Promise<JobListDto> {
+    if (!context.userId) {
+      throw new UnauthorizedException('A user context is required.');
+    }
+
+    const userId = context.userId;
+
+    const limit = Math.min(Math.max(query.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
+    const offset = Math.max(query.offset ?? 0, 0);
+
+    const builder = this.jobRepository.createQueryBuilder('job');
+
+    this.applyFilters(builder, query, userId);
+
+    // `created_on DESC, id` — id breaks ties so paging cannot repeat or skip a
+    // row when several jobs share a timestamp, which they routinely do during a
+    // bulk enqueue.
+    const [rows, total] = await builder
+      .orderBy('job.createdOn', 'DESC')
+      .addOrderBy('job.id', 'DESC')
+      .skip(offset)
+      .take(limit)
+      .getManyAndCount();
+
+    const [queues, counts] = await Promise.all([this.distinctQueues(), this.facetCounts(query, userId)]);
+
+    return {
+      items: rows.map((row) => this.toListItem(row)),
+      total,
+      limit,
+      offset,
+      queues,
+      stateCounts: counts.stateCounts,
+      categoryCounts: counts.categoryCounts,
+    };
+  }
+
+  /**
+   * Time series for the charts.
+   *
+   * Reads `ci.job_metrics`, not pg-boss: pg-boss's own tables hold roughly
+   * thirty-six hours of working set, so anything older than that only exists
+   * because the collector wrote it down.
+   */
+  async history(
+    context: RequestContext,
+    options: { windowHours?: number; queue?: string } = {},
+  ): Promise<JobHistoryDto> {
+    if (!context.userId) {
+      throw new UnauthorizedException('A user context is required.');
+    }
+
+    const windowHours = clampWindowHours(options.windowHours);
+    const since = new Date(Date.now() - windowHours * 60 * 60_000);
+    const bucketMinutes = bucketMinutesFor(windowHours);
+
+    const builder = this.metricRepository
+      .createQueryBuilder('metric')
+      .select(
+        `to_timestamp(floor(extract(epoch from metric.sampled_at) / :bucketSeconds) * :bucketSeconds)`,
+        'at',
+      )
+      // Depth is a GAUGE: summing across queues inside a bucket is right (total
+      // work outstanding), but summing across TIME is not — so take the last
+      // sample in the bucket per queue, then add up. AVG over the bucket is the
+      // honest simplification here and avoids a window function per queue.
+      .addSelect('ROUND(AVG(metric.pending))::int', 'pending')
+      .addSelect('ROUND(AVG(metric.active))::int', 'active')
+      .addSelect('ROUND(AVG(metric.retry))::int', 'retry')
+      .addSelect('ROUND(AVG(metric.dead_lettered))::int', 'deadLettered')
+      // Throughput is a DELTA: summing across both queue and time is correct.
+      .addSelect('SUM(metric.completed)::int', 'completed')
+      .addSelect('SUM(metric.failed)::int', 'failed')
+      .addSelect('ROUND(AVG(metric.avg_duration_ms))::int', 'avgDurationMs')
+      .addSelect('MAX(metric.p95_duration_ms)::int', 'p95DurationMs')
+      .where('metric.sampled_at >= :since', { since })
+      .setParameter('bucketSeconds', bucketMinutes * 60)
+      .groupBy('1')
+      .orderBy('1', 'ASC');
+
+    if (options.queue) {
+      builder.andWhere('metric.queue = :queue', { queue: options.queue });
+    }
+
+    const rows = await builder.getRawMany<{
+      at: Date;
+      pending: number;
+      active: number;
+      retry: number;
+      deadLettered: number;
+      completed: number;
+      failed: number;
+      avgDurationMs: number | null;
+      p95DurationMs: number | null;
+    }>();
+
+    const queues = await this.metricRepository
+      .createQueryBuilder('metric')
+      .select('DISTINCT metric.queue', 'queue')
+      .where('metric.sampled_at >= :since', { since })
+      .orderBy('queue', 'ASC')
+      .getRawMany<{ queue: string }>();
+
+    return {
+      points: rows.map((row) => ({
+        at: new Date(row.at).toISOString(),
+        pending: Number(row.pending) || 0,
+        active: Number(row.active) || 0,
+        retry: Number(row.retry) || 0,
+        deadLettered: Number(row.deadLettered) || 0,
+        completed: Number(row.completed) || 0,
+        failed: Number(row.failed) || 0,
+        avgDurationMs: row.avgDurationMs == null ? null : Number(row.avgDurationMs),
+        p95DurationMs: row.p95DurationMs == null ? null : Number(row.p95DurationMs),
+      })),
+      queues: queues.map((row) => row.queue),
+      bucketMinutes,
+      windowHours,
+    };
+  }
+
+  /**
+   * Job volume by CATEGORY over time — the second chart on the Jobs dashboard.
+   *
+   * Two stores, unioned, because neither one alone can answer the question
+   * honestly:
+   *
+   *  - `pgboss.job` + `pgboss.archive` hold about thirty-six hours (twelve to
+   *    archive, twenty-four of archive retention). Inside that window they are
+   *    the exact answer, and they are the answer from the moment this ships —
+   *    a chart that only read the sampled table would be empty until the
+   *    collector had run for a day.
+   *  - `ci.job_category_metrics` is the only thing that remembers anything
+   *    older, and it starts accumulating from the first sample after deploy.
+   *
+   * So: live for every bucket pg-boss still covers, sampled for the rest, and
+   * {@link JobCategoryHistoryDto.source} says which happened. The seam is a
+   * bucket boundary, never mid-bucket — a bucket only half-covered by pg-boss
+   * would silently under-count, which on a chart is indistinguishable from a
+   * quiet period.
+   *
+   * Both halves count ARRIVALS (`created_on`), not throughput. It is the only
+   * measure both stores can produce for the same jobs, and the only one that
+   * shows a category which is backing up rather than draining — which is when
+   * anyone actually opens this chart.
+   */
+  async categoryHistory(
+    context: RequestContext,
+    options: { windowHours?: number } = {},
+  ): Promise<JobCategoryHistoryDto> {
+    if (!context.userId) {
+      throw new UnauthorizedException('A user context is required.');
+    }
+
+    const windowHours = clampWindowHours(options.windowHours);
+    const now = Date.now();
+    const since = new Date(now - windowHours * 60 * 60_000);
+    // Same scaling as history(), so the two charts share an x-axis.
+    const bucketMinutes = bucketMinutesFor(windowHours);
+    const bucketSeconds = bucketMinutes * 60;
+
+    const liveFrom = await this.liveCoverageFrom(bucketSeconds);
+
+    // `at` (epoch ms) -> category -> count. A Map keyed on the bucket instant
+    // is what lets the two sources be poured into the same series without
+    // either one having to know the other exists.
+    const buckets = new Map<number, Map<string, number>>();
+
+    const add = (at: Date | string, category: string, count: number): void => {
+      const key = new Date(at).getTime();
+      const bucket = buckets.get(key) ?? new Map<string, number>();
+
+      bucket.set(category, (bucket.get(category) ?? 0) + count);
+      buckets.set(key, bucket);
+    };
+
+    let usedLive = false;
+    let usedMetrics = false;
+
+    if (liveFrom != null && liveFrom.getTime() < now) {
+      const liveSince = new Date(Math.max(liveFrom.getTime(), since.getTime()));
+
+      // Raw SQL, not a QueryBuilder: this is a UNION ALL across two tables that
+      // map to two different entities, which is not a shape TypeORM's builder
+      // expresses. `JobMetricsCollector.readThroughput` unions the same pair for
+      // the same reason.
+      //
+      // Grouped on the (event, queue) PAIR, which is what `categoryOfJob` folds
+      // and what the category filter selects on. The queue is a grouping COLUMN
+      // here, never the category key on its own: an event with no queue-scoped
+      // entry still resolves through its own name.
+      //
+      // DLQ copies are excluded outright, because the copy carries a FRESH
+      // `created_on` — the instant the job was dead-lettered, not the instant
+      // the work arrived. Counting it would draw a surge of new work at exactly
+      // the moment work started failing. The original row survives in its own
+      // partition with `state = 'failed'` and is what supplies the arrival.
+      // That exclusion is also why every row this query returns still HAS its
+      // origin queue: `name = 'dead-letter'`, the one value that would make the
+      // pair unrecoverable, is the one value it never sees.
+      const liveRows = (await this.jobRepository.manager.query(
+        `
+        SELECT to_timestamp(floor(extract(epoch from live.created_on) / $2) * $2) AS at,
+               live.data->>'name' AS event,
+               live.name AS queue,
+               COUNT(*)::int AS count
+          FROM (
+            SELECT name, data, created_on FROM pgboss.job     WHERE created_on >= $1 AND name <> $3
+            UNION ALL
+            SELECT name, data, created_on FROM pgboss.archive WHERE created_on >= $1 AND name <> $3
+          ) AS live
+         GROUP BY 1, 2, 3
+        `,
+        [liveSince, bucketSeconds, DEAD_LETTER_QUEUE],
+      )) as Array<{ at: Date; event: string | null; queue: string | null; count: number }>;
+
+      for (const row of liveRows) {
+        // categoryOfJob, the same fold facetCounts uses for the chips — never
+        // describeJob(), which fingerprints an unknown event into a category
+        // guess that no chip counts and no filter can select.
+        add(row.at, categoryOfJob(row.event, row.queue), Number(row.count) || 0);
+      }
+
+      usedLive = liveRows.length > 0;
+    }
+
+    // Only when live coverage does not already reach the start of the window.
+    // Rows the live half has counted must not be counted a second time here,
+    // which is what the `< liveFrom` bound below enforces.
+    if (liveFrom == null || liveFrom.getTime() > since.getTime()) {
+      const builder = this.categoryMetricRepository
+        .createQueryBuilder('metric')
+        .select(
+          `to_timestamp(floor(extract(epoch from metric.sampled_at) / :bucketSeconds) * :bucketSeconds)`,
+          'at',
+        )
+        .addSelect('metric.category', 'category')
+        // `arrived` is a DELTA over the sample interval, so summing across both
+        // category and time is correct — unlike the gauges in this table.
+        .addSelect('SUM(metric.arrived)::int', 'count')
+        .where('metric.sampled_at >= :since', { since })
+        .setParameter('bucketSeconds', bucketSeconds)
+        .groupBy('1, 2');
+
+      if (liveFrom != null) {
+        builder.andWhere('metric.sampled_at < :liveFrom', { liveFrom });
+      }
+
+      const metricRows = await builder.getRawMany<{ at: Date; category: string; count: number }>();
+
+      for (const row of metricRows) {
+        add(row.at, row.category, Number(row.count) || 0);
+      }
+
+      usedMetrics = metricRows.length > 0;
+    }
+
+    const categories = [...new Set([...buckets.values()].flatMap((bucket) => [...bucket.keys()]))].sort();
+
+    const points = [...buckets.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([at, counts]) => ({
+        at: new Date(at).toISOString(),
+        // Zero-filled: a chart drawing one line per category needs a value at
+        // every point it plots, and "this category had no jobs in this bucket"
+        // is a real zero, not missing data.
+        counts: Object.fromEntries(categories.map((category) => [category, counts.get(category) ?? 0])),
+      }));
+
+    return {
+      points,
+      categories,
+      bucketMinutes,
+      windowHours,
+      // Nothing came back from either store: say which one was actually
+      // authoritative rather than guessing. `liveFrom == null` means pg-boss
+      // holds no rows at all, so only the sampled table could have answered.
+      source:
+        usedLive && usedMetrics
+          ? 'mixed'
+          : usedLive
+            ? 'live'
+            : usedMetrics
+              ? 'metrics'
+              : liveFrom == null
+                ? 'metrics'
+                : 'live',
+    };
+  }
+
+  /**
+   * The oldest instant `pgboss.job`/`archive` can still be trusted for, rounded
+   * UP to the next bucket boundary.
+   *
+   * Excludes the dead-letter queue, and that exclusion is the whole point.
+   * Every work queue is pruned on the ~36h cycle, but the DLQ carries a 30-day
+   * retention and nothing consumes it (see `PGBossEventService.onModuleInit`),
+   * so an unfiltered `MIN(created_on)` reports up to a MONTH of live coverage
+   * that exists only for dead-letter copies. Every bucket older than 36h would
+   * then be served from a live query that finds nothing, and the chart would
+   * render weeks of confident zeros instead of falling back to the sampled
+   * table.
+   *
+   * Rounded up rather than down because the bucket containing this instant is
+   * only partly covered — the rows before it have been pruned. Handing that
+   * bucket to the sampled table (which has the whole interval, if the collector
+   * was running) is right; drawing it from a partial live scan is a dip that
+   * never happened.
+   */
+  private async liveCoverageFrom(bucketSeconds: number): Promise<Date | null> {
+    const [row] = (await this.jobRepository.manager.query(
+      `
+      SELECT MIN(created_on) AS oldest
+        FROM (
+          SELECT created_on FROM pgboss.job     WHERE name <> $1
+          UNION ALL
+          SELECT created_on FROM pgboss.archive WHERE name <> $1
+        ) AS live
+      `,
+      [DEAD_LETTER_QUEUE],
+    )) as Array<{ oldest: Date | string | null }>;
+
+    if (row?.oldest == null) {
+      return null;
+    }
+
+    const bucketMs = bucketSeconds * 1000;
+
+    return new Date(Math.ceil(new Date(row.oldest).getTime() / bucketMs) * bucketMs);
+  }
+
+  /**
+   * Filters shared by the list and its state-count sidebar.
+   *
+   * `category` resolves through the taxonomy to a set of event names and is
+   * matched on `data->>'name'`, so filtering by "what kind of work is this"
+   * happens in SQL rather than by over-fetching and filtering in the browser.
+   */
+  private applyFilters(
+    builder: ReturnType<Repository<PgBossJobEntity>['createQueryBuilder']>,
+    query: JobQuery,
+    userId: string,
+    options: { skipState?: boolean; skipCategory?: boolean; skipType?: boolean } = {},
+  ): void {
+    if (query.state && !options.skipState) {
+      if (query.state === 'dead-letter') {
+        builder.andWhere('job.name = :deadLetter', { deadLetter: DEAD_LETTER_QUEUE });
+      } else {
+        builder
+          .andWhere('job.state = :state', { state: query.state })
+          .andWhere('job.name != :deadLetter', { deadLetter: DEAD_LETTER_QUEUE });
+      }
+    }
+
+    if (query.queue) {
+      builder.andWhere('job.name = :queue', { queue: query.queue });
+    }
+
+    // Exact event name. `category` groups many events; this picks one, which is
+    // what an operator wants once they know WHICH job is misbehaving.
+    if (query.type && !options.skipType) {
+      builder.andWhere(`job.data->>'name' = :type`, { type: query.type });
+    }
+
+    if (query.category && !options.skipCategory) {
+      if (query.category === UNCLASSIFIED_CATEGORY) {
+        // The complement of the taxonomy: every row whose event has no
+        // JOB_TYPES entry. Without this the chip counts a bucket nobody can
+        // click into, which is worse than not counting it — it names a problem
+        // and then refuses to show you which jobs cause it.
+        //
+        // Note this stays keyed on JOB_TYPES alone, deliberately, even though
+        // the real-category branch below is queue-aware: `jobCategorySelector`
+        // can only move events that HAVE an entry, so the complement is the
+        // same set either way, and matching it queue-aware would exclude
+        // dead-lettered rows whose queue column no longer says where they ran.
+        const known = Object.keys(JOB_TYPES);
+
+        builder.andWhere(
+          new Brackets((where) => {
+            where.where(`job.data->>'name' IS NULL`);
+
+            if (known.length > 0) {
+              where.orWhere(`job.data->>'name' NOT IN (:...known)`, { known });
+            }
+          }),
+        );
+      } else {
+        // A category is not simply a set of event names: `describeJob` resolves
+        // a row's category from the (event, queue) pair, so the handful of
+        // events that mean different things on different queues have to be
+        // moved in and out here too. Selecting on event alone returned rows
+        // this same endpoint then labelled with a DIFFERENT category — see
+        // `jobCategorySelector`.
+        const selector = jobCategorySelector(query.category);
+        // `job.name` is the queue; `data->>'name'` is the event.
+        const queueKey = `(job.data->>'name' || '::' || job.name)`;
+
+        builder.andWhere(
+          new Brackets((where) => {
+            // An unknown category matches nothing rather than everything — a
+            // typo in a query string should return an empty table, not the
+            // unfiltered one — so an empty event list becomes a sentinel.
+            const excludes =
+              selector.excludeQueueKeys.length > 0 ? ` AND ${queueKey} NOT IN (:...excludedQueueKeys)` : '';
+
+            where.where(`job.data->>'name' IN (:...categoryEvents)${excludes}`, {
+              categoryEvents: selector.events.length > 0 ? selector.events : ['__no-such-category__'],
+              excludedQueueKeys: selector.excludeQueueKeys,
+            });
+
+            if (selector.includeQueueKeys.length > 0) {
+              where.orWhere(`${queueKey} IN (:...includedQueueKeys)`, {
+                includedQueueKeys: selector.includeQueueKeys,
+              });
+            }
+          }),
+        );
+      }
+    }
+
+    if (query.search) {
+      const term = `%${query.search.trim()}%`;
+
+      // Event name, queue name, the caller's own job id, and their failure
+      // message. NOT free-form payload: that is user content. `jobId` is the
+      // Memory-owned dispatch id operators paste from a Chat thread — scoped
+      // to `data->>'userId'` the same way failure text is.
+      builder.andWhere(
+        new Brackets((where) => {
+          where
+            .where(`job.data->>'name' ILIKE :term`, { term })
+            .orWhere('job.name ILIKE :term', { term })
+            .orWhere(`job.id::text ILIKE :term AND job.data->>'userId' = :userId`, { term, userId })
+            .orWhere(`job.data->>'jobId' ILIKE :term AND job.data->>'userId' = :userId`, {
+              term,
+              userId,
+            })
+            .orWhere(`job.output->>'message' ILIKE :term AND job.data->>'userId' = :userId`, {
+              term,
+              userId,
+            });
+        }),
+      );
+    }
+  }
+
+  /**
+   * Both badge sets, from ONE grouped scan.
+   *
+   * The state tabs and the category chips make the same promise — each shows
+   * what selecting it would yield — and they differ only in which filter each
+   * one drops. That makes them two folds of a single
+   * `GROUP BY bucket, event`, rather than two full scans of a partitioned table
+   * on every 15-second poll. Measured on a live appliance (9,557 rows, 39
+   * partitions): 6.3 ms execution against 4.5 ms for the state counts alone, so
+   * the second badge set is very nearly free and the request keeps its original
+   * query count.
+   *
+   * Folding both from the same rows is also what makes the two sets consistent
+   * by construction: they cannot disagree about a job, because they are counting
+   * the same job.
+   *
+   * GROUPED ON THE (event, queue) PAIR, and folded through `categoryOfJob` —
+   * the same rule `applyFilters` selects with, which is the only reason a chip's
+   * number and the table under it agree. The fold used to be `categoryOfEvent`,
+   * on the event alone, and for the handful of events two listeners share on
+   * different queues the chip counted one thing and clicking it returned
+   * another: every `content.created` on `pipeline-index` was added to Search
+   * index, while the Pipeline filter was what actually returned it.
+   *
+   * The queue is a grouping COLUMN, not the category key. That distinction is
+   * what makes this safe: pg-boss copies `data` verbatim onto a dead-letter row
+   * but REWRITES the queue column, so for the 88% of rows sitting on
+   * `dead-letter` the pair is unrecoverable — and `categoryOfJob` falls back to
+   * the event alone for exactly those, as does the filter, whose include/exclude
+   * lists hold no `::dead-letter` key to match. Keying the category ON the queue
+   * would file all of them under one meaningless bucket; grouping BY it does
+   * not, because the fold still resolves the ones it cannot pair through their
+   * event name.
+   */
+  private async facetCounts(
+    query: JobQuery,
+    userId: string,
+  ): Promise<{ stateCounts: Record<string, number>; categoryCounts: Record<string, number> }> {
+    const builder = this.jobRepository
+      .createQueryBuilder('job')
+      // `job.state::text` is load-bearing. Postgres unifies a CASE's branches to
+      // one type, and without the cast it picks the `pgboss.job_state` ENUM from
+      // the ELSE branch — then tries to coerce the literal `'dead-letter'` into
+      // it and fails with "invalid input value for enum". `dead-letter` is a
+      // QUEUE, never a state, so the bucket column has to be text.
+      .select(`CASE WHEN job.name = :deadLetter THEN 'dead-letter' ELSE job.state::text END`, 'bucket')
+      .addSelect(`job.data->>'name'`, 'event')
+      .addSelect('job.name', 'queue')
+      .addSelect('COUNT(*)::int', 'count')
+      .setParameter('deadLetter', DEAD_LETTER_QUEUE)
+      // One `groupBy` call, not `groupBy().addGroupBy()` — the unit suite drives
+      // this through a hand-rolled mock builder that implements neither.
+      .groupBy('1, 2, 3');
+
+    this.applyFilters(builder, query, userId, { skipState: true, skipCategory: true, skipType: true });
+
+    const rows = await builder.getRawMany<{
+      bucket: string;
+      event: string | null;
+      queue: string | null;
+      count: number;
+    }>();
+
+    const stateCounts: Record<string, number> = {};
+    const categoryCounts: Record<string, number> = {};
+
+    for (const row of rows) {
+      const count = Number(row.count) || 0;
+      // The taxonomy's own fold, NOT describeJob() — describeJob fingerprints an
+      // unknown event into a category guess, and counting must never follow a
+      // guess. Shared rather than repeated because the category chart samples
+      // and aggregates through the same function, so a chip and a series can
+      // never put the same job in two different buckets.
+      const categoryKey = categoryOfJob(row.event, row.queue);
+
+      // Each fold re-applies the filter the OTHER one dropped, so both sets keep
+      // the "what would selecting this yield" contract. `bucket` has already
+      // collapsed the dead-letter queue, so comparing it to `query.state`
+      // reproduces both arms of the SQL predicate in applyFilters.
+      const matchesState = !query.state || row.bucket === query.state;
+      const matchesCategory = !query.category || categoryKey === query.category;
+      const matchesType = !query.type || row.event === query.type;
+
+      if (matchesCategory && matchesType) {
+        stateCounts[row.bucket] = (stateCounts[row.bucket] ?? 0) + count;
+      }
+
+      if (matchesState) {
+        categoryCounts[categoryKey] = (categoryCounts[categoryKey] ?? 0) + count;
+      }
+    }
+
+    return { stateCounts, categoryCounts };
+  }
+
+  private async distinctQueues(): Promise<string[]> {
+    const rows = await this.jobRepository
+      .createQueryBuilder('job')
+      .select('DISTINCT job.name', 'queue')
+      .orderBy('queue', 'ASC')
+      .getRawMany<{ queue: string }>();
+
+    return rows.map((row) => row.queue);
+  }
+
+  private toListItem(job: PgBossJobEntity | PgBossArchiveEntity): JobListItemDto {
+    const data = job.data ?? {};
+    const event = typeof data['name'] === 'string' ? data['name'] : null;
+    const workType = typeof data['workType'] === 'string' ? data['workType'] : null;
+    // job.name is the pg-boss QUEUE (see PgBossJobEntity), not the event —
+    // it's what disambiguates an event two unrelated listeners share.
+    const descriptor = describeJob(event, workType, job.name);
+
+    const durationMs =
+      job.startedOn && job.completedOn
+        ? Math.max(job.completedOn.getTime() - job.startedOn.getTime(), 0)
+        : null;
+
+    return {
+      id: job.id,
+      queue: job.name,
+      state: job.state,
+      event,
+      workType,
+      label: descriptor.label,
+      category: descriptor.category,
+      description: descriptor.description,
+      interactive: Boolean(descriptor.interactive),
+      createdOn: job.createdOn.toISOString(),
+      startedOn: job.startedOn ? job.startedOn.toISOString() : null,
+      completedOn: job.completedOn ? job.completedOn.toISOString() : null,
+      durationMs,
+      retryCount: job.retryCount,
+      retryLimit: job.retryLimit,
+      payloadBytes: this.byteLength(data),
+      failure: this.toFailure(job.output),
+      deadLettered: job.name === DEAD_LETTER_QUEUE,
+    };
+  }
+
+  private toFailure(
+    output: Record<string, unknown> | null,
+  ): { message: string; stack?: string; failedAt?: string } | null {
+    if (!output || typeof output !== 'object') {
+      return null;
+    }
+
+    const message = typeof output['message'] === 'string' ? output['message'].trim() : '';
+
+    if (!message) {
+      return null;
+    }
+
+    return {
+      message,
+      stack: typeof output['stack'] === 'string' ? output['stack'] : undefined,
+      failedAt: typeof output['failedAt'] === 'string' ? output['failedAt'] : undefined,
+    };
+  }
+
+  private byteLength(data: Record<string, unknown>): number {
+    try {
+      return Buffer.byteLength(JSON.stringify(data) ?? '', 'utf8');
+    } catch {
+      return 0;
+    }
+  }
+}

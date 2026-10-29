@@ -1,0 +1,712 @@
+import { ForbiddenException, Injectable, type OnModuleInit } from '@nestjs/common';
+import { z, type ZodTypeAny } from 'zod/v3';
+
+import { ContextService } from '@ci/common/context';
+import { INTENTS_SCOPE, type ApiKeyCapability } from '@ci/common/decorators';
+import { type ApiKeyScopedRequest, apiKeyCapabilityOf, isScopeLimitedApiKey } from '@ci/common/guards';
+import { LoggerService } from '@ci/common/logging';
+import { isManagedAppPrincipal } from '@ci/domains/auth';
+import {
+  type IntentDefinition,
+  type JSONSchema,
+  type PendingActionOrigin,
+  PendingActionReplayRegistry,
+  PendingActionService,
+  type ToolInvocationContext,
+  ToolRegistry,
+  type ToolResult,
+  capabilityAllows,
+  capabilityRequiredFor,
+  intentToolName,
+  outcomeOf,
+  type ToolInvocationOutcome,
+  toolErrorMessage,
+} from '@ci/domains/tools';
+
+import type { McpRegisteredTool, McpToolDefinition } from '../types';
+// A value, not a type — it is constructed below, so it cannot ride the type import.
+import { ToolExecutionError } from '../types';
+
+import { GraphQLToolAdapter } from './GraphQLToolAdapter';
+import { McpExecutorService } from './McpExecutorService';
+
+// `capabilityAllows` used to be defined here, which made the privacy label mean something only to
+// callers who arrived over MCP — the LLM dispatcher reached the same tools through a door with no
+// lock on it. The rule now lives in `@ci/tool-core` (re-exported through `domains/tools/policy`,
+// which is where it landed first) and is enforced inside ToolRegistry.executeTool for every
+// transport; MCP keeps its pre-check because it owes its client a 403 with a specific message, not
+// because it is the only thing standing there. Moving it into a Nest-free package was the same
+// step taken once more: a transport that does not run inside this process — the CLI, an on-device
+// dispatcher — can now apply the identical function instead of re-deriving it, which is how the
+// rule stopped being MCP's in the first place.
+
+@Injectable()
+export class McpToolService implements OnModuleInit {
+  private tools = new Map<string, McpRegisteredTool>();
+
+  constructor(
+    private readonly graphqlAdapter: GraphQLToolAdapter,
+    private readonly toolRegistry: ToolRegistry,
+    private readonly executorService: McpExecutorService,
+    private readonly logger: LoggerService,
+    private readonly pendingActions: PendingActionService,
+    private readonly replays: PendingActionReplayRegistry,
+  ) {
+    this.logger.setContext('McpToolService');
+  }
+
+  onModuleInit() {
+    this.registerGraphQLTools();
+    this.registerNativeTools();
+    this.replays.register({
+      privacyOf: (tool) =>
+        this.tools.get(tool)?.source === 'graphql' ? this.tools.get(tool)?.privacy : undefined,
+      assertMayReplay: (tool, request) => this.assertMayReplayGraphql(tool, request),
+      replay: (tool, input, request, origin) => this.replayGraphql(tool, input, request, origin),
+    });
+
+    this.logger.log('MCP tools consolidated', {
+      total: this.tools.size,
+      graphql: this.graphqlAdapter.getTools().length,
+      native: this.toolRegistry.getRegisteredToolNames().length,
+    });
+  }
+
+  getTools(): McpRegisteredTool[] {
+    return [...this.tools.values()];
+  }
+
+  /**
+   * The tools this caller can actually execute.
+   *
+   * A scope-limited key reaches MCP with the `mcp` scope alone, but the tools behind
+   * this endpoint are not one undifferentiated capability — they are the same two data
+   * planes the REST routes gate separately, so MCP gates them the same way rather than
+   * letting the transport become a way around the scopes:
+   *
+   * - GraphQL-derived tools run against the resolvers that serve `/graphql`, which
+   *   declare no `@RequireScopes` — deny-by-default already rejects a scope-limited key
+   *   on every one of them. Advertising them anyway would hand the model a catalog where
+   *   each call fails with an opaque `Forbidden resource`.
+   * - Native intents execute through the ToolRegistry, which performs NO authorization of
+   *   its own; `knowledge.search` alone reads across the whole personal graph. They are
+   *   the MCP face of the intent catalog, so they require the same {@link INTENTS_SCOPE}
+   *   the REST catalog does — otherwise an `mcp`-only key, 403'd on `/api/intents`, would
+   *   execute those very intents here.
+   *
+   * Both chat-agent connect keys already carry `intents` (see `scopesForApp`), so this
+   * confines the hole without narrowing any key in the field. Full-authority principals
+   * (sessions/JWT, and empty-scope keys such as the bulk importer's) still see every tool.
+   */
+  getToolsForRequest(req: ApiKeyScopedRequest): McpRegisteredTool[] {
+    // Capability applies to every api-key principal, including empty-scope (full-surface) ones:
+    // "sees every surface" and "may delete on it" are separate grants, and the importer key that
+    // holds no scopes is exactly the credential that should be able to write without deleting.
+    const capability = apiKeyCapabilityOf(req);
+    const userId = (req.user as { id?: string } | undefined)?.id;
+    // A native tool can belong to one account (the `messaging.*` intents belong to whoever the
+    // BlueBubbles connector was set up for). The map below was built at boot with every owner's
+    // tools in it, so ownership is decided here, per caller, by the same rule the registry
+    // refuses execution on.
+    const visible = (tool: McpRegisteredTool) =>
+      tool.source !== 'native' || this.toolRegistry.isToolVisibleTo(tool.name, userId);
+    const withinCapability = (tool: McpRegisteredTool) => capabilityAllows(tool.privacy, capability);
+
+    if (!isScopeLimitedApiKey(req)) {
+      return this.getTools().filter((tool) => visible(tool) && withinCapability(tool));
+    }
+
+    const mayRunIntents = this.mayRunIntents(req);
+
+    return this.getTools().filter(
+      (tool) => tool.source !== 'graphql' && mayRunIntents && visible(tool) && withinCapability(tool),
+    );
+  }
+
+  /**
+   * Whether this caller may execute native intents — i.e. it is a full-authority
+   * principal, or a scope-limited key carrying {@link INTENTS_SCOPE}.
+   *
+   * The single source of truth for that question, so the tools, the executor, and the
+   * intent-catalog resource cannot disagree about who gets the intent plane.
+   */
+  mayRunIntents(req: ApiKeyScopedRequest): boolean {
+    if (!isScopeLimitedApiKey(req)) {
+      return true;
+    }
+
+    return req.apiKeyScopes?.includes(INTENTS_SCOPE) ?? false;
+  }
+
+  getSchemaSDL(): string {
+    return this.graphqlAdapter.getSchemaSDL();
+  }
+
+  async executeTool(
+    name: string,
+    args: Record<string, unknown>,
+    context: { req: import('express').Request },
+  ): Promise<unknown> {
+    const tool = this.tools.get(name);
+    if (!tool) {
+      throw new Error(`Tool not found: ${name}`);
+    }
+
+    // Belt-and-braces: getToolsForRequest already hides what this caller may not run,
+    // but a client can name any tool directly, and the layers below do not re-check —
+    // the GraphQL resolvers raise a bare `Forbidden resource`, and ToolRegistry performs
+    // no authorization at all. This is the enforcement point; the catalog filter is only
+    // the courtesy of not advertising what would fail.
+    const scopeLimited = isScopeLimitedApiKey(context.req);
+    const capability = apiKeyCapabilityOf(context.req);
+
+    // Checked before the surface checks, because it is the answer that does not depend on which
+    // plane the tool lives on: a read-only key is refused `deleteMemory` whether that tool came
+    // from the GraphQL schema or the intent catalog, and the message should say so rather than
+    // blaming the scope.
+    if (!capabilityAllows(tool.privacy, capability)) {
+      const message = `Tool "${name}" requires "${capabilityRequiredFor(tool.privacy)}" access, but this API key is "${capability}"`;
+
+      // Record the refusal. These three transport-level denials threw before anything reached the
+      // registry, so the ledger's own reason for existing — "what was the agent refused" — was the
+      // one question it could not answer on this plane. A refusal is the most interesting row in
+      // the table: it is the gate visibly working, and its absence read as "nothing happened".
+      await this.recordRefusal(tool, context.req, capability, message);
+
+      throw new ForbiddenException(message);
+    }
+
+    if (tool.source === 'graphql') {
+      if (scopeLimited) {
+        const message = `Tool "${name}" reads the knowledge graph directly, which this scope-limited API key cannot access`;
+
+        await this.recordRefusal(tool, context.req, capability, message);
+
+        throw new ForbiddenException(message);
+      }
+
+      const graphqlTool = this.graphqlAdapter.getTools().find((t) => t.name === name);
+
+      if (!graphqlTool) {
+        throw new Error(`GraphQL tool not found: ${name}`);
+      }
+
+      // The same confirmation gate native intents meet in ToolRegistry.executeTool. Without it,
+      // `memory_forget` over this connection waited for a card while `mutation_deletePerson`,
+      // `mutation_deleteConnection` or `mutation_sendPeerAsk` ran at once. A queued call is parked
+      // on the Approvals page and replayed through `replayGraphql` once the owner confirms it.
+      await this.gateGraphqlCall(tool, args, context.req, capability);
+
+      return this.runGraphqlTool(tool, graphqlTool, args, context.req, capability);
+    }
+
+    if (!this.mayRunIntents(context.req)) {
+      const message = `Tool "${name}" runs a CI intent, which requires the "${INTENTS_SCOPE}" scope this API key does not carry`;
+
+      await this.recordRefusal(tool, context.req, capability, message);
+
+      throw new ForbiddenException(message);
+    }
+
+    // Native tool execution. The capability travels WITH the call rather than being left behind at
+    // the transport: the registry re-checks it, so the pre-check above is the courtesy of a precise
+    // 403 and this is what actually authorizes the execution.
+    const userId = (context.req.user as { id?: string })?.id;
+    // Spread the ambient request context rather than building one from scratch: `traceId` and
+    // `apiKeyId` live there (ApiKeyStrategy stamps the latter), and a hand-built literal dropped
+    // both — which made every MCP-originated row in the tool-invocation ledger record a NULL actor
+    // and no correlation id.
+    const invocationContext: ToolInvocationContext = {
+      ...ContextService.getContext(),
+      userId,
+      capability,
+      // Same rule as the REST intent path: an installed app is confirmed before
+      // anything irreversible, whatever the owner's dial says.
+      principal: isManagedAppPrincipal({
+        managedBy: (context.req as ApiKeyScopedRequest).apiKeyManagedBy,
+      })
+        ? 'managed-app'
+        : 'owner',
+      principalName: (context.req as ApiKeyScopedRequest).apiKeyName ?? null,
+    };
+    const result = await this.toolRegistry.executeTool(name, invocationContext, args);
+
+    if (!result.success) {
+      // Structured, not flattened. `throw new Error(message)` destroyed `code`
+      // and `details` — and `details` is where the approval queue puts
+      // `pendingActionId`. A queued call therefore reached the harness as an
+      // opaque sentence, while the dispatch packet's own stop rule tells it to
+      // "report blocked, name the pendingActionId, and stop". The REST intent
+      // path returns the whole ToolError, and both harness plugins read
+      // `error.code` / `error.details.pendingActionId` from it — this plane now
+      // presents the same shape rather than a lossier dialect of it.
+      throw new ToolExecutionError(
+        result.error?.code ?? 'TOOL_FAILED',
+        result.error?.message ?? `Tool "${name}" execution failed`,
+        result.error?.details,
+      );
+    }
+
+    return result.data;
+  }
+
+  /**
+   * Ask the pending-action gate about a GraphQL-plane call, and park it when the gate says so.
+   *
+   * Throws a `TOOL_QUEUED` {@link ToolExecutionError} carrying the `pendingActionId`, the same
+   * shape a queued native intent reaches an MCP client in, and a 403 for a `deny`. Returns when
+   * the call may run. The gate reads the tool's own label (mutations named `delete*`, `merge*` and
+   * the like are destructive, `runAsk` and `sendPeerAsk` external), so a query or an ordinary
+   * mutation is waved through without the trust dial being read.
+   */
+  private async gateGraphqlCall(
+    tool: McpRegisteredTool,
+    args: Record<string, unknown>,
+    req: ApiKeyScopedRequest,
+    capability: ApiKeyCapability,
+  ): Promise<void> {
+    const schema = graphqlGateSchema(tool);
+    const invocationContext = this.graphqlInvocationContext(req, capability);
+    const gate = await this.pendingActions.evaluate(schema, invocationContext);
+
+    if (gate.decision === 'execute') {
+      return;
+    }
+
+    if (gate.decision === 'deny') {
+      await this.recordRefusal(tool, req, capability, gate.explanation);
+
+      throw new ForbiddenException(gate.explanation);
+    }
+
+    if (!invocationContext.userId) {
+      throw new ToolExecutionError(
+        'TOOL_CONFIRMATION_UNAVAILABLE',
+        `${gate.explanation}, but this call has no user to confirm it`,
+      );
+    }
+
+    const action = await this.pendingActions.propose(
+      schema,
+      tool.name,
+      { ...invocationContext, userId: invocationContext.userId },
+      args,
+      gate,
+    );
+
+    throw new ToolExecutionError('TOOL_QUEUED', gate.explanation, {
+      pendingActionId: action.id,
+      reason: gate.reason,
+      expiresAt: action.expiresAt?.toISOString() ?? null,
+    });
+  }
+
+  private graphqlInvocationContext(
+    req: ApiKeyScopedRequest,
+    capability: ApiKeyCapability,
+  ): ToolInvocationContext {
+    const managedApp = isManagedAppPrincipal({ managedBy: req.apiKeyManagedBy });
+
+    return {
+      ...ContextService.getContext(),
+      userId: (req.user as { id?: string } | undefined)?.id,
+      capability,
+      principal: managedApp ? 'managed-app' : 'owner',
+      principalName: managedApp ? (req.apiKeyName ?? null) : null,
+    };
+  }
+
+  /**
+   * The GraphQL plane admits no scope-limited key (see {@link executeTool}), so neither may one
+   * confirm a call that will run on it: the resolvers would refuse the replay after the row had
+   * already been marked approved.
+   */
+  private assertMayReplayGraphql(tool: string, request: import('express').Request | undefined): void {
+    if (!request) {
+      throw new ForbiddenException(`Confirming "${tool}" needs the confirming request, and none was given`);
+    }
+
+    if (isScopeLimitedApiKey(request as ApiKeyScopedRequest)) {
+      throw new ForbiddenException(
+        `"${tool}" runs on the knowledge graph directly, which a scope-limited API key cannot confirm`,
+      );
+    }
+  }
+
+  /**
+   * Run a confirmed GraphQL-plane call as the CONFIRMING request, the way `executeTool` runs one
+   * as the calling request: the resolvers authorize it again from that request. Records the run in
+   * the ledger and never throws.
+   *
+   * The ledger row names the app that asked (`origin`), not the owner who confirmed, the same
+   * split `PendingActionConfirmService` makes for a registry tool: `capability` is whose authority
+   * ran it, `principal` is who asked for it.
+   */
+  private async replayGraphql(
+    tool: string,
+    input: unknown,
+    request: import('express').Request,
+    origin?: PendingActionOrigin,
+  ): Promise<ToolResult> {
+    const registered = this.tools.get(tool);
+    const graphqlTool = this.graphqlAdapter.getTools().find((candidate) => candidate.name === tool);
+    const req = request as ApiKeyScopedRequest;
+
+    if (!registered || !graphqlTool) {
+      return {
+        success: false,
+        error: { code: 'TOOL_NOT_FOUND', message: `Tool "${tool}" is no longer offered`, retryable: false },
+      };
+    }
+
+    try {
+      const data = await this.runGraphqlTool(
+        registered,
+        graphqlTool,
+        (input ?? {}) as Record<string, unknown>,
+        req,
+        apiKeyCapabilityOf(req),
+        origin,
+      );
+
+      return graphqlResultOf(data);
+    } catch (error) {
+      return { success: false, error: describeFailure(error) };
+    }
+  }
+
+  /**
+   * Run one GraphQL-plane call through the executor and append it to the ledger. Returns what the
+   * executor returned and rethrows what it threw, after recording either.
+   *
+   * This plane never touches ToolRegistry — it returns through the GraphQL executor — so it was
+   * the one dispatcher that emitted no `tool.invoked` at all and left no ledger row. An MCP client
+   * calling `deleteMemory` here was invisible to exactly the surface built to see it. Recorded
+   * through the registry so there is still one emit path, not two. A resolver error does not
+   * throw: the executor hands back `{ errors }`, and the row records it as a failure.
+   */
+  private async runGraphqlTool(
+    tool: McpRegisteredTool,
+    graphqlTool: McpToolDefinition,
+    args: Record<string, unknown>,
+    req: ApiKeyScopedRequest,
+    capability: ApiKeyCapability,
+    origin?: PendingActionOrigin,
+  ): Promise<unknown> {
+    const startedAt = Date.now();
+
+    try {
+      const data = await this.executorService.executeTool(graphqlTool, args, { req });
+      const result = graphqlResultOf(data);
+
+      await this.recordGraphqlInvocation(
+        tool,
+        req,
+        capability,
+        {
+          outcome: outcomeOf(result),
+          errorCode: result.error?.code,
+          error: result.error?.message,
+          durationMs: Date.now() - startedAt,
+        },
+        origin,
+      );
+
+      return data;
+    } catch (error) {
+      const failure = { success: false, error: describeFailure(error) };
+
+      await this.recordGraphqlInvocation(
+        tool,
+        req,
+        capability,
+        {
+          outcome: outcomeOf(failure),
+          errorCode: failure.error.code,
+          error: failure.error.message,
+          durationMs: Date.now() - startedAt,
+        },
+        origin,
+      );
+
+      throw error;
+    }
+  }
+
+  /**
+   * Append one GraphQL-plane call to the tool-invocation ledger.
+   *
+   * `intent` is the GraphQL operation name because that is the only id this plane has — there is
+   * no dotted intent behind it — and `source: 'graphql'` is what tells a reader that, so the two
+   * planes stay distinguishable in one table. Never throws: telemetry must not turn a completed
+   * GraphQL call into a failed one.
+   */
+  private async recordGraphqlInvocation(
+    tool: McpRegisteredTool,
+    req: ApiKeyScopedRequest,
+    capability: ApiKeyCapability,
+    outcome: {
+      outcome: ToolInvocationOutcome;
+      errorCode?: string;
+      error?: string;
+      durationMs?: number;
+    },
+    origin?: PendingActionOrigin,
+  ): Promise<void> {
+    await this.recordMcpInvocation(tool, req, capability, 'graphql', outcome, origin);
+  }
+
+  /**
+   * Append a transport-level refusal — a call this service denied before the registry saw it.
+   *
+   * `source` names the plane the tool would have run on rather than the transport, so a reader
+   * filtering `outcome = 'refused'` sees native and GraphQL denials in the same list as the
+   * registry's own; `errorCode: 'TOOL_FORBIDDEN'` matches what the registry stamps for the same
+   * ruling, so the two planes are comparable rather than merely both present.
+   *
+   * Never throws (`recordInvocation` swallows), and deliberately awaited: a refusal that lost its
+   * row because the response was already on its way out is the row most worth having.
+   */
+  private async recordRefusal(
+    tool: McpRegisteredTool,
+    req: ApiKeyScopedRequest,
+    capability: ApiKeyCapability,
+    message: string,
+  ): Promise<void> {
+    await this.recordMcpInvocation(tool, req, capability, tool.source, {
+      outcome: 'refused',
+      errorCode: 'TOOL_FORBIDDEN',
+      error: message,
+    });
+  }
+
+  /**
+   * The one payload builder for this plane, so the refusal rows and the executed rows carry the
+   * same identity fields. Splitting them was how `principal` came to be recorded on the REST path
+   * and nowhere else.
+   */
+  private async recordMcpInvocation(
+    tool: McpRegisteredTool,
+    req: ApiKeyScopedRequest,
+    capability: ApiKeyCapability,
+    source: string,
+    outcome: {
+      outcome: ToolInvocationOutcome;
+      errorCode?: string;
+      error?: string;
+      durationMs?: number;
+    },
+    // A confirmed replay runs as the owner's request; who ASKED comes from the pending row.
+    origin?: PendingActionOrigin,
+  ): Promise<void> {
+    const context = ContextService.getContext();
+    const managedApp = origin
+      ? origin.principalName != null
+      : isManagedAppPrincipal({ managedBy: req.apiKeyManagedBy });
+    const appName = origin ? origin.principalName : req.apiKeyName;
+
+    await this.toolRegistry.recordInvocation({
+      intent: tool.name,
+      tool: tool.name,
+      source,
+      userId: (req.user as { id?: string } | undefined)?.id ?? context?.userId,
+      correlationId: context?.traceId,
+      apiKeyId: req.apiKeyId ?? context?.apiKeyId,
+      capability,
+      principal: managedApp ? 'managed-app' : 'owner',
+      // Only for an app. An owner-originated row recording the owner's own key name here would
+      // make the activity page attribute the owner's action to a nonexistent app.
+      principalName: managedApp ? (appName ?? undefined) : undefined,
+      occurredAt: new Date().toISOString(),
+      access: tool.privacy.access,
+      external: tool.privacy.external,
+      destructive: tool.privacy.destructive,
+      ...outcome,
+    });
+  }
+
+  private registerGraphQLTools() {
+    for (const tool of this.graphqlAdapter.getTools()) {
+      this.tools.set(tool.name, {
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        // Carry the synthesized label so auto-wrapped CRUD is advertised (and gated) with the same
+        // privacy metadata as native intents rather than slipping through unlabelled.
+        privacy: tool.privacy,
+        source: 'graphql',
+      });
+    }
+  }
+
+  private registerNativeTools() {
+    // Every registered tool is a curated intent; advertise them all to MCP clients under their
+    // executable (underscored) names. The outbound catalog (rather than the agent-facing full
+    // list) excludes tools sourced from a user's own external MCP servers — re-publishing those
+    // here would let a client reach back through CI-Server's own MCP server to that same external
+    // server, a recursive re-exposure this endpoint does not exist to provide.
+    //
+    // `ForEveryOwner`: this runs at boot, with no caller, and a tool owned by one account must
+    // still be in the map for that account. `getToolsForRequest` applies ownership per request.
+    const schemas = this.toolRegistry.getOutboundCatalogToolsForEveryOwner();
+
+    for (const schema of schemas) {
+      // schema.name is the dotted intent id; expose/execute by the MCP-safe executable name.
+      const toolName = intentToolName(schema.name);
+
+      // Skip if a GraphQL tool with the same name already exists
+      if (this.tools.has(toolName)) {
+        this.logger.debug(`Skipping native tool "${toolName}" — name conflict with GraphQL tool`);
+
+        continue;
+      }
+
+      this.tools.set(toolName, {
+        name: toolName,
+        description: schema.description,
+        inputSchema: this.jsonSchemaToZodShape(schema.parameters),
+        privacy: schema.privacy,
+        source: 'native',
+      });
+    }
+  }
+
+  private jsonSchemaToZodShape(schema: JSONSchema): Record<string, ZodTypeAny> {
+    const shape: Record<string, ZodTypeAny> = {};
+    const properties = schema.properties ?? {};
+    const required = new Set(schema.required ?? []);
+
+    for (const [key, prop] of Object.entries(properties)) {
+      let zodType = this.jsonPropertyToZod(prop);
+
+      if (prop.description) {
+        zodType = zodType.describe(prop.description);
+      }
+
+      if (!required.has(key)) {
+        zodType = zodType.optional();
+      }
+
+      shape[key] = zodType;
+    }
+
+    return shape;
+  }
+
+  private jsonPropertyToZod(prop: JSONSchema): ZodTypeAny {
+    if (prop.enum && prop.enum.length > 0) {
+      const values = prop.enum.map(String) as [string, ...string[]];
+
+      return unwrapSingleton(z.enum(values));
+    }
+
+    switch (prop.type) {
+      case 'string':
+        return unwrapSingleton(z.string());
+      case 'number':
+        return unwrapSingleton(z.number());
+      case 'integer': {
+        let schema = z.number().int();
+
+        if (typeof prop.minimum === 'number') {
+          schema = schema.min(prop.minimum);
+        }
+
+        if (typeof prop.maximum === 'number') {
+          schema = schema.max(prop.maximum);
+        }
+
+        return unwrapSingleton(schema);
+      }
+
+      case 'boolean':
+        return unwrapSingleton(z.boolean());
+      case 'array':
+        if (prop.items) {
+          return z.array(this.jsonPropertyToZod(prop.items));
+        }
+
+        return z.array(z.unknown());
+      case 'object':
+        if (prop.properties) {
+          return z.object(this.jsonSchemaToZodShape(prop));
+        }
+
+        return z.record(z.unknown());
+      default:
+        return z.unknown();
+    }
+  }
+}
+
+/**
+ * A scalar argument the model wrapped in a one-element array (`sort: ["recent"]`) is read as the
+ * element. Seen on a device: Gemma 4 E2B generalised the array shape of the `entityTypes` beside it,
+ * was told the argument was invalid, and gave up on the question. A phone's model gets one attempt
+ * at a call, and the spelling is not worth it; a real list where a scalar is declared (two or more
+ * elements) is still refused as before.
+ */
+function unwrapSingleton<T extends ZodTypeAny>(schema: T): ZodTypeAny {
+  return z.preprocess((value) => (Array.isArray(value) && value.length === 1 ? value[0] : value), schema);
+}
+
+/**
+ * What the GraphQL executor handed back, as a {@link ToolResult}. A resolver error does not throw:
+ * the executor returns `{ errors, data }`, which is a failed call however it was delivered.
+ */
+function graphqlResultOf(data: unknown): ToolResult {
+  const errors = (data as { errors?: Array<{ message?: string }> } | null)?.errors;
+
+  if (!Array.isArray(errors)) {
+    return { success: true, data };
+  }
+
+  return {
+    success: false,
+    data,
+    error: {
+      code: 'GRAPHQL_ERROR',
+      message: errors.map((error) => error.message).join('; '),
+      retryable: false,
+    },
+  };
+}
+
+/**
+ * A GraphQL-plane tool, in the shape the pending-action gate and its queue read: its MCP name as
+ * the intent and tool name, and the privacy label the adapter synthesized for it. The gate reads
+ * only `name` and `privacy`; the rest is filled in because the type asks for it.
+ */
+function graphqlGateSchema(tool: McpRegisteredTool): IntentDefinition {
+  return {
+    name: tool.name,
+    domain: 'mcp',
+    title: tool.name,
+    description: tool.description,
+    parameters: { type: 'object', properties: {} },
+    privacy: tool.privacy,
+    localCapable: false,
+  };
+}
+
+/**
+ * Shape a thrown GraphQL-plane error like a `ToolError` so one `outcomeOf` decides the outcome for
+ * both planes.
+ *
+ * The exception CLASS is the code, because the class is the closest thing this plane has to the
+ * error code the intent plane supplies: a Nest `ForbiddenException` and a driver `TimeoutError`
+ * are exactly the distinction the `outcome` column is trying to preserve. Read off
+ * `constructor.name` rather than `error.name`, which is the string `'Error'` for any subclass that
+ * did not bother to set it.
+ */
+export function describeFailure(error: unknown): { code: string; message: string; retryable: boolean } {
+  if (!(error instanceof Error)) {
+    return { code: 'UNKNOWN_ERROR', message: String(error), retryable: false };
+  }
+
+  return {
+    code: error.constructor?.name ?? error.name ?? 'UNKNOWN_ERROR',
+    message: toolErrorMessage(error),
+    retryable: false,
+  };
+}

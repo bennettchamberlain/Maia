@@ -1,0 +1,384 @@
+import { Test } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
+
+import type { ServiceContext, UserServiceContext } from '@ci/common/context';
+import { HbpeNotifyService } from '@ci/common/hbpe';
+import { EventService } from '@ci/domains/events';
+
+import { EventBaseEntity } from '../../entities/EventBaseEntity';
+import { EventEntity } from '../../entities/EventEntity';
+import { platformIdentity } from '../../identity';
+import { CalendarEventService } from '../CalendarEventService';
+import { EVENT_TIME_REOPENER } from '../eventTimeReopener';
+import { GraphDeltaWriter } from '../GraphDeltaWriter';
+
+import { noopGraphDeltaWriter } from './harness/noopGraphDeltaWriter';
+
+const ctx = { userId: 'user-1' } as ServiceContext;
+
+function existing(overrides: Partial<EventEntity> = {}): EventEntity {
+  return {
+    id: 'e1',
+    startTime: new Date('2026-08-03T14:00:00Z'),
+    endTime: new Date('2026-08-03T15:30:00Z'),
+    sourceSystem: null,
+    externalSyncStatus: null,
+    ...overrides,
+  } as EventEntity;
+}
+
+describe('CalendarEventService.reschedule — moving an event on the calendar', () => {
+  let service: CalendarEventService;
+  let repo: { findOne: jest.Mock; save: jest.Mock; find: jest.Mock; manager: unknown };
+  let signalling: { send: jest.Mock };
+  let hbpeNotify: { notifyEvents: jest.Mock };
+  let saved: EventEntity | undefined;
+  /** The statements the move ran on its transaction, and the transaction they ran on. */
+  let query: jest.Mock;
+  let txManager: { getRepository: jest.Mock; query: jest.Mock };
+  /** What PipelineModule binds to EVENT_TIME_REOPENER. */
+  let reopener: { reopenTimeDecisions: jest.Mock };
+
+  async function setup(row: EventEntity | null) {
+    saved = undefined;
+    query = jest.fn(async () => []);
+    reopener = { reopenTimeDecisions: jest.fn(async () => 0) };
+    repo = {
+      findOne: jest.fn(async () => row),
+      save: jest.fn(async (entity: EventEntity) => {
+        saved = entity;
+
+        return entity;
+      }),
+      find: jest.fn(async () => []),
+      manager: {
+        // The move and the settling of the old time share one transaction.
+        transaction: jest.fn((run: (manager: unknown) => unknown) => Promise.resolve(run(txManager))),
+      },
+    };
+    txManager = { getRepository: jest.fn(() => repo), query };
+    signalling = { send: jest.fn() };
+    hbpeNotify = { notifyEvents: jest.fn(async () => undefined) };
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        CalendarEventService,
+        { provide: getRepositoryToken(EventEntity), useValue: repo },
+        // The base row owns title/description; the read-back composes it in.
+        { provide: getRepositoryToken(EventBaseEntity), useValue: { find: jest.fn(async () => []) } },
+        { provide: EventService, useValue: signalling },
+        { provide: DataSource, useValue: { getRepository: jest.fn() } },
+        { provide: GraphDeltaWriter, useValue: noopGraphDeltaWriter() },
+        { provide: EVENT_TIME_REOPENER, useValue: reopener },
+        { provide: HbpeNotifyService, useValue: hbpeNotify },
+      ],
+    }).compile();
+
+    service = moduleRef.get(CalendarEventService);
+  }
+
+  const newStart = new Date('2026-08-06T10:00:00Z');
+
+  it('preserves the duration when only a start is given', async () => {
+    await setup(existing());
+
+    await service.reschedule(ctx, 'e1', newStart);
+
+    // 90 minutes in, 90 minutes out.
+    expect(saved?.startTime).toEqual(newStart);
+    expect(saved?.endTime).toEqual(new Date('2026-08-06T11:30:00Z'));
+  });
+
+  it('honours an explicit end time', async () => {
+    await setup(existing());
+    const end = new Date('2026-08-06T10:30:00Z');
+
+    await service.reschedule(ctx, 'e1', newStart, end);
+
+    expect(saved?.endTime).toBe(end);
+  });
+
+  it('leaves an open-ended event open-ended', async () => {
+    await setup(existing({ endTime: null }));
+
+    await service.reschedule(ctx, 'e1', newStart);
+
+    expect(saved?.endTime).toBeNull();
+  });
+
+  it('marks an externally-sourced event as diverged from its calendar', async () => {
+    await setup(existing({ sourceSystem: 'google_calendar' }));
+
+    await service.reschedule(ctx, 'e1', newStart);
+
+    // The move does not reach Google; `pending` is the record that it drifted.
+    expect(saved?.externalSyncStatus).toBe('pending');
+  });
+
+  it('leaves a locally-created event unmarked', async () => {
+    await setup(existing({ sourceSystem: null }));
+
+    await service.reschedule(ctx, 'e1', newStart);
+
+    expect(saved?.externalSyncStatus).toBeNull();
+  });
+
+  it('signals the move so search and enrichment re-read the row', async () => {
+    await setup(existing());
+
+    await service.reschedule(ctx, 'e1', newStart);
+
+    expect(signalling.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells HBPE about the day the event left as well as the day it landed on', async () => {
+    // HBPE re-serializes only the days it is notified about. A move that
+    // reached it not at all — or named only the new day — left the old day
+    // holding the event's tokens.
+    await setup(existing({ userId: 'user-1' }));
+
+    await service.reschedule(ctx, 'e1', newStart);
+
+    expect(hbpeNotify.notifyEvents).toHaveBeenCalledTimes(1);
+    expect(hbpeNotify.notifyEvents).toHaveBeenCalledWith('user-1', [
+      new Date('2026-08-03T14:00:00Z'),
+      newStart,
+    ]);
+  });
+
+  it('returns null for an event the viewer does not own', async () => {
+    await setup(null);
+
+    await expect(service.reschedule(ctx, 'missing', newStart)).resolves.toBeNull();
+    expect(repo.save).not.toHaveBeenCalled();
+    expect(hbpeNotify.notifyEvents).not.toHaveBeenCalled();
+  });
+
+  describe('what the pipeline decided about the old time', () => {
+    it('clears the clean stage’s record and re-opens its decisions, on the move’s own transaction', async () => {
+      await setup(existing());
+
+      await service.reschedule(ctx, 'e1', newStart);
+
+      // The move was saved through the transaction's manager, not beside it.
+      expect(txManager.getRepository).toHaveBeenCalledWith(EventEntity);
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(query.mock.calls[0][0]).toMatch(/SET time_source = NULL, time_precision = NULL/);
+      expect(query.mock.calls[0][0]).toMatch(/start_time_original = NULL, end_time_original = NULL/);
+      expect(query.mock.calls[0][1]).toEqual(['e1']);
+      // Only a row that has something to clear is written: most events were never examined.
+      expect((query.mock.calls[0][0] as string).replace(/\s+/g, ' ')).toContain(
+        'AND (time_source IS NOT NULL OR time_precision IS NOT NULL OR start_time_original IS NOT NULL OR end_time_original IS NOT NULL)',
+      );
+      expect(reopener.reopenTimeDecisions).toHaveBeenCalledTimes(1);
+      expect(reopener.reopenTimeDecisions).toHaveBeenCalledWith(['e1'], txManager);
+    });
+
+    it('settles a move of the end alone', async () => {
+      await setup(existing());
+
+      // Same start, a different end.
+      await service.reschedule(ctx, 'e1', existing().startTime, new Date('2026-08-03T16:00:00Z'));
+
+      expect(reopener.reopenTimeDecisions).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves both alone when the event lands on the slot it already holds', async () => {
+      await setup(existing());
+
+      // Same start; the end follows at the prior 90 minutes, so it is the same slot.
+      await service.reschedule(ctx, 'e1', existing().startTime);
+
+      expect(repo.save).toHaveBeenCalledTimes(1);
+      expect(saved?.lastMovedAt).toBeInstanceOf(Date);
+      expect(query).not.toHaveBeenCalled();
+      expect(reopener.reopenTimeDecisions).not.toHaveBeenCalled();
+    });
+
+    it('does not signal the move when the transaction fails', async () => {
+      await setup(existing());
+      reopener.reopenTimeDecisions.mockRejectedValue(new Error('pipeline unavailable'));
+
+      await expect(service.reschedule(ctx, 'e1', newStart)).rejects.toThrow('pipeline unavailable');
+
+      expect(signalling.send).not.toHaveBeenCalled();
+    });
+  });
+});
+
+/**
+ * Stand-in for TypeORM's `repository.create()`, which builds the entity by
+ * reading each column off the plain object by its *propertyName* (camelCase)
+ * and silently discarding everything it does not recognise. Dropping every
+ * snake_case key reproduces that faithfully: a DTO field `toEntityFields`
+ * forgets to rename is not a no-op, it is a lost write with no error.
+ */
+function createLikeTypeorm<T extends object>(plain: T): T {
+  return Object.fromEntries(Object.entries(plain).filter(([key]) => !key.includes('_'))) as T;
+}
+
+/**
+ * Lives beside the reschedule suite because both exercise the same write path
+ * through the mocked EventEntity repository — the create()/toEntityFields half
+ * of it, which is where a candidate's provenance is either recorded or lost.
+ */
+describe('CalendarEventService.create — provenance survives the DTO mapping', () => {
+  let service: CalendarEventService;
+  let saved: EventEntity | undefined;
+  let savedBase: EventBaseEntity | undefined;
+
+  const userCtx = { userId: 'user-1' } as UserServiceContext;
+
+  async function setup() {
+    saved = undefined;
+    savedBase = undefined;
+    const baseRepo = {
+      create: jest.fn((plain: EventBaseEntity) => plain),
+      save: jest.fn(async (entity: EventBaseEntity) => {
+        savedBase = entity;
+
+        return entity;
+      }),
+      find: jest.fn(async () => []),
+    };
+    const repo = {
+      findOne: jest.fn(async () => null),
+      create: jest.fn((plain: EventEntity) => createLikeTypeorm(plain)),
+      save: jest.fn(async (entity: EventEntity) => {
+        saved = entity;
+
+        return entity;
+      }),
+      // create() writes both halves of the CTI aggregate in one transaction, so
+      // the mock hands back the same repositories through a manager.
+      manager: {
+        // ci.record_sources ledger writes go through manager.query.
+        query: jest.fn(async () => []),
+        transaction: (run: (manager: unknown) => unknown) =>
+          Promise.resolve(
+            run({
+              getRepository: (target: unknown) => (target === EventBaseEntity ? baseRepo : repo),
+            }),
+          ),
+      },
+    };
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        CalendarEventService,
+        { provide: getRepositoryToken(EventEntity), useValue: repo },
+        { provide: getRepositoryToken(EventBaseEntity), useValue: baseRepo },
+        { provide: EventService, useValue: { send: jest.fn() } },
+        { provide: DataSource, useValue: { getRepository: jest.fn() } },
+        { provide: GraphDeltaWriter, useValue: noopGraphDeltaWriter() },
+      ],
+    }).compile();
+
+    service = moduleRef.get(CalendarEventService);
+  }
+
+  const start = new Date('2026-08-06T09:00:00Z');
+
+  /** Exactly what CandidateService.accept hands to create() when promoting. */
+  const promoted = {
+    title: 'Renew passport',
+    start_time: start,
+    end_time: new Date('2026-08-06T09:45:00Z'),
+    category: 'admin',
+    energy_level: 3,
+    status: 'confirmed',
+    is_predicted: false,
+    created_by: 'schedule:candidate',
+    inference_sources: {
+      candidate_id: 'cand-1',
+      rationale: 'Expires in six weeks',
+      rationale_sources: ['action:42'],
+      generator: 'suggestion-sync',
+    },
+  };
+
+  it('writes the audit trail an accepted candidate carries', async () => {
+    await setup();
+
+    await service.create(userCtx, promoted);
+
+    // Without the snake_case -> propertyName rename these four never reach the
+    // row and an event minted from a suggestion is indistinguishable from a
+    // hand-created one.
+    expect(saved?.createdBy).toBe('schedule:candidate');
+    expect(saved?.inferenceSources).toEqual(promoted.inference_sources);
+    expect(saved?.energyLevel).toBe(3);
+  });
+
+  it('records is_predicted: false rather than treating it as absent', async () => {
+    await setup();
+
+    await service.create(userCtx, promoted);
+
+    // The user committed to this, so HBPE may train on it — that is an
+    // assertion, not a missing value, and a truthiness check would lose it.
+    expect(saved).toHaveProperty('isPredicted', false);
+  });
+
+  it('returns the provenance on the egress type', async () => {
+    await setup();
+
+    const [event] = await service.create(userCtx, promoted);
+
+    expect(event).toMatchObject({
+      createdBy: 'schedule:candidate',
+      energyLevel: 3,
+      isPredicted: false,
+    });
+  });
+
+  it('leaves provenance unset when the caller says nothing about it', async () => {
+    await setup();
+
+    await service.create(userCtx, { title: 'Lunch', start_time: start });
+
+    // Absent must stay absent so the column default applies.
+    expect(saved).not.toHaveProperty('isPredicted');
+    expect(saved).not.toHaveProperty('createdBy');
+    expect(saved).not.toHaveProperty('inferenceSources');
+    expect(saved).not.toHaveProperty('energyLevel');
+  });
+
+  it('still maps the fields it mapped before', async () => {
+    await setup();
+
+    await service.create(userCtx, {
+      title: 'Standup',
+      start_time: start,
+      end_time: new Date('2026-08-06T09:15:00Z'),
+      event_type: 'meeting',
+      source_type: 'calendar',
+      ...(() => {
+        const identity = platformIdentity('google_calendar', 'gcal-1');
+
+        return { source_system: identity.system, source_id: identity.id };
+      })(),
+      location_name: 'Room 3',
+      organizer_entity_id: 'entity-1',
+      participant_entity_ids: ['entity-2'],
+      sharing_level: 'household',
+    });
+
+    // The title is base-row data now (entities.name), so it is asserted there
+    // rather than on the ci.events detail row.
+    expect(savedBase).toMatchObject({ name: 'Standup' });
+
+    expect(saved).toMatchObject({
+      startTime: start,
+      eventType: 'meeting',
+      sourceType: 'calendar',
+      sourceSystem: 'google_calendar',
+      sourceId: 'gcal-1',
+      locationName: 'Room 3',
+      organizerEntityId: 'entity-1',
+      participantEntityIds: ['entity-2'],
+      sharingLevel: 'household',
+    });
+  });
+});

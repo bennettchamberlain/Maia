@@ -1,0 +1,215 @@
+name: Desktop Build
+
+# Builds the native macOS/Windows/Linux desktop app — a local orchestrator
+# (Tauri) that brings up CI-Server's own Docker Compose stack and displays
+# it (frontend/apps/desktop). Modelled on mobile-build.yml, which is itself
+# modelled on CI-Hub's desktop-build.yml.
+#
+# Runs on manual dispatch only and produces UNSIGNED artifacts that need no
+# secrets — dmg/app (macOS), msi/nsis-setup.exe (Windows), deb/rpm/AppImage
+# (Linux). Signed, notarized/authenticode-signed release artifacts are
+# desktop-release.yml.
+#
+# THIS WORKFLOW IS THE DESKTOP RELEASE GATE. desktop-release.yml's first job,
+# `verify-desktop-build-passed`, refuses to build or publish anything unless a
+# successful run of THIS workflow exists for the same commit SHA — the Cargo
+# test step below is the only place the desktop crate's tests run at all, and
+# the release lane runs none of its own. Two consequences for anyone editing
+# this file: a release now requires `gh workflow run desktop-build.yml --ref
+# <branch>` to have gone green on that exact commit first, and deleting or
+# permanently `if:`-disabling the test step silently converts the gate into a
+# rubber stamp.
+
+# GATED TO MANUAL, like all thirteen of this repo's workflows as of
+# 2026-09-17 (the count docs/CI.md keeps — its table is the canonical one).
+# Nothing runs on its own any more: `pr-gate.yml` (which ran on every pull
+# request) was deleted, and `benchmark-unit.yml` plus the two tag-triggered
+# release lanes, `mobile-release.yml` (ios-v*/android-v*/mobile-release-v*)
+# and `desktop-release.yml` (desktop-v*), were gated to `workflow_dispatch` —
+# all to cut the GitHub Actions bill.
+# CI silence here therefore means "nobody dispatched it", NOT "everything
+# passed". Run it deliberately:
+#   gh workflow run desktop-build.yml --ref <branch>
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: desktop-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+            label: macOS (Apple Silicon)
+          - runner: macos-latest
+            target: x86_64-apple-darwin
+            label: macOS (Intel)
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            label: Linux (x64)
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: Windows (x64)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Rust toolchain
+        # A master commit with the toolchain named explicitly; see the same step
+        # in desktop-release.yml for why not a commit on the `stable` branch.
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Rust build cache
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: frontend/apps/desktop/src-tauri -> target
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config curl wget file libssl-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf libfuse2 rpm xdg-utils
+
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The same locked Tauri CLI desktop-release.yml builds with, so the
+      # green run that release gate looks for was produced by the same CLI
+      # version rather than whatever npm had newest that day.
+      - name: Install the locked Tauri CLI
+        working-directory: frontend/apps/desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          yarn install --immutable
+          yarn tauri --version
+
+      # Only syncs the bundled compose resources (a resolved image tag, plus
+      # verbatim copies of the root compose files at that same release) — no
+      # web build needed, since the bootstrap page is static, unlike
+      # mobile-build.yml's real SPA build.
+      - name: Sync compose resources
+        working-directory: frontend/apps/desktop
+        run: node scripts/sync-compose-resources.cjs
+
+      # The crate's own unit tests (`#[cfg(test)]` modules in src/), run before
+      # the bundle so a logic failure is reported in seconds rather than after a
+      # full release build. Cheap here: the toolchain, the system libraries and
+      # the rust-cache above are already in place.
+      #
+      # Skipped for x86_64-apple-darwin, the one CROSS-compiled entry in the
+      # matrix — macos-latest is arm64, so an x86_64 test binary would need
+      # Rosetta to run. `cargo test` with no --target builds for the host, which
+      # is what every other entry already is. The remaining three still cover all
+      # three operating systems, which matters: the sidecar's release-asset
+      # resolution and the stack manager's path handling are per-OS.
+      #
+      # --no-fail-fast so one failure does not hide the rest of the suite.
+      # Locally this is `make test-desktop`.
+      #
+      # THE SUITE MUST STAY RUNNABLE ON A BARE RUNNER. Nothing above installs
+      # Ollama, Docker images, models or any other external service, and that
+      # is a contract, not an oversight: this step is now desktop-release.yml's
+      # only test gate, so a test that hard-requires a tool absent from a
+      # GitHub-hosted runner turns the very first dispatch red for an
+      # environment reason, and the predictable reaction to an
+      # environment-red gate is to delete the step — losing all ~40 tests
+      # rather than the one that could not run.
+      # local_model/ollama_sidecar.rs had exactly that shape
+      # (`find_on_path().expect(...)` in spawn_serve_on_an_alternate_port_
+      # becomes_ready); a test needing a binary the runner does not have must
+      # skip itself LOUDLY in the crate, not be propped up by an install step
+      # here. Deliberately do NOT add one: `ollama serve` on a hosted runner
+      # buys minutes of setup and a model download to exercise process
+      # plumbing, and it would make the gate depend on a third-party
+      # installer's uptime.
+      - name: Cargo test
+        if: matrix.target != 'x86_64-apple-darwin'
+        working-directory: frontend/apps/desktop/src-tauri
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --no-fail-fast 2>&1 | tee cargo-test.log
+
+      # cargo emits no report file, so the captured log IS the report. Failure
+      # only — on a green run it is the same text the step above already printed.
+      - name: Upload test log
+        if: failure() && matrix.target != 'x86_64-apple-darwin'
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 7
+          name: ci-server-desktop-test-log-${{ matrix.target }}
+          path: frontend/apps/desktop/src-tauri/cargo-test.log
+          if-no-files-found: ignore
+
+      - name: Build (Tauri, unsigned)
+        working-directory: frontend/apps/desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE_FLAGS=""
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            BUNDLE_FLAGS="-b deb,rpm,appimage"
+          fi
+          yarn tauri build \
+            --target ${{ matrix.target }} \
+            -c '{"bundle":{"createUpdaterArtifacts":false}}' \
+            $BUNDLE_FLAGS
+
+      - name: Upload artifacts (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 7
+          name: ci-server-desktop-${{ matrix.target }}
+          path: |
+            frontend/apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            frontend/apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app
+          if-no-files-found: error
+
+      - name: Upload artifacts (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 7
+          name: ci-server-desktop-${{ matrix.target }}
+          path: |
+            frontend/apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
+            frontend/apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/rpm/*.rpm
+            frontend/apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+      - name: Upload artifacts (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 7
+          name: ci-server-desktop-${{ matrix.target }}
+          path: |
+            frontend/apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
+            frontend/apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+          if-no-files-found: error

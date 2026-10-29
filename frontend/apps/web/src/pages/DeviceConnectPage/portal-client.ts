@@ -1,0 +1,397 @@
+import { apiFetch } from '@ci/common';
+
+/**
+ * Portal client for the native `/device-connect` flow. Signs into CI-Portal, then
+ * lists Companion Memory (`ci-memory`) apps the user owns so the phone can point
+ * at a Hub-published Memory Server.
+ *
+ * Portal OIDC access tokens must hit `/api/users/me/apps?slug=…`, not `/api/devices`
+ * (that route 401s on OIDC). Email/password uses `/api/devices` and filters for
+ * the Memory app URL. Modeled on CI-Hub's mobile-connect portal-client, without
+ * Tauri — Capacitor native HTTP is used when present so webview CORS cannot block
+ * the Portal origin.
+ */
+
+/**
+ * Phone cloud-connect always starts on production. `VITE_CI_CLOUD_URL` /
+ * `CI_CLOUD_URL` are the Memory server / Hub appliance Portal, not the phone —
+ * a local Vite or unmarked store build must not silently aim Sign in at the
+ * internal host (`hub.companionintelligence.com`). Advanced can override the
+ * Companion URL. A persisted internal host is ignored so old installs migrate
+ * to production.
+ */
+export const DEFAULT_PORTAL_URL = 'https://hub.ci.computer';
+const PORTAL_URL_STORAGE_KEY = 'ci.deviceConnect.portalUrl';
+
+/** Portal Hub URL for the next Safari OIDC hop. Independent of the Memory origin. */
+export function readPersistedPortalUrl(): string {
+  try {
+    const stored = typeof localStorage === 'undefined' ? null : localStorage.getItem(PORTAL_URL_STORAGE_KEY);
+
+    if (stored && !stored.includes('companionintelligence.com')) {
+      return normalizePortalUrl(stored);
+    }
+
+    return DEFAULT_PORTAL_URL;
+  } catch {
+    return DEFAULT_PORTAL_URL;
+  }
+}
+
+export function persistPortalUrl(url: string): string {
+  const next = normalizePortalUrl(url);
+
+  try {
+    localStorage.setItem(PORTAL_URL_STORAGE_KEY, next);
+  } catch {
+    /* private mode / quota */
+  }
+
+  return next;
+}
+
+export interface PortalAuth {
+  token: string | null;
+  cookie: string | null;
+  kind?: 'session' | 'oauth';
+  /** Portal OIDC id_token — preferred when minting a Memory API key. */
+  idToken?: string | null;
+}
+
+export interface MemoryServerDevice {
+  id: string;
+  name: string;
+  status: string;
+  memoryUrl: string | null;
+  /**
+   * The Memory's resource indicator (`urn:ci:device:<id>`), listed by a Portal
+   * that can address tokens to one Memory. Pairing sends it when it spends the
+   * sign-in's code, and the id_token that comes back works on this Memory only.
+   * Absent from an older Portal.
+   */
+  resource?: string;
+}
+
+/** The Portal no longer takes the sign-in's code: unknown, expired (10 minutes) or already spent. */
+export class PortalSignInExpiredError extends Error {
+  constructor() {
+    super('Your Companion sign-in expired. Sign in again.');
+    this.name = 'PortalSignInExpiredError';
+  }
+}
+
+const MEMORY_SLUGS = ['ci-memory', 'companion-memory', 'ci-server'];
+
+export function normalizePortalUrl(url: string): string {
+  return url.trim().replace(/\/+$/, '') || DEFAULT_PORTAL_URL;
+}
+
+/**
+ * Reachability probe for a Memory Server origin. Uses the same native HTTP
+ * bridge as Portal calls — WKWebView `fetch` is CORS-bound and fails with
+ * TypeError "Load failed" against a Hub-published appliance.
+ */
+export async function probeMemoryOrigin(origin: string): Promise<void> {
+  const url = `${origin.replace(/\/+$/, '')}/api/health`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+
+  try {
+    const res = await apiFetch(url, { method: 'GET', signal: controller.signal });
+
+    if (!res.ok) {
+      throw new Error(`Memory Server responded with ${res.status}`);
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** How long {@link probePortalOrigin} waits for any answer before calling the host unreachable. */
+const PORTAL_PROBE_TIMEOUT_MS = 8_000;
+
+/**
+ * Reachability probe for the Companion (Portal) origin, run BEFORE the system
+ * sign-in sheet opens.
+ *
+ * A wrong Companion URL (Advanced) used to show up only inside that sheet, as
+ * the browser's own error page, and dismissing the sheet is a silent cancel — so
+ * Log in simply came back with nothing in the app saying why (QA AUTH-12).
+ * Probing first puts the failure where the person can read it.
+ *
+ * Any HTTP answer counts, a 404 included: it proves something is listening
+ * there, and this deliberately does not guess at a health route the Portal may
+ * not serve. Only a request that gets no answer at all throws. It goes through
+ * the same native HTTP bridge as every other Portal call, so what it can reach
+ * is what the token exchange after the sheet can reach.
+ */
+export async function probePortalOrigin(portalUrl: string = DEFAULT_PORTAL_URL): Promise<void> {
+  const portal = normalizePortalUrl(portalUrl);
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  // The native bridge ignores an AbortSignal, so the signal alone would not
+  // bound a host that swallows the request — race a timer against it instead.
+  const unanswered = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`No answer from ${portal}`));
+    }, PORTAL_PROBE_TIMEOUT_MS);
+  });
+
+  try {
+    await Promise.race([
+      apiFetch(`${portal}/api/auth/ok`, { method: 'GET', signal: controller.signal }),
+      unanswered,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function portalFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  return apiFetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(15_000) });
+}
+
+function extractSessionCookie(setCookie: string | null): string | null {
+  if (!setCookie) {
+    return null;
+  }
+
+  const pairs = setCookie
+    .split(/,(?=[^;]+?=)/)
+    .map((c) => (c.split(';')[0] ?? '').trim())
+    .filter((c) => /session|token|^ci/i.test(c));
+
+  return pairs.length ? pairs.join('; ') : null;
+}
+
+function memoryUrlForDevice(device: {
+  apps?: Array<{ slug?: string; name?: string; url?: string }>;
+}): string | null {
+  const apps = device.apps ?? [];
+  const memory = apps.find(
+    (a) => MEMORY_SLUGS.includes(a.slug ?? '') || /memory|ci-server/i.test(a.name ?? ''),
+  );
+
+  return memory?.url ?? null;
+}
+
+export async function signInToPortal(
+  email: string,
+  password: string,
+  portalUrl = DEFAULT_PORTAL_URL,
+): Promise<PortalAuth> {
+  const portal = normalizePortalUrl(portalUrl);
+  const res = await portalFetch(`${portal}/api/auth/sign-in/email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+
+  if (!res.ok) {
+    let message = `Sign-in failed (${res.status})`;
+
+    try {
+      const body = (await res.json()) as { message?: string };
+
+      if (body?.message) {
+        message = body.message;
+      }
+    } catch {
+      /* keep default */
+    }
+
+    throw new Error(message);
+  }
+
+  const cookie = extractSessionCookie(res.headers.get('set-cookie'));
+  let token: string | null = null;
+
+  try {
+    const body = (await res.json()) as { token?: string; session?: { token?: string } };
+    token = body?.token ?? body?.session?.token ?? null;
+  } catch {
+    /* token may only be in the cookie */
+  }
+
+  if (!token && !cookie) {
+    throw new Error('Sign-in succeeded but no session was returned by the Portal.');
+  }
+
+  return { token, cookie, kind: 'session' };
+}
+
+interface MyAppsBody {
+  apps?: Array<{
+    slug?: string;
+    url?: string;
+    deviceName?: string;
+    deviceSlug?: string;
+    resource?: unknown;
+  }>;
+}
+
+/**
+ * Walk the Memory slugs until one lists something, turning each app into a
+ * picker row. `fetchSlug` answers one slug's `{ apps }`.
+ */
+async function listBySlug(fetchSlug: (slug: string) => Promise<MyAppsBody>): Promise<MemoryServerDevice[]> {
+  const seen = new Set<string>();
+  const devices: MemoryServerDevice[] = [];
+
+  for (const slug of MEMORY_SLUGS) {
+    const body = await fetchSlug(slug);
+
+    for (const app of body.apps ?? []) {
+      const key = app.url || app.deviceSlug || app.deviceName;
+
+      if (!key || seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      devices.push({
+        id: app.deviceSlug || app.url || key,
+        name: app.deviceName || app.deviceSlug || key,
+        status: 'active',
+        memoryUrl: app.url ?? null,
+        ...(typeof app.resource === 'string' && app.resource ? { resource: app.resource } : {}),
+      });
+    }
+
+    if (devices.length > 0) {
+      break;
+    }
+  }
+
+  return devices;
+}
+
+async function listMemoryWithOauthToken(auth: PortalAuth, portal: string): Promise<MemoryServerDevice[]> {
+  const headers: Record<string, string> = {};
+
+  if (auth.token) {
+    headers.Authorization = `Bearer ${auth.token}`;
+  }
+
+  return listBySlug(async (slug) => {
+    const res = await portalFetch(`${portal}/api/users/me/apps?slug=${encodeURIComponent(slug)}`, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!res.ok) {
+      throw new Error(`Could not load your Memory Servers (${res.status}).`);
+    }
+
+    return (await res.json()) as MyAppsBody;
+  });
+}
+
+/** An older Portal has no by-code route. */
+class ByCodeUnsupported extends Error {}
+
+/**
+ * List the person's Memories with a sign-in's code before it is spent
+ * (`POST /api/users/me/apps/by-code`). The Portal checks the code and its PKCE
+ * verifier and leaves the code exchangeable, so the phone holds no Portal token
+ * while the person picks. Returns null from an older Portal, which answers 404;
+ * throws {@link PortalSignInExpiredError} when the Portal no longer takes the code.
+ */
+export async function listMemoryServersByCode(
+  signIn: { code: string; verifier: string },
+  portalUrl = DEFAULT_PORTAL_URL,
+): Promise<MemoryServerDevice[] | null> {
+  const portal = normalizePortalUrl(portalUrl);
+
+  try {
+    return await listBySlug(async (slug) => {
+      const res = await portalFetch(`${portal}/api/users/me/apps/by-code?slug=${encodeURIComponent(slug)}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // As at the token endpoint: speak as the Portal itself, so origin checks and bot rules
+          // don't read a native POST as cross-site.
+          Origin: portal,
+          Referer: `${portal}/`,
+        },
+        body: JSON.stringify({ code: signIn.code, code_verifier: signIn.verifier }),
+      });
+
+      if (res.status === 404) {
+        throw new ByCodeUnsupported();
+      }
+
+      if (!res.ok) {
+        let error: unknown;
+
+        try {
+          error = ((await res.json()) as { error?: unknown }).error;
+        } catch {
+          error = undefined;
+        }
+
+        if (error === 'invalid_grant') {
+          throw new PortalSignInExpiredError();
+        }
+
+        throw new Error(`Could not load your Memory Servers (${res.status}).`);
+      }
+
+      return (await res.json()) as MyAppsBody;
+    });
+  } catch (err) {
+    if (err instanceof ByCodeUnsupported) {
+      return null;
+    }
+
+    throw err;
+  }
+}
+
+/** List Companion Memory appliances the authenticated Portal user owns. */
+export async function listMemoryServers(
+  auth: PortalAuth,
+  portalUrl = DEFAULT_PORTAL_URL,
+): Promise<MemoryServerDevice[]> {
+  const portal = normalizePortalUrl(portalUrl);
+
+  if (auth.kind === 'oauth') {
+    return listMemoryWithOauthToken(auth, portal);
+  }
+
+  const headers: Record<string, string> = {};
+
+  if (auth.token) {
+    headers.Authorization = `Bearer ${auth.token}`;
+  }
+
+  if (auth.cookie) {
+    headers.Cookie = auth.cookie;
+  }
+
+  const res = await portalFetch(`${portal}/api/devices`, { method: 'GET', headers });
+
+  if (!res.ok) {
+    throw new Error(`Could not load your Memory Servers (${res.status}).`);
+  }
+
+  const body = (await res.json()) as {
+    devices?: Array<{
+      id: string;
+      name?: string;
+      displayName?: string;
+      slug?: string;
+      status?: string;
+      apps?: Array<{ slug?: string; name?: string; url?: string }>;
+    }>;
+  };
+
+  return (body.devices ?? []).map((d) => ({
+    id: d.id,
+    name: d.displayName || d.name || d.slug || d.id,
+    status: d.status ?? 'unknown',
+    memoryUrl: memoryUrlForDevice(d),
+  }));
+}

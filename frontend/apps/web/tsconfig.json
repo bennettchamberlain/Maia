@@ -1,0 +1,22 @@
+{
+  "extends": "../../../tsconfig.react.json",
+
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+
+    "allowImportingTsExtensions": true,
+
+    // Web-only for now — see the note in tsconfig.react.json. This app is the
+    // only one that has ever been checked with them.
+    "verbatimModuleSyntax": true,
+    "noUncheckedSideEffectImports": true,
+
+    "types": ["vite/client", "google.maps", "node"]
+  },
+
+  "include": ["src", "scripts", "stories", "*.config.ts", "codegen.ts", ".storybook/**/*"],
+  "exclude": ["node_modules", "dev-dist", "dist"]
+}

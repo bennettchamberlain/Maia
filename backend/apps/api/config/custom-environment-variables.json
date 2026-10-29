@@ -1,0 +1,462 @@
+{
+  "role": "CI_ROLE",
+  "host": "API_LISTEN_HOST",
+  "hostname": "APP_PUBLIC_HOSTNAME",
+  "port": {
+    "__name": "PORT",
+    "__format": "json"
+  },
+  "cors": {
+    "allowedOrigins": "CORS_ALLOWED_ORIGINS"
+  },
+  "powersync": {
+    "url": "POWERSYNC_URL",
+    "jwtSecret": "POWERSYNC_JWT_SECRET",
+    "audience": "POWERSYNC_AUDIENCE"
+  },
+  "auth": {
+    "jwt": {
+      "authTokenSecret": "AUTH_TOKEN_SECRET",
+      "refreshTokenSecret": "AUTH_REFRESH_TOKEN_SECRET"
+    },
+    "session": {
+      "fieldPepper": "AUTH_SESSION_PEPPER"
+    },
+    "csrf": {
+      "secret": "AUTH_CSRF_TOKEN_SECRET"
+    },
+    "encryption": {
+      "fieldKey": "AUTH_FIELD_ENCRYPTION_KEY"
+    },
+    "oauth": {
+      "callbackUrl": "OAUTH_CALLBACK_URL"
+    },
+    "oidc": {
+      "issuerUrl": "OIDC_ISSUER_URL",
+      "publicBaseUrl": "APP_BASE_URL",
+      "nativeRedirectScheme": "OIDC_NATIVE_REDIRECT_SCHEME"
+    },
+    "connect": {
+      "hubOrigins": "CI_HUB_ORIGINS",
+      "hubInternalUrl": "CI_HUB_INTERNAL_URL",
+      "devDirectWakeUrl": "CI_DEV_DIRECT_WAKE_URL",
+      "devDirectWakeToken": "CI_DEV_DIRECT_WAKE_TOKEN"
+    },
+    "portal": {
+      "enabled": {
+        "__name": "PORTAL_OIDC_ENABLED",
+        "__format": "boolean"
+      },
+      "issuer": "PORTAL_OIDC_ISSUER",
+      "jwksUri": "PORTAL_OIDC_JWKS_URI",
+      "audience": "PORTAL_OIDC_AUDIENCE",
+      "pushRelayUrl": "PORTAL_PUSH_RELAY_URL",
+      "serviceClients": "PORTAL_OIDC_SERVICE_CLIENTS",
+      "applianceAudience": "PORTAL_APPLIANCE_AUDIENCE",
+      "captureClients": "PORTAL_OIDC_CAPTURE_CLIENTS"
+    },
+    "hubForwardAuth": {
+      "enabled": {
+        "__name": "CI_HUB_FORWARD_AUTH_ENABLED",
+        "__format": "boolean"
+      },
+      "secret": "CI_HUB_FORWARD_AUTH_SECRET",
+      "identitySecret": "CI_HUB_FORWARD_AUTH_IDENTITY_SECRET",
+      "audience": "CI_APP_URN",
+      "requireAudience": "CI_HUB_FORWARD_AUTH_REQUIRE_AUDIENCE",
+      "maxSkewMs": "CI_HUB_FORWARD_AUTH_MAX_SKEW_MS"
+    },
+    "loginThrottle": {
+      "enabled": {
+        "__name": "AUTH_LOGIN_THROTTLE_ENABLED",
+        "__format": "boolean"
+      },
+      "maxAttempts": {
+        "__name": "AUTH_LOGIN_THROTTLE_MAX_ATTEMPTS",
+        "__format": "json"
+      },
+      "windowSeconds": {
+        "__name": "AUTH_LOGIN_THROTTLE_WINDOW_SECONDS",
+        "__format": "json"
+      },
+      "lockoutSeconds": {
+        "__name": "AUTH_LOGIN_THROTTLE_LOCKOUT_SECONDS",
+        "__format": "json"
+      }
+    }
+  },
+  "db": {
+    "host": "DATABASE_HOST",
+    "port": "DATABASE_PORT",
+    "username": "DATABASE_USERNAME",
+    "password": "DATABASE_PASSWORD"
+  },
+  "staticfiles": {
+    "storageUrl": "OBJECT_STORE_URL",
+    "auth": {
+      "accessKeyId": "OBJECT_STORE_USERNAME",
+      "secretAccessKey": "OBJECT_STORE_PASSWORD"
+    }
+  },
+  "graphql": {
+    "maxDepth": {
+      "__name": "GRAPHQL_MAX_DEPTH",
+      "__format": "json"
+    }
+  },
+  "llm": {
+    "apiBase": "LLM_API_BASE",
+    "apiKey": "LLM_API_KEY",
+    "chatModel": "LLM_DEFAULT_CHAT_MODEL",
+    "utilityModel": "LLM_UTILITY_MODEL",
+    "firstResponseTimeoutMs": {
+      "__name": "LLM_FIRST_RESPONSE_TIMEOUT_MS",
+      "__format": "json"
+    },
+    "answerInferenceTimeoutMs": {
+      "__name": "LLM_ANSWER_INFERENCE_TIMEOUT_MS",
+      "__format": "json"
+    },
+    "answerInferenceIntervalMinutes": {
+      "__name": "LLM_ANSWER_INFERENCE_INTERVAL_MINUTES",
+      "__format": "json"
+    },
+    "chat": {
+      "groundedRecall": {
+        "enabled": {
+          "__name": "LLM_CHAT_GROUNDED_RECALL_ENABLED",
+          "__format": "boolean"
+        }
+      }
+    },
+    "tierRouting": {
+      "enabled": {
+        "__name": "LLM_TIER_ROUTING_ENABLED",
+        "__format": "boolean"
+      },
+      "onDeviceModel": "LLM_TIER_ROUTING_ON_DEVICE_MODEL",
+      "escalatedModel": "LLM_TIER_ROUTING_ESCALATED_MODEL",
+      "onDeviceContextTokens": {
+        "__name": "LLM_TIER_ROUTING_ON_DEVICE_CONTEXT_TOKENS",
+        "__format": "json"
+      }
+    },
+    "residency": {
+      "mode": "LLM_RESIDENCY_MODE",
+      "vramTotalBytes": {
+        "__name": "LLM_RESIDENCY_VRAM_TOTAL_BYTES",
+        "__format": "json"
+      },
+      "safetyMarginBytes": {
+        "__name": "LLM_RESIDENCY_SAFETY_MARGIN_BYTES",
+        "__format": "json"
+      },
+      "maxUtilityContextTokens": {
+        "__name": "LLM_RESIDENCY_MAX_UTILITY_CONTEXT_TOKENS",
+        "__format": "json"
+      },
+      "loadWatchdogMs": {
+        "__name": "LLM_RESIDENCY_LOAD_WATCHDOG_MS",
+        "__format": "json"
+      },
+      "cooldownMs": {
+        "__name": "LLM_RESIDENCY_COOLDOWN_MS",
+        "__format": "json"
+      },
+      "parallelSlots": {
+        "__name": "LLM_OLLAMA_NUM_PARALLEL",
+        "__format": "json"
+      }
+    }
+  },
+  "services": {
+    "ollama": {
+      "host": "OLLAMA_HOST"
+    },
+    "hbpe": {
+      "host": "HBPE_HOST"
+    },
+    "parser": {
+      "host": "PARSER_HOST"
+    },
+    "summary": {
+      "host": "SUMMARY_HOST"
+    },
+    "sidecarAuthSecret": "SIDECAR_AUTH_SECRET"
+  },
+  "embedding": {
+    "apiBase": "LLM_EMBEDDING_API_BASE",
+    "legacyHost": "OLLAMA_EMBED_HOST",
+    "model": "CI_EMBED_MODEL",
+    "batchSize": {
+      "__name": "CI_EMBED_BATCH_SIZE",
+      "__format": "json"
+    },
+    "maxInputChars": {
+      "__name": "CI_EMBED_MAX_INPUT_CHARS",
+      "__format": "json"
+    },
+    "concurrency": {
+      "__name": "CI_EMBED_CONCURRENCY",
+      "__format": "json"
+    },
+    "coalesceWindowMs": {
+      "__name": "CI_EMBED_COALESCE_WINDOW_MS",
+      "__format": "json"
+    },
+    "minTextLength": {
+      "__name": "CI_EMBED_MIN_TEXT_LENGTH",
+      "__format": "json"
+    },
+    "types": "CI_EMBED_TYPES"
+  },
+  "queues": {
+    "concurrency": {
+      "__name": "CI_QUEUE_CONCURRENCY",
+      "__format": "json"
+    },
+    "fetchBatchSize": {
+      "__name": "CI_QUEUE_FETCH_BATCH_SIZE",
+      "__format": "json"
+    },
+    "perQueueConcurrency": {
+      "__name": "CI_QUEUE_PER_QUEUE_CONCURRENCY",
+      "__format": "json"
+    },
+    "jobTimeoutSeconds": {
+      "__name": "CI_QUEUE_JOB_TIMEOUT_SECONDS",
+      "__format": "json"
+    },
+    "replayedDeadLetterRetentionDays": {
+      "__name": "CI_REPLAYED_DEAD_LETTER_RETENTION_DAYS",
+      "__format": "json"
+    }
+  },
+  "import": {
+    "scratchDir": "CI_IMPORT_SCRATCH_DIR",
+    "roots": {
+      "__name": "CI_IMPORT_ROOTS",
+      "__format": "json"
+    },
+    "uploadsDir": "CI_IMPORT_UPLOADS_DIR",
+    "inboxDir": "CI_IMPORT_INBOX_DIR",
+    "inboxHostDir": "CI_IMPORT_INBOX_HOST_DIR",
+    "maxArchiveEntries": "CI_IMPORT_MAX_ARCHIVE_ENTRIES",
+    "maxArchiveBytes": "CI_IMPORT_MAX_ARCHIVE_BYTES",
+    "databaseDataDir": "CI_IMPORT_DB_DATA_DIR",
+    "retention": {
+      "enabled": "CI_IMPORT_RETENTION_ENABLED",
+      "stagingDays": {
+        "__name": "CI_IMPORT_STAGING_RETENTION_DAYS",
+        "__format": "json"
+      },
+      "runHistoryDays": {
+        "__name": "CI_IMPORT_RUN_RETENTION_DAYS",
+        "__format": "json"
+      },
+      "maxRunsPerSweep": {
+        "__name": "CI_IMPORT_RETENTION_MAX_RUNS",
+        "__format": "json"
+      },
+      "deleteBatchSize": {
+        "__name": "CI_IMPORT_RETENTION_BATCH_SIZE",
+        "__format": "json"
+      }
+    }
+  },
+  "accountDeletion": {
+    "graceDays": {
+      "__name": "CI_ACCOUNT_PURGE_GRACE_DAYS",
+      "__format": "json"
+    },
+    "purge": {
+      "enabled": "CI_ACCOUNT_PURGE_ENABLED",
+      "batchSize": {
+        "__name": "CI_ACCOUNT_PURGE_BATCH_SIZE",
+        "__format": "json"
+      },
+      "maxAccountsPerRun": {
+        "__name": "CI_ACCOUNT_PURGE_MAX_ACCOUNTS",
+        "__format": "json"
+      },
+      "retryBackoffMinutes": {
+        "__name": "CI_ACCOUNT_PURGE_RETRY_MINUTES",
+        "__format": "json"
+      },
+      "excludedColumns": "CI_ACCOUNT_PURGE_EXCLUDED_COLUMNS"
+    }
+  },
+  "enrichment": {
+    "window": {
+      "enabled": "CI_ENRICHMENT_WINDOW_ENABLED",
+      "start": "CI_ENRICHMENT_WINDOW_START",
+      "durationMinutes": {
+        "__name": "CI_ENRICHMENT_WINDOW_DURATION_MINUTES",
+        "__format": "json"
+      },
+      "budgetMinutes": {
+        "__name": "CI_ENRICHMENT_WINDOW_BUDGET_MINUTES",
+        "__format": "json"
+      },
+      "timezone": "CI_ENRICHMENT_WINDOW_TIMEZONE"
+    },
+    "rotation": {
+      "turnMinutes": {
+        "__name": "CI_ENRICHMENT_TURN_MINUTES",
+        "__format": "json"
+      },
+      "usersPerTurn": {
+        "__name": "CI_ENRICHMENT_USERS_PER_TURN",
+        "__format": "json"
+      }
+    }
+  },
+  "reflection": {
+    "minAnswerConfidence": {
+      "__name": "CI_REFLECTION_MIN_ANSWER_CONFIDENCE",
+      "__format": "json"
+    },
+    "autoPromoteThresholdCautious": {
+      "__name": "CI_REFLECTION_AUTO_PROMOTE_THRESHOLD_CAUTIOUS",
+      "__format": "json"
+    },
+    "autoPromoteThresholdBalanced": {
+      "__name": "CI_REFLECTION_AUTO_PROMOTE_THRESHOLD_BALANCED",
+      "__format": "json"
+    },
+    "autoPromoteThresholdHandsOff": {
+      "__name": "CI_REFLECTION_AUTO_PROMOTE_THRESHOLD_HANDS_OFF",
+      "__format": "json"
+    },
+    "alwaysReviewBelowConfidence": {
+      "__name": "CI_REFLECTION_ALWAYS_REVIEW_BELOW_CONFIDENCE",
+      "__format": "json"
+    }
+  },
+  "agentMemory": {
+    "turnFragments": {
+      "intervalMinutes": {
+        "__name": "CI_TURN_FRAGMENTS_INTERVAL_MINUTES",
+        "__format": "json"
+      },
+      "lookbackMinutes": {
+        "__name": "CI_TURN_FRAGMENTS_LOOKBACK_MINUTES",
+        "__format": "json"
+      },
+      "settleMinutes": {
+        "__name": "CI_TURN_FRAGMENTS_SETTLE_MINUTES",
+        "__format": "json"
+      },
+      "maxTurnsPerUser": {
+        "__name": "CI_TURN_FRAGMENTS_MAX_TURNS_PER_USER",
+        "__format": "json"
+      },
+      "minFragmentChars": {
+        "__name": "CI_TURN_FRAGMENTS_MIN_CHARS",
+        "__format": "json"
+      },
+      "maxSideChars": {
+        "__name": "CI_TURN_FRAGMENTS_MAX_SIDE_CHARS",
+        "__format": "json"
+      }
+    }
+  },
+  "media": {
+    "videoPlayback": {
+      "maxEdge": {
+        "__name": "CI_MEDIA_VIDEO_PLAYBACK_MAX_EDGE",
+        "__format": "json"
+      }
+    }
+  },
+  "features": {
+    "scheduled.answer.inferencing": "ENABLE_SCHEDULED_ANSWER_INFERENCING",
+    "scheduled.connection.sync": "ENABLE_SCHEDULED_CONNECTION_SYNC",
+    "pinned.demo.models": "ENABLE_PINNED_DEMO_MODELS",
+    "enable.system.prompt": "ENABLE_SYSTEM_PROMPT",
+    "advanced.theme.tab": "ENABLE_ADVANCED_THEME_TAB",
+    "require.signup.codes": "ENABLE_REQUIRE_SIGNUP_CODES",
+    "today.page": "ENABLE_TODAY_PAGE",
+    "files.page": "ENABLE_FILES_PAGE",
+    "insights.page": "ENABLE_INSIGHTS_PAGE",
+    "chat.page": "ENABLE_CHAT_PAGE",
+    "jobs.page": "ENABLE_JOBS_PAGE",
+    "import.page": "ENABLE_IMPORT_PAGE",
+    "planning.enabled": "ENABLE_PLANNING",
+    "planning.page": "ENABLE_PLANNING_PAGE",
+    "planning.emptyState": "ENABLE_PLANNING_EMPTY_STATE",
+    "self.page": "ENABLE_SELF_PAGE",
+    "stats.page": "ENABLE_STATS_PAGE",
+    "schedule.page": "ENABLE_SCHEDULE_PAGE",
+    "forecast.page": "ENABLE_FORECAST_PAGE",
+    "tags.page": "ENABLE_TAGS_PAGE",
+    "hbpe": "ENABLE_HBPE",
+    "agent.memory.compaction": "ENABLE_AGENT_MEMORY_COMPACTION",
+    "agent.memory.turnFragments": "ENABLE_AGENT_MEMORY_TURN_FRAGMENTS",
+    "shared.search": "ENABLE_SHARED_SEARCH",
+    "onboarding.preference.steps": "ENABLE_ONBOARDING_PREFERENCE_STEPS",
+    "actions": "ENABLE_ACTIONS",
+    "smart.rotation": "ENABLE_SMART_ROTATION",
+    "ask": "ENABLE_ASK",
+    "tools.pendingActions": "ENABLE_PENDING_ACTIONS",
+    "graphql.ide": "ENABLE_GRAPHQL_IDE",
+    "grounded.prompts": "ENABLE_GROUNDED_PROMPTS",
+    "derivation.engines": "ENABLE_DERIVATION_ENGINES",
+    "ingest.selfHeal": "ENABLE_INGEST_SELF_HEAL",
+    "solid.protocol": "ENABLE_SOLID_PROTOCOL"
+  },
+  "environment": {
+    "database.query.logging": "DATABASE_QUERY_LOGGING"
+  },
+  "ciPortal": {
+    "url": "CI_CLOUD_URL",
+    "deviceId": "HUB_DEVICE_ID",
+    "apiKey": "HUB_API_KEY"
+  },
+  "unfurl": {
+    "enabled": {
+      "__name": "UNFURL_ENABLED",
+      "__format": "json"
+    },
+    "ratePerSecond": {
+      "__name": "UNFURL_RATE_PER_SECOND",
+      "__format": "json"
+    },
+    "openGraph": {
+      "__name": "UNFURL_OPEN_GRAPH",
+      "__format": "json"
+    },
+    "cachePosters": {
+      "__name": "UNFURL_CACHE_POSTERS",
+      "__format": "json"
+    }
+  },
+  "geocoding": {
+    "apiKey": "GEOCODING_API_KEY",
+    "batchSize": {
+      "__name": "GEOCODING_BATCH_SIZE",
+      "__format": "json"
+    },
+    "rateLimitPerSecond": {
+      "__name": "GEOCODING_RATE_LIMIT_PER_SECOND",
+      "__format": "json"
+    },
+    "provider": "GEOCODING_PROVIDER",
+    "portalBaseUrl": "GEOCODING_PORTAL_BASE_URL"
+  },
+  "peers": {
+    "directoryUrl": "CI_PEER_DIRECTORY_URL",
+    "memoryEndpoint": "CI_PEER_MEMORY_ENDPOINT",
+    "handle": "CI_PEER_HANDLE",
+    "audience": "CI_PEER_AUDIENCE",
+    "timeoutMs": "CI_PEER_TIMEOUT_MS",
+    "allowCgnatEndpoints": "CI_PEER_ALLOW_CGNAT_ENDPOINTS"
+  },
+  "push": {
+    "vapid": {
+      "publicKey": "VAPID_PUBLIC_KEY",
+      "privateKey": "VAPID_PRIVATE_KEY",
+      "subject": "VAPID_SUBJECT"
+    }
+  }
+}

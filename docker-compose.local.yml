@@ -1,0 +1,95 @@
+services:
+  database:
+    environment:
+      PASSWORD: ${DATABASE_ADMIN_PASSWORD}
+    # Host ports are chosen by scripts/dev-stack.ts: the conventional default
+    # when free, else an ephemeral port — so concurrent worktrees never collide.
+    # A plain `docker compose up` (no dev-stack) still binds the defaults.
+    ports:
+      - 127.0.0.1:${DB_HOST_PORT:-5432}:5432
+
+  # Every host port in this overlay binds to loopback. The sidecars have no
+  # inbound auth beyond a shared bearer, and Postgres and the object store carry dev passwords;
+  # none of them should be reachable from the LAN (Docker bypasses ufw).
+  hbpe-service:
+    environment:
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      # The host api is reachable from this container at the dev-stack-chosen port.
+      API_URL: http://host.docker.internal:${API_HOST_PORT:-3030}
+      SIDECAR_AUTH_SECRET: ${SIDECAR_AUTH_SECRET}
+      LLM_API_BASE: ${LLM_API_BASE:-http://host.docker.internal:11434/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-ollama}
+      LLM_DEFAULT_CHAT_MODEL: ${LLM_DEFAULT_CHAT_MODEL:-}
+    ports:
+      - 127.0.0.1:${HBPE_HOST_PORT:-8002}:8002
+
+  object-store:
+    environment:
+      USERNAME: ${OBJECT_STORE_USERNAME}
+      PASSWORD: ${OBJECT_STORE_PASSWORD}
+    ports:
+      - 127.0.0.1:${OBJECT_STORE_HOST_PORT:-9000}:9000
+
+  summary-service:
+    ports:
+      - 127.0.0.1:${SUMMARY_HOST_PORT:-8001}:8001
+      # Document-parser FastAPI (ci.summary.parser). Host 8003 avoids the HBPE service's
+      # host 8002 mapping above; in-container it stays on 8002.
+      - 127.0.0.1:${PARSER_HOST_PORT:-8003}:8002
+    # Pass the shared LLM config from .env (compose interpolates ${VAR} from the
+    # root .env). Done explicitly rather than via env_file so host-oriented vars
+    # like DATABASE_HOST=localhost don't leak in and break in-container DB/DNS.
+    environment:
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      # Function-run completion callbacks POST to the host api; the JWT secret
+      # must match AUTH_JWT_AUTHTOKENSECRET so the callback passes auth.
+      API_URL: http://host.docker.internal:${API_HOST_PORT:-3030}
+      SIDECAR_AUTH_SECRET: ${SIDECAR_AUTH_SECRET}
+      LLM_API_BASE: ${LLM_API_BASE:-http://host.docker.internal:11434/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-ollama}
+      # Unset by default: the summary service uses the Hub-injected model, or
+      # discovers a served model from LLM_API_BASE/models at startup.
+      LLM_DEFAULT_CHAT_MODEL: ${LLM_DEFAULT_CHAT_MODEL:-}
+      # Structured-output strategy: native (Ollama json_schema) | prompted | tool.
+      # Flip without a rebuild if a model behaves better in a different mode.
+      SUMMARY_OUTPUT_MODE: ${SUMMARY_OUTPUT_MODE:-native}
+      SUMMARY_OUTPUT_RETRIES: ${SUMMARY_OUTPUT_RETRIES:-3}
+
+  # Opt-in (scripts/dev-stack passes `--profile powersync` when .env sets
+  # POWERSYNC_URL). There is no setup-secrets in local, so the names the
+  # wrapper command in docker-compose.yml sources from /run/secrets come from
+  # the root .env here instead. Loopback only, like everything above: the
+  # service's only auth is the JWT the api mints, and the phone reaches it over
+  # `adb reverse` of this same port (`yarn android` applies it).
+  powersync:
+    environment:
+      POWERSYNC_DATABASE_USERNAME: ${POWERSYNC_DATABASE_USERNAME:-powersync}
+      POWERSYNC_DATABASE_PASSWORD: ${POWERSYNC_DATABASE_PASSWORD}
+      DATABASE_USERNAME: ${DATABASE_USERNAME:-companion}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      DATABASE_NAME: ${DATABASE_NAME:-companion}
+      POWERSYNC_JWT_SECRET: ${POWERSYNC_JWT_SECRET}
+    ports:
+      - 127.0.0.1:${POWERSYNC_HOST_PORT:-18080}:8080
+
+  #############
+  # EPHEMERAL #
+  #############
+
+  setup-database:
+    environment:
+      ADMIN_PASSWORD: ${DATABASE_ADMIN_PASSWORD}
+      COMPANION_PASSWORD: ${DATABASE_PASSWORD}
+      # Unset means "skip the replication role", which leaves powersync unable to
+      # authenticate. .env.default ships a value; see infrastructure/powersync/README.md.
+      POWERSYNC_PASSWORD: ${POWERSYNC_DATABASE_PASSWORD:-}
+
+volumes:
+  db-data:
+    name: ${COMPOSE_PROJECT_NAME}-local-db-data
+  object-data:
+    name: ${COMPOSE_PROJECT_NAME}-local-object-data
+  hbpe-models:
+    name: ${COMPOSE_PROJECT_NAME}-local-hbpe-models
+  hbpe-corpus:
+    name: ${COMPOSE_PROJECT_NAME}-local-hbpe-corpus

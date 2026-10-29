@@ -1,0 +1,44 @@
+/*
+ * @ci/shadcn — token layer for shadcn CLI / component authoring.
+ * Canonical palette lives in @companionintelligence/tokens; this file adds
+ * the Server-specific --input-fill token used by Input components.
+ */
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@import "@companionintelligence/tokens/globals.css";
+
+@theme inline {
+  --color-input-fill: var(--input-fill);
+}
+
+@theme {
+  /* Mirrors apps/web/src/styles/index.css so components authored against this
+     file (the shadcn CLI entry) can use `device:` too. See that file for why
+     896px and why px. */
+  --breakpoint-device: 896px;
+}
+
+:root {
+  --input-fill: var(--input);
+}
+
+.dark {
+  --input-fill: #0a2e38;
+}
+
+@supports (color: color-mix(in lab, red, red)) {
+  .dark {
+    --input-fill: color-mix(in oklab, var(--input) 20%, var(--background));
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}

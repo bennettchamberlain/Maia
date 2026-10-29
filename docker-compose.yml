@@ -1,0 +1,362 @@
+services:
+  database:
+    image: ci/database
+    volumes:
+      - db-data:/var/lib/postgresql
+    networks:
+      - ci
+    restart: unless-stopped
+    # Docker gives a container 64 MB of /dev/shm, and Postgres puts every
+    # parallel query's dynamic shared memory there (dynamic_shared_memory_type
+    # = posix): the shared hash table of a parallel hash join, a parallel
+    # sort's tuplestore. A few such queries at once run it dry and each fails
+    # with "could not resize shared memory segment ... No space left on
+    # device" (SQLSTATE 53100) — measured live 2026-09-22: the content
+    # library's three facet queries, run together over a 132k-row library
+    # while the page query ran too, failed on every load, and the pickers
+    # said "No content types yet". 1 GB is the usual advice for a Postgres
+    # container and costs nothing until used; it is a cap, not a reservation.
+    shm_size: 1g
+    # Docker's json-file driver is unbounded by default, and an appliance that
+    # nobody prunes fills its disk with container logs long before it fills it
+    # with data. 10MB x 3 rotated files is enough history to diagnose a crash
+    # loop and caps the whole stack at well under a gigabyte. Every
+    # long-running service below carries the same block, and the staging and
+    # production overrides repeat it for api/worker/gateway, which have no base
+    # definition here to inherit it from.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Without init the postmaster is PID 1, and the kernel hands every orphaned
+    # process in the container to PID 1. The postmaster treats a child it did
+    # not fork that exits above 1, or on a signal, as a crashed backend: it
+    # kills every session and runs crash recovery (minutes of fsync on a slow
+    # disk). Measured 2026-09-28: dash forks for `sh -c`, so when the old
+    # CMD-SHELL probe outran its 5s timeout under load, Docker SIGKILLed the
+    # sh, the orphaned pg_isready exited 2 ("no response"), and the database
+    # crash-restarted every few minutes ("untracked child process ... exited
+    # with exit code 2" in its log). Any `docker exec <db> sh -c '...'` whose
+    # shell dies before its children can do the same. init: true makes
+    # Docker's tini PID 1 instead; it reaps orphans itself, so none of them
+    # reach the postmaster, and it forwards the stop signal to Postgres.
+    init: true
+    healthcheck:
+      # -U is required: pg_isready otherwise defaults the role to $USER (root
+      # in this image), and every 5s probe logs a FATAL "role root does not
+      # exist". The probe still passed, but the noise buries real errors.
+      #
+      # Exec form, not CMD-SHELL: with no shell in between, a probe that times
+      # out is itself the process Docker kills, so it never becomes an orphan
+      # even where init is unavailable. The timeout is 10s because a probe that
+      # is merely slow under heavy IO is not a sick database; pg_isready's own
+      # connect timeout (3s by default) still ends a hung probe well inside it.
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "postgres"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+    profiles: [ "local", "staging", "production" ]
+
+  hbpe-service:
+    image: ci/hbpe-service
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - hbpe-models:/app/models
+      - hbpe-corpus:/app/data
+    environment:
+      # Error reporting is opt-out: on wherever a DSN is set. An unset DSN means
+      # there is nothing configured, so the service never
+      # contacts Sentry. CI_TELEMETRY=off or CI_LOCAL_ONLY=true disable it even
+      # when a DSN is present. See docs/operations/error-reporting.md.
+      SENTRY_DSN: ${SENTRY_DSN_HBPE:-}
+      SENTRY_ENV: ${SENTRY_ENV:-}
+      CI_TELEMETRY: ${CI_TELEMETRY:-}
+      CI_LOCAL_ONLY: ${CI_LOCAL_ONLY:-}
+      CI_SERVER_VERSION: ${CI_SERVER_VERSION:-}
+      # Cluster naming uses the Hub chat endpoint (Qwen3-8B via vLLM) when set.
+      # GGUF 0.8B is the fallback if these are empty.
+      LLM_API_BASE: ${LLM_API_BASE:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_DEFAULT_CHAT_MODEL: ${LLM_DEFAULT_CHAT_MODEL:-}
+      API_URL: ${API_URL:-http://api:3030}
+    networks:
+      - ci
+    depends_on:
+      database:
+        condition: service_healthy
+      setup-database:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      # python, not curl: only the hbpe image installs curl, and both sidecars
+      # should be probed the same way. urlopen raises on any non-2xx, so a
+      # 404 — the shape a sidecar built from older source has, serving /health
+      # but not the routes the API calls — fails the probe instead of passing it.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # Generous: this process loads ONNX and a GGUF labeler before uvicorn
+      # serves anything, and a probe that fails a legitimately slow boot would
+      # make `up --wait` less honest, not more. start_interval keeps the long
+      # ceiling from costing every `make dev` a 30s wait for the first probe —
+      # `up --wait` moves on as soon as the sidecar answers.
+      start_period: 180s
+      start_interval: 5s
+    # A ceiling, not a reservation. This process holds torch, ONNX Runtime and
+    # a llama.cpp GGUF labeler at once, and an unbounded OOM here takes the
+    # whole box down with it — including `database`, which is the one service
+    # whose death loses data. Deliberately generous: nothing has measured
+    # HBPE's real peak RSS (docs/operations/gpu-model-residency.md measures GPU
+    # residency, not host memory), and a limit that kills a legitimate training
+    # run is worse than no limit at all. Set HBPE_MEM_LIMIT to tighten it on a
+    # small appliance once a real figure exists.
+    #
+    # `mem_limit`, not `deploy.resources.limits.memory`: these files carry no
+    # `version:` key and are driven by the Compose v2 CLI outside swarm, where
+    # `mem_limit` is honoured unconditionally and `deploy:` is not.
+    mem_limit: ${HBPE_MEM_LIMIT:-24g}
+    profiles: [ "local", "staging", "production" ]
+
+  object-store:
+    image: ci/object-store
+    volumes:
+      - object-data:/data/objects
+    networks:
+      - ci
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # No healthcheck here: the image carries its own HEALTHCHECK
+    # (infrastructure/object-store/Dockerfile). The probe URL belongs to the
+    # server inside the image, and `make dev` reuses an existing image rather
+    # than rebuilding it, so a probe written here fails whenever a checkout
+    # and its local image disagree about which server that is.
+    profiles: [ "local", "staging", "production" ]
+
+  summary-service:
+    image: ci/summary-service
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    environment:
+      # Opt-out error reporting; see the note on hbpe-service above.
+      SENTRY_DSN: ${SENTRY_DSN_SUMMARY:-}
+      SENTRY_ENV: ${SENTRY_ENV:-}
+      CI_TELEMETRY: ${CI_TELEMETRY:-}
+      CI_LOCAL_ONLY: ${CI_LOCAL_ONLY:-}
+      CI_SERVER_VERSION: ${CI_SERVER_VERSION:-}
+    networks:
+      - ci
+    depends_on:
+      database:
+        condition: service_healthy
+      setup-database:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      # Same probe as hbpe-service above, on this service's own port. /health
+      # answers 200 even when the LLM endpoint is unreachable (it reports
+      # `status: degraded` in the body) — a missing model is a degraded
+      # service, not a dead container, and only the container's liveness is
+      # this probe's business. Both ports: the document parser on 8002 lives
+      # in the same container, and a probe of 8001 alone called it healthy
+      # with the parser gone (entrypoint.sh now also exits when either dies).
+      test: ["CMD", "python", "-c", "import urllib.request; [urllib.request.urlopen(f'http://localhost:{port}/health', timeout=4) for port in (8001, 8002)]"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # The startup LLM probe runs before uvicorn serves, and a black-holed
+      # endpoint makes it spend its whole timeout.
+      start_period: 60s
+      start_interval: 5s
+    # Same rationale as hbpe-service's limit above, smaller number: this
+    # sidecar holds the document parser and short LLM requests, not model
+    # weights. Also unmeasured — raise SUMMARY_MEM_LIMIT if a large PDF parse
+    # starts getting OOM-killed.
+    mem_limit: ${SUMMARY_MEM_LIMIT:-8g}
+    profiles: [ "local", "staging", "production" ]
+
+  # NOTE: summary-service and hbpe-service declare
+  # `setup-database: service_completed_successfully` above. Two reasons, and the
+  # second is not obvious:
+  #
+  #   1. Correctness — both connect as `companion`, the role setup-database
+  #      creates along with the database and its extensions. Waiting only on
+  #      `database: service_healthy` races that.
+  #   2. `up --wait` — compose treats a service that exits as a failure unless
+  #      something depends on it with service_completed_successfully. Until
+  #      powersync left the "local" profile it was the only such dependent, so
+  #      dropping it made `--wait` fail on setup-database's clean exit(0) and
+  #      tore the whole stack down.
+
+  # Local-first sync engine. Reads CI-Server Postgres via logical replication
+  # (the `database` image enables wal_level=logical) and serves filtered, per-user
+  # buckets to on-device SQLite. Config in infrastructure/powersync/. See that
+  # directory's README for required env (URIs + the base64url JWT secret) and for
+  # pinning the image version. NOTE: verify the image tag/command against the
+  # PowerSync release you deploy.
+  powersync:
+    image: journeyapps/powersync-service:1.23.0
+    # Wrapped so this service can read the same generated secrets every other
+    # service does. The image's own entrypoint is `node service/lib/entry.js`;
+    # it is re-exec'd verbatim below, so this only adds environment.
+    #
+    # Without the wrapper the PS_* defaults underneath interpolate
+    # POWERSYNC_DATABASE_PASSWORD/DATABASE_PASSWORD out of the compose .env —
+    # where they do not live. generate-secrets writes them into the `secrets`
+    # volume, so a deployment that never set them by hand got empty passwords
+    # and a replicator that could not authenticate.
+    #
+    # Anything already exported wins (`:-`), so the documented override path of
+    # setting PS_REPLICATION_URI/PS_STORAGE_URI/PS_JWT_SECRET_B64URL explicitly
+    # — an external database, a managed Postgres — still takes precedence.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        # staging/production: the generated projection. local: the volume is
+        # mounted but empty, and docker-compose.local.yml passes the same
+        # names through `environment` from the root .env instead.
+        if [ -f /run/secrets/.env.secrets ]; then
+          set -a
+          . /run/secrets/.env.secrets
+          set +a
+        fi
+        export PS_REPLICATION_URI="${PS_REPLICATION_URI:-postgresql://$${POWERSYNC_DATABASE_USERNAME}:$${POWERSYNC_DATABASE_PASSWORD}@database:5432/$${DATABASE_NAME}}"
+        export PS_STORAGE_URI="${PS_STORAGE_URI:-postgresql://$${DATABASE_USERNAME}:$${DATABASE_PASSWORD}@database:5432/$${DATABASE_NAME}}"
+        # The service takes the shared HS256 secret base64url-encoded. Derived
+        # here, from the one stored value, so the two cannot drift; `tr` does
+        # base64 -> base64url and strips the padding the JWKS `k` must not have.
+        if [ -z "$${PS_JWT_SECRET_B64URL:-}" ]; then
+          PS_JWT_SECRET_B64URL=$$(printf '%s' "$${POWERSYNC_JWT_SECRET}" | base64 | tr -d '\n' | tr '+/' '-_' | tr -d '=')
+          export PS_JWT_SECRET_B64URL
+        fi
+        exec node service/lib/entry.js start -r unified
+    volumes:
+      - ./infrastructure/powersync:/config:ro
+      # Its OWN projection (replication + app roles and the sync JWT key),
+      # not the master: see generate-secrets. Read-only, and world-readable
+      # inside (the projection is 0644), which is what lets this image's uid
+      # 901 source it without running as root.
+      - secrets-powersync:/run/secrets:ro
+    environment:
+      # Read by the service directly, unlike the PS_* vars the wrapper above
+      # exports. Those three are substituted into powersync.yaml via its `!env`
+      # tag, which rejects any name not starting with `PS_` — renaming them
+      # breaks startup (exit 150). This one is not an `!env` reference, so it
+      # needs no prefix.
+      #
+      # The two URIs the wrapper builds deliberately use different roles.
+      # Replication connects as `powersync`, which setup-database gives the
+      # REPLICATION attribute and SELECT on the replicated tables — nothing more.
+      # Storage connects as the app role, because the service creates and
+      # migrates its own `powersync` schema for bucket storage, which a
+      # read-only role cannot do.
+      - POWERSYNC_CONFIG_PATH=/config/powersync.yaml
+    networks:
+      - ci
+    depends_on:
+      database:
+        condition: service_healthy
+      # Creates the replication role and the publication the replicator reads.
+      # Starting first means a crash-loop until the replicator's next retry.
+      setup-database:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Not in "local" unconditionally: a running replicator holds a replication
+    # slot, and a slot nobody reads keeps WAL forever (the database sets no
+    # max_slot_wal_keep_size). So the dev stack opts in: scripts/dev-stack adds
+    # `--profile powersync` only when the root .env sets POWERSYNC_URL — the
+    # same switch that makes /api/powersync/token answer instead of 503 — and
+    # docker-compose.local.yml supplies the env and the loopback port. See
+    # infrastructure/powersync/README.md § "Running it under make dev".
+    profiles: [ "powersync", "staging", "production" ]
+
+  #############
+  # EPHEMERAL #
+  #############
+
+  setup-database:
+    image: ci/setup-database
+    networks:
+      - ci
+    restart: "no"
+    depends_on:
+      database:
+        condition: service_healthy
+    profiles: [ "local", "staging", "production" ]
+
+  ##############################
+  # THIRD-PARTY MANAGEMENT UIs #
+  ##############################
+
+  #########
+  # TOOLS #
+  #########
+
+  dbconnstr:
+    image: alpine
+    volumes:
+      - secrets-tooling:/run/secrets:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -a
+        source /run/secrets/.env.secrets 2>/dev/null
+        set +a
+        echo "postgresql://$${DATABASE_USERNAME}:$${DATABASE_PASSWORD}@localhost:5432/$${DATABASE_NAME}"
+    profiles: [ "tooling" ]
+
+  dbproxy:
+    image: alpine/socat
+    command: TCP-LISTEN:5432,fork,reuseaddr TCP:database:5432
+    # Loopback only. It forwards straight to Postgres, and its one caller,
+    # `make seed-production`, connects to it as localhost (the connection
+    # string dbconnstr prints above). An all-interfaces bind would put the
+    # database on the network for as long as the proxy runs.
+    ports:
+      - 127.0.0.1:5432:5432
+    networks:
+      - ci
+    profiles: [ "tooling" ]
+
+volumes:
+  db-data:
+  object-data:
+  # The master secrets file. Mounted into generate-secrets ONLY; every other
+  # service gets one of the per-service projections below, holding just the
+  # keys it reads (the map is in infrastructure/setup-secrets/entrypoint.sh).
+  secrets:
+  secrets-api:
+  secrets-database:
+  secrets-setup-database:
+  secrets-object-store:
+  secrets-hbpe:
+  secrets-summary:
+  secrets-powersync:
+  secrets-tooling:
+  hbpe-models:
+  hbpe-corpus:
+
+networks:
+  ci:

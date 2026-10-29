@@ -1,0 +1,701 @@
+import { useState, type ComponentType, type CSSProperties, type ReactNode } from 'react';
+
+import { useQuery } from '@apollo/client';
+import { useDeviceLayout } from '@ci/common';
+import { Button, DropdownMenu, cn } from '@ci/shadcn';
+import { ChevronDown, Shapes, Tag as TagIcon } from '@ci/shadcn/icons';
+import { useTranslation } from 'react-i18next';
+import { useLocation, useSearchParams } from 'react-router-dom';
+
+import { MenuShield } from '@/components/MenuShield';
+import { AVAILABLE_ENTITY_TYPES, useDropdown } from '@/components/SearchBox/useDropdown';
+import { TagInput } from '@/components/TagInput';
+import { gql } from '@/graphql';
+import { MemoryExplorerFilterControls } from '@/pages/MemoryPage/Components/ExplorerToolbar/ExplorerToolbar';
+import { countActiveFilters } from '@/pages/MemoryPage/Components/ExplorerToolbar/filterParams';
+
+import {
+  WHAT_BAR_ICON_CLASS,
+  WHAT_BAR_ITEM_ICON_CLASS,
+  whatCategoriesFor,
+  entityTypesForCategory,
+  type EntityTypeIcon,
+  type WhatCategory,
+} from './entityTypeCategories';
+
+const GET_TAGS = gql(`
+  query GetTags {
+    tags {
+      edges {
+        node {
+          id
+          label
+          description
+        }
+      }
+    }
+  }
+`);
+
+// The account's distinct event kinds (visited, messaged, traveled, …) — the
+// same dimension the Search box's How filter reads.
+const GET_EVENT_TYPES = gql(`
+  query WhatBarEventTypes {
+    eventTypes
+  }
+`);
+
+const EXPAND_LABEL_BASE_CLASS =
+  'overflow-hidden text-ellipsis whitespace-nowrap transition-all duration-200 ease-out';
+
+/** Collapsed to nothing until the pointer (or keyboard focus, or the open menu) asks for it. */
+const EXPAND_LABEL_HOVER_CLASS =
+  'max-w-0 opacity-0 group-hover:ml-1.5 group-hover:max-w-[7rem] group-hover:opacity-100 group-focus-visible:ml-1.5 group-focus-visible:max-w-[7rem] group-focus-visible:opacity-100 group-data-[state=open]:ml-1.5 group-data-[state=open]:max-w-[7rem] group-data-[state=open]:opacity-100';
+
+/**
+ * An engaged filter keeps its label on screen. A phone has no hover, so the
+ * hover-only reveal left the selected categories as anonymous icons (#2312);
+ * the cap plus `text-ellipsis` keeps a long value (a person's name, a pile of
+ * tags) from stretching the bar on a 375px viewport.
+ */
+const EXPAND_LABEL_REVEALED_CLASS = 'ml-1.5 max-w-[7rem] opacity-100';
+
+function expandLabelClass(revealed: boolean) {
+  return cn(EXPAND_LABEL_BASE_CLASS, revealed ? EXPAND_LABEL_REVEALED_CLASS : EXPAND_LABEL_HOVER_CLASS);
+}
+
+/** The dropdown caret keeps its gap from a label that is already showing. */
+function chevronClass(revealed: boolean) {
+  return cn(
+    'h-3.5 w-3.5 shrink-0 opacity-50 transition-transform duration-200 group-data-[state=open]:rotate-180',
+    revealed ? 'ml-1' : 'ml-0 group-hover:ml-1 group-data-[state=open]:ml-1',
+  );
+}
+
+/**
+ * Voice-over reads the button's aria-label instead of its visible text, so the
+ * chosen value has to ride along with the category word.
+ */
+function filterAriaLabel(categoryLabel: string, valueLabel: string) {
+  return valueLabel === categoryLabel ? categoryLabel : `${categoryLabel}: ${valueLabel}`;
+}
+
+/**
+ * What a group dropdown (Content, Things) is narrowed to right now: the chosen
+ * item's label, the category word when the whole group is chosen, or null when
+ * the current filter isn't confined to this group at all.
+ */
+function groupSelectionLabel(
+  category: Extract<WhatCategory, { kind: 'group' }>,
+  selectedEntityTypes: string[],
+  isFiltered: boolean,
+): string | null {
+  if (!isFiltered || selectedEntityTypes.length === 0) {
+    return null;
+  }
+
+  const types = entityTypesForCategory(category);
+
+  if (!selectedEntityTypes.every((type) => types.includes(type))) {
+    return null;
+  }
+
+  const chosen = category.items.filter((item) => selectedEntityTypes.includes(item.entityType));
+
+  if (chosen.length === 0) {
+    return null;
+  }
+
+  return chosen.length === category.items.length
+    ? category.label
+    : chosen.map((item) => item.label).join(', ');
+}
+
+function categoryButtonClass(selected: boolean, active: boolean) {
+  return cn(
+    'group inline-flex h-8 shrink-0 items-center rounded-md border px-2 text-sm font-medium transition-colors',
+    selected
+      ? 'border-primary bg-background text-foreground shadow-sm'
+      : active
+        ? 'border-border bg-background text-foreground hover:bg-accent'
+        : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+  );
+}
+
+/**
+ * The What strip's width with every button at rest: the floor it keeps when it
+ * shares a line with the filter controls (see the strip in MemoryEntityTypeNav).
+ *
+ * Mirrors the buttons' own classes: `border` and `px-2` around a 1rem icon make
+ * 2rem + 2px ({@link categoryButtonClass}), a dropdown adds its 0.875rem caret
+ * ({@link chevronClass}, `h-3.5` with no margin at rest), and `md:gap-1.5` sits
+ * between buttons. A revealed label (selected, or under the pointer) is left
+ * out on purpose: it scrolls inside the strip rather than widening it.
+ */
+function restingStripWidth(categories: WhatCategory[]): string {
+  const dropdowns = categories.filter((category) => category.kind !== 'standalone').length;
+  const rem = categories.length * 2 + dropdowns * 0.875 + Math.max(0, categories.length - 1) * 0.375;
+
+  return `calc(${rem}rem + ${categories.length * 2}px)`;
+}
+
+function CategoryIcon({
+  icon: Icon,
+  className,
+  toneClass,
+  entityIcon = false,
+}: {
+  icon: EntityTypeIcon | ComponentType<{ className?: string; colorized?: boolean }>;
+  className?: string;
+  toneClass?: string;
+  entityIcon?: boolean;
+}) {
+  const iconClassName = cn('h-4 w-4 shrink-0', toneClass, className);
+
+  if (entityIcon && toneClass) {
+    return <Icon className={iconClassName} colorized={false} />;
+  }
+
+  return <Icon className={iconClassName} />;
+}
+
+function useWhatSelection() {
+  const [searchParams] = useSearchParams();
+  const [{ selectedEntityTypes, tags }, actions] = useDropdown();
+
+  const includedOnly = searchParams.get('includedEntityTypes');
+  const excludedOnly = searchParams.get('excludedEntityTypes');
+  const isFiltered = Boolean(includedOnly || excludedOnly);
+  const allSelected = selectedEntityTypes.length === AVAILABLE_ENTITY_TYPES.length;
+
+  const isEntityTypeSelected = (entityType: string) =>
+    isFiltered && selectedEntityTypes.length === 1 && selectedEntityTypes[0] === entityType;
+
+  const isGroupSelected = (types: string[]) => {
+    if (!isFiltered || types.length === 0) {
+      return false;
+    }
+
+    const selectedSet = new Set(selectedEntityTypes);
+
+    return (
+      types.every((type) => selectedSet.has(type)) &&
+      selectedEntityTypes.every((type) => types.includes(type))
+    );
+  };
+
+  const isGroupActive = (types: string[]) =>
+    allSelected || types.some((type) => selectedEntityTypes.includes(type));
+
+  return {
+    allSelected,
+    isFiltered,
+    isEntityTypeSelected,
+    isGroupSelected,
+    isGroupActive,
+    selectedEntityTypes,
+    tags,
+    ...actions,
+  };
+}
+
+function StandaloneWhatButton({
+  category,
+  onSelect,
+  selected,
+  active,
+}: {
+  category: Extract<WhatCategory, { kind: 'standalone' }>;
+  onSelect: () => void;
+  selected: boolean;
+  active: boolean;
+}) {
+  // No tooltip here: expandLabelClass already animates the label into view on
+  // hover and focus, so a bubble would paint the same text a second time, on top
+  // of the text it duplicates.
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      aria-label={category.label}
+      onClick={onSelect}
+      className={categoryButtonClass(selected, active)}
+    >
+      <CategoryIcon icon={category.icon} toneClass={WHAT_BAR_ICON_CLASS[category.id]} entityIcon />
+      <span className={expandLabelClass(selected)}>{category.label}</span>
+    </button>
+  );
+}
+
+function GroupWhatDropdown({
+  category,
+  selectedEntityTypes,
+  isFiltered,
+  isGroupSelected,
+  isGroupActive,
+  onSelectOnly,
+  onToggleType,
+  modal,
+}: {
+  category: Extract<WhatCategory, { kind: 'group' }>;
+  selectedEntityTypes: string[];
+  isFiltered: boolean;
+  isGroupSelected: (types: string[]) => boolean;
+  isGroupActive: (types: string[]) => boolean;
+  onSelectOnly: (entityType: string) => void;
+  onToggleType: (entityType: string) => void;
+  /** See {@link MemoryEntityTypeNav}: modal on a phone, so a tap away only closes the menu. */
+  modal: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const types = entityTypesForCategory(category);
+  // "Only Receipts" narrows to one member of the group, which is still this
+  // category being the filter — hence the chosen-value check alongside the
+  // whole-group one.
+  const chosenLabel = groupSelectionLabel(category, selectedEntityTypes, isFiltered);
+  const selected = isGroupSelected(types) || chosenLabel !== null;
+  const active = isGroupActive(types);
+  const valueLabel = chosenLabel ?? category.label;
+  const { CheckboxItem, Content, Label, Separator, Trigger } = DropdownMenu;
+
+  return (
+    <DropdownMenu modal={modal} open={open} onOpenChange={setOpen}>
+      {/* No tooltip: the label already expands inline on hover (expandLabelClass). */}
+      <Trigger asChild>
+        <button
+          type="button"
+          aria-pressed={active}
+          aria-expanded={open}
+          aria-haspopup="menu"
+          aria-label={filterAriaLabel(category.label, valueLabel)}
+          className={categoryButtonClass(selected, active)}
+        >
+          <CategoryIcon icon={category.icon} toneClass={WHAT_BAR_ICON_CLASS[category.id]} entityIcon />
+          <span className={expandLabelClass(selected)}>{valueLabel}</span>
+          <ChevronDown className={chevronClass(selected)} />
+        </button>
+      </Trigger>
+
+      <MenuShield open={open} />
+      <Content align="start" sideOffset={4} className="z-[9999] w-56 p-2">
+        <Label className="px-1 pb-2 text-sm font-medium">{category.label}</Label>
+        <Separator className="mb-1" />
+        {category.items.map(({ entityType, label, icon: ItemIcon }) => {
+          const isChecked = selectedEntityTypes.includes(entityType);
+          const isOnly = selectedEntityTypes.length === 1 && selectedEntityTypes[0] === entityType;
+
+          return (
+            <CheckboxItem
+              key={entityType}
+              checked={isChecked}
+              onClick={(event) => {
+                event.stopPropagation();
+                event.preventDefault();
+
+                if (category.items.length === 1) {
+                  onSelectOnly(entityType);
+
+                  return;
+                }
+
+                onToggleType(entityType);
+              }}
+              onSelect={(event) => {
+                event.preventDefault();
+              }}
+              className="gap-2"
+            >
+              <span className="flex items-center gap-2">
+                {ItemIcon ? (
+                  <ItemIcon
+                    className={cn('h-4 w-4 shrink-0', WHAT_BAR_ITEM_ICON_CLASS[entityType])}
+                    colorized={false}
+                  />
+                ) : null}
+                <span>{label}</span>
+                {isOnly ? <span className="text-xs text-muted-foreground">(only)</span> : null}
+              </span>
+            </CheckboxItem>
+          );
+        })}
+        {category.items.length > 1 && (
+          <>
+            <Separator className="my-1" />
+            {category.items.map(({ entityType, label }) => (
+              <Button
+                key={`only-${entityType}`}
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 w-full justify-start px-2 text-xs font-normal"
+                onClick={() => {
+                  onSelectOnly(entityType);
+                  setOpen(false);
+                }}
+              >
+                Only {label}
+              </Button>
+            ))}
+          </>
+        )}
+      </Content>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * The Events category: the LifeScope-style hover-expanding icon button whose
+ * dropdown filters by KIND of event. Checking kinds writes the shared
+ * `eventTypes` URL param (the explorer's How dimension — List, Gallery, Map
+ * and the graph all honor it); "Only Events" narrows the entity-type
+ * selection to Event like any standalone What button.
+ */
+function EventsWhatDropdown({
+  category,
+  selected,
+  active,
+  onSelectOnly,
+  modal,
+}: {
+  category: Extract<WhatCategory, { kind: 'events' }>;
+  selected: boolean;
+  active: boolean;
+  onSelectOnly: () => void;
+  modal: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { data } = useQuery(GET_EVENT_TYPES, { skip: !open });
+  const availableEventTypes: string[] = data?.eventTypes ?? [];
+  const selectedEventTypes = searchParams.get('eventTypes')?.split(',').filter(Boolean) ?? [];
+  const { CheckboxItem, Content, Label, Separator, Trigger } = DropdownMenu;
+
+  const filterEngaged = selected || selectedEventTypes.length > 0;
+  // The kinds are the value here: "Events" alone says nothing about which
+  // activities survived the filter.
+  const valueLabel = selectedEventTypes.length > 0 ? selectedEventTypes.join(', ') : category.label;
+
+  const setEventTypes = (next: string[]) => {
+    setSearchParams((params) => {
+      if (next.length === 0) {
+        params.delete('eventTypes');
+      } else {
+        params.set('eventTypes', next.join(','));
+      }
+
+      return params;
+    });
+  };
+
+  const toggleEventType = (eventType: string) => {
+    if (selectedEventTypes.includes(eventType)) {
+      setEventTypes(selectedEventTypes.filter((type) => type !== eventType));
+    } else {
+      setEventTypes([...selectedEventTypes, eventType]);
+    }
+  };
+
+  return (
+    <DropdownMenu modal={modal} open={open} onOpenChange={setOpen}>
+      {/* No tooltip: the label already expands inline on hover (expandLabelClass). */}
+      <Trigger asChild>
+        <button
+          type="button"
+          aria-pressed={active}
+          aria-expanded={open}
+          aria-haspopup="menu"
+          aria-label={filterAriaLabel(category.label, valueLabel)}
+          className={categoryButtonClass(filterEngaged, active)}
+        >
+          <CategoryIcon icon={category.icon} toneClass={WHAT_BAR_ICON_CLASS[category.id]} entityIcon />
+          <span className={expandLabelClass(filterEngaged)}>{valueLabel}</span>
+          <ChevronDown className={chevronClass(filterEngaged)} />
+        </button>
+      </Trigger>
+
+      <MenuShield open={open} />
+      <Content align="start" sideOffset={4} className="z-[9999] max-h-80 w-56 overflow-y-auto p-2">
+        <div className="flex items-center justify-between px-1 pb-2">
+          <Label className="p-0 text-sm font-medium">Events</Label>
+          {selectedEventTypes.length > 0 && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              onClick={() => setEventTypes([])}
+            >
+              Clear
+            </Button>
+          )}
+        </div>
+        <Separator className="mb-1" />
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 w-full justify-start px-2 text-xs font-normal"
+          onClick={() => {
+            onSelectOnly();
+            setOpen(false);
+          }}
+        >
+          Only Events
+        </Button>
+        <Separator className="my-1" />
+        <Label className="px-1 py-1 text-xs font-medium text-muted-foreground">By activity</Label>
+        {availableEventTypes.length === 0 ? (
+          <div className="p-2 text-xs text-muted-foreground">No activity types yet</div>
+        ) : (
+          availableEventTypes.map((eventType) => (
+            <CheckboxItem
+              key={eventType}
+              checked={selectedEventTypes.includes(eventType)}
+              onClick={(event) => {
+                event.stopPropagation();
+                event.preventDefault();
+                toggleEventType(eventType);
+              }}
+              onSelect={(event) => {
+                event.preventDefault();
+              }}
+            >
+              {eventType}
+            </CheckboxItem>
+          ))
+        )}
+      </Content>
+    </DropdownMenu>
+  );
+}
+
+function TagWhatDropdown({
+  tags,
+  onTagsChange,
+  modal,
+}: {
+  tags: string[];
+  onTagsChange: (next: string[]) => void;
+  modal: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const active = tags.length > 0;
+  const { data } = useQuery(GET_TAGS, { skip: !open });
+  const suggestions = data?.tags?.edges.map(({ node }: { node: { label: string } }) => node.label) ?? [];
+  const { Content, Label, Trigger } = DropdownMenu;
+  const { t } = useTranslation();
+  const valueLabel = active ? tags.join(', ') : 'Tag';
+
+  return (
+    <DropdownMenu modal={modal} open={open} onOpenChange={setOpen}>
+      {/* No tooltip: the label already expands inline on hover (expandLabelClass). */}
+      <Trigger asChild>
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          aria-label={filterAriaLabel(t('MEMORY_ENTITY_TYPE_FILTER_TAG'), valueLabel)}
+          className={categoryButtonClass(active, active)}
+        >
+          <CategoryIcon icon={TagIcon} toneClass={WHAT_BAR_ICON_CLASS.tag} />
+          <span className={expandLabelClass(active)}>{valueLabel}</span>
+          <ChevronDown className={chevronClass(active)} />
+        </button>
+      </Trigger>
+
+      <MenuShield open={open} />
+      <Content align="start" sideOffset={4} className="z-[9999] w-80 p-3">
+        <Label className="mb-2 block text-sm font-medium">Tags</Label>
+        <TagInput
+          key={tags.join('|')}
+          tags={tags}
+          suggestions={suggestions}
+          inputPlaceholder="Search or add a tag…"
+          onTagAdded={(tag) => {
+            if (tags.includes(tag)) {
+              return false;
+            }
+
+            onTagsChange([...tags, tag]);
+
+            return true;
+          }}
+          onTagRemoved={(tag) => {
+            onTagsChange(tags.filter((value) => value !== tag));
+          }}
+        />
+      </Content>
+    </DropdownMenu>
+  );
+}
+
+/** Entity-type toggles for the Memory explorer — grouped What categories. */
+export function MemoryEntityTypeNav({ actions }: { actions?: ReactNode }) {
+  const { pathname } = useLocation();
+  const categories = whatCategoriesFor(pathname);
+  const {
+    isFiltered,
+    isEntityTypeSelected,
+    isGroupSelected,
+    isGroupActive,
+    selectedEntityTypes,
+    tags,
+    selectOnlyEntityType,
+    toggleEntityType,
+    setTags,
+  } = useWhatSelection();
+  const [searchParams] = useSearchParams();
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeFilterCount = countActiveFilters(searchParams);
+  // The What menus are modal on a phone: a modal menu swallows the tap that
+  // closes it, so tapping away cannot also open whatever was under the finger.
+  // Desktop keeps the non-modal menus (no scroll lock, no scrollbar jump), the
+  // same split MemoryExplorerFilterControls makes for When / How / Who.
+  const { isMobile } = useDeviceLayout();
+  const modal = isMobile === true;
+  const filtersLabel = activeFilterCount > 0 ? `Filters, ${activeFilterCount} active` : 'Filters';
+
+  return (
+    <div className="shrink-0 border-b border-border">
+      {/* Phone chrome only. The bar is pinned above the scrolling list, and
+          with What plus When / How / sort it covers about half a phone. It
+          stays open on desktop (`device:`) — this toggle is hidden there. */}
+      <button
+        type="button"
+        aria-expanded={filtersOpen}
+        aria-controls="memory-filter-bar"
+        aria-label={filtersLabel}
+        onClick={() => setFiltersOpen((open) => !open)}
+        className="flex h-11 w-full items-center gap-2 px-2 text-sm font-medium text-muted-foreground device:hidden"
+      >
+        <Shapes className="h-4 w-4" strokeWidth={1.5} aria-hidden />
+        <span>Filters</span>
+        {activeFilterCount > 0 && <span className="tabular-nums text-foreground">{activeFilterCount}</span>}
+        <ChevronDown
+          className={cn('ml-auto h-4 w-4 transition-transform duration-100', filtersOpen && 'rotate-180')}
+          aria-hidden
+        />
+      </button>
+      <nav
+        id="memory-filter-bar"
+        aria-label="What to show in Memory"
+        // `items-start` keeps this one-line What strip on the first row when the
+        // When / How / sort controls beside it wrap onto a second line.
+        // `device:flex` keeps the bar open on desktop. Below that it stays
+        // closed until the toggle above opens it.
+        className={cn(
+          'shrink-0 flex-wrap items-start gap-x-2 gap-y-1.5 px-2 py-1.5 md:gap-x-3 md:px-3 device:flex',
+          filtersOpen ? 'flex' : 'max-device:hidden',
+        )}
+      >
+        <div className="flex h-8 shrink-0 items-center gap-1.5 text-sm font-medium text-muted-foreground">
+          <Shapes className="h-4 w-4" strokeWidth={1.5} aria-hidden />
+          <span className="hidden sm:inline">What</span>
+        </div>
+
+        {/* Below `xl` the strip takes the whole line (`basis-0`, grows) and scrolls
+          the categories inside it if it must; the filter controls sit on a
+          line of their own and wrap there. From `xl` up the strip and the
+          controls share the line: each has a floor (every What button at
+          rest here — `restingStripWidth` — and 24rem there),
+          the room beyond both floors is split between them, and the strip
+          never grows past its content (`max-w-max`) so the excess goes to the
+          controls.
+
+          The strip's floor is its buttons at rest (392 px for /memory's eight
+          at the 17px root), so none starts out scrolled out of sight. A fixed
+          16rem hid the Tags button whenever the rail was pinned below
+          ~1,600 px, with no scrollbar to say it was there. Not `min-w-max`:
+          max-content includes a label sliding out under the pointer, so the
+          strip grew on hover, squeezed the controls onto another line and the
+          bar jumped a line at 1,280 and 1,440 px. Computed from the
+          categories, not a constant, because the events explorer shows four.
+          The cost is a third line of controls with the rail pinned at
+          1,280–1,366 px.
+
+          Measured 2026-09-22 at the controls' natural width of
+          ~1,280 px: inline from `xl` gives a 99 px bar at 1,400 px, while
+          inline from `md` gave a 233 px bar at 900 px with the strip cut to
+          five buttons — the controls' own line is the shorter layout below
+          about 1,300 px.
+
+          History: the controls used to sit INSIDE this `w-max` strip, which put
+          them past the right edge on a narrow window with the scrollbar hidden.
+          Then they sat beside it from `md` at their NATURAL width
+          (`md:basis-auto`): their own wrapping never engaged, at 1,400 px the
+          strip was left a 57 px sliver — one What button and part of the next,
+          scrolling behind the controls — and below ~1,350 px the controls
+          dropped to a second line and ran off the right edge. */}
+        <div
+          className="scrollbar-none min-w-0 flex-1 basis-0 overflow-x-auto overscroll-x-contain xl:min-w-(--what-strip-floor) xl:max-w-max"
+          style={{ '--what-strip-floor': restingStripWidth(categories) } as CSSProperties}
+        >
+          <div className="flex w-max items-center gap-1 md:gap-1.5">
+            {categories.map((category) => {
+              if (category.kind === 'standalone') {
+                const types = entityTypesForCategory(category);
+
+                return (
+                  <StandaloneWhatButton
+                    key={category.id}
+                    category={category}
+                    onSelect={() => selectOnlyEntityType(category.entityType)}
+                    selected={isEntityTypeSelected(category.entityType)}
+                    active={isGroupActive(types)}
+                  />
+                );
+              }
+
+              if (category.kind === 'group') {
+                return (
+                  <GroupWhatDropdown
+                    key={category.id}
+                    category={category}
+                    selectedEntityTypes={selectedEntityTypes}
+                    isFiltered={isFiltered}
+                    isGroupSelected={isGroupSelected}
+                    isGroupActive={isGroupActive}
+                    onSelectOnly={selectOnlyEntityType}
+                    onToggleType={toggleEntityType}
+                    modal={modal}
+                  />
+                );
+              }
+
+              if (category.kind === 'events') {
+                return (
+                  <EventsWhatDropdown
+                    key={category.id}
+                    category={category}
+                    selected={isEntityTypeSelected(category.entityType)}
+                    active={isGroupActive(entityTypesForCategory(category))}
+                    onSelectOnly={() => selectOnlyEntityType(category.entityType)}
+                    modal={modal}
+                  />
+                );
+              }
+
+              return <TagWhatDropdown key={category.id} tags={tags} onTagsChange={setTags} modal={modal} />;
+            })}
+          </div>
+        </div>
+
+        {/* Outside the scrolling strip so the create action stays reachable when
+          the What categories overflow. */}
+        {actions && (
+          <div className="order-1 ml-auto flex shrink-0 items-center gap-2 xl:order-2">{actions}</div>
+        )}
+
+        {/* The When / How / Who / Where / sort controls. Below `xl` they take a
+          line of their own (`basis-full`, ordered after the create action) and
+          wrap within it; from `xl` up they sit inline between the strip and
+          the create action with a 24rem floor, share the spare room with the
+          strip, and wrap within their share — never their natural width, which
+          is wider than most windows (see the strip's note above). */}
+        <div className="order-2 min-w-0 basis-full xl:order-1 xl:flex-1 xl:basis-[24rem]">
+          <MemoryExplorerFilterControls />
+        </div>
+      </nav>
+    </div>
+  );
+}

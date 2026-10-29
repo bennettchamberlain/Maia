@@ -1,0 +1,8 @@
+{
+  "extends": "../../../tsconfig.react.json",
+
+  // A Capacitor plugin: TypeScript definitions plus a web implementation. The
+  // native half is compiled by Gradle, not by tsc — this one is Android-only.
+  "include": ["src"],
+  "exclude": ["node_modules", "android"]
+}

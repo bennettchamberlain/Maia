@@ -1,0 +1,52 @@
+import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+
+@Entity({ schema: 'ci', name: 'entities' })
+export class GraphNodeEntity {
+  @PrimaryColumn('uuid')
+  entity_id!: string;
+
+  @Column({ type: 'text' })
+  entity_type!: string;
+
+  @Column({ type: 'uuid', array: true, default: '{}' })
+  outgoing_relationships!: string[];
+
+  @Column({ type: 'text', nullable: true })
+  name!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  description!: string | null;
+
+  @Column({ type: 'jsonb', default: '{}' })
+  properties!: Record<string, unknown>;
+
+  @Column({ type: 'jsonb', nullable: true })
+  dossier!: Record<string, unknown> | null;
+
+  @Column({ type: 'text', nullable: true })
+  search_content!: string | null;
+
+  @Column({ type: 'tsvector', nullable: true, select: false })
+  search_vector?: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  linked_table!: string | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  linked_id!: string | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  owner_user_id!: string | null;
+
+  @Column({ type: 'boolean', default: true })
+  is_active!: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  is_archived!: boolean;
+
+  @CreateDateColumn({ type: 'timestamptz' })
+  created_at!: Date;
+
+  @UpdateDateColumn({ type: 'timestamptz' })
+  updated_at!: Date;
+}

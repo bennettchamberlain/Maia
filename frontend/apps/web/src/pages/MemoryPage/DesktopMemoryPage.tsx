@@ -1,0 +1,222 @@
+import { useState, useEffect, useRef } from 'react';
+
+import { Portal } from '@ci/common';
+import { Button, Sheet, Tooltip } from '@ci/shadcn';
+import { ChartNetwork, GanttChart, Images, List, Map as MapIcon, type LucideIcon } from '@ci/shadcn/icons';
+import { useTranslation } from 'react-i18next';
+import { useLocation, useSearchParams } from 'react-router-dom';
+
+import { PageContent } from '@/components/layout';
+import { MemoryHubShell } from '@/components/MemoryHub';
+import { FileChunkModal } from '@/components/modals/FileChunkModal/FileChunkModal';
+import { useBackClosesSheet } from '@/hooks/useBackClosesSheet';
+
+import { useEntityService } from '../MemoryPage/useEntityService';
+
+import { ActivityTimelineRail } from './ActivityTimelineRail';
+import { EntityDetails } from './Components/EntityDetails';
+import { ExplorerToolbar } from './Components/ExplorerToolbar/ExplorerToolbar';
+import { hasWhenFilter } from './Components/ExplorerToolbar/filterParams';
+import { applyViewFilterDefaults, readMemoryView } from './Components/ExplorerToolbar/viewFilterSupport';
+import { LazyView, type ViewLoader } from './Components/LazyView';
+import { isEventsExplorer } from './explorerRoute';
+import { ExploreView } from './ExploreView';
+import { ListView } from './ListView';
+
+// Only List is bundled with the page — it is the default view, so lazy-loading
+// it would put a skeleton flash on the common path. The other four each drag in
+// a heavy dependency (leaflet, TimelineJS, force-graph + d3-force), which the
+// list-view visitor used to download without ever rendering.
+//
+// These are loaders, not lazy components: LazyView mints the React.lazy itself,
+// so it can mint a fresh one on retry — a rejected lazy payload re-throws the
+// same error forever, which would leave "Try again" permanently inert.
+const loadMapView: ViewLoader = () => import('./MapView').then((m) => ({ default: m.DesktopMapView }));
+const loadStoryTimelineView: ViewLoader = () =>
+  import('./StoryTimelineView').then((m) => ({ default: m.StoryTimelineView }));
+const loadGalleryView: ViewLoader = () => import('./GalleryView').then((m) => ({ default: m.GalleryView }));
+const loadGraphView: ViewLoader = () =>
+  import('./GraphView').then((m) => {
+    // LazyView renders its component with no props, so bind the variant here.
+    const DesktopGraphView = () => <m.GraphView variant="desktop" />;
+
+    return { default: DesktopGraphView };
+  });
+
+const VIEW_TABS: Array<{
+  value: string;
+  label: string;
+  titleKey: string;
+  Icon: LucideIcon;
+}> = [
+  { value: 'map', label: 'Map', titleKey: 'MEMORY_VIEW_MAP', Icon: MapIcon },
+  { value: 'list', label: 'List', titleKey: 'MEMORY_VIEW_LIST', Icon: List },
+  { value: 'timeline', label: 'Timeline', titleKey: 'MEMORY_VIEW_TIMELINE', Icon: GanttChart },
+  { value: 'gallery', label: 'Gallery', titleKey: 'MEMORY_VIEW_GALLERY', Icon: Images },
+  { value: 'graph', label: 'Graph', titleKey: 'MEMORY_VIEW_GRAPH', Icon: ChartNetwork },
+];
+
+export default function DesktopMemoryPage() {
+  const { t } = useTranslation();
+  const { pathname } = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [{ activeEntity }, { setActiveEntity }] = useEntityService();
+
+  // Which list the List tab is: `/memory/events` is the chronology (ListView)
+  // and always has the activity heatmap and the Timeline view; a bare
+  // `/memory` is the ranked everything browse (ExploreView), which only
+  // offers either once a When filter has made time part of the question (and
+  // useExplorerWhenReset walks a stale `?view=timeline` back to List). See
+  // explorerRoute.
+  const eventsExplorer = isEventsExplorer(pathname);
+  const timeInPlay = eventsExplorer || hasWhenFilter(searchParams);
+  const viewTabs = timeInPlay ? VIEW_TABS : VIEW_TABS.filter((tab) => tab.value !== 'timeline');
+
+  // Document chunks open in their own dialog; every other entity uses the
+  // details sheet (EntityDetails has no FileChunkType branch).
+  const activeChunkEntity = activeEntity?.__typename === 'FileChunkType' ? activeEntity : null;
+  const activeSheetEntity =
+    activeEntity != null && activeEntity.__typename !== 'FileChunkType' ? activeEntity : null;
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  // The active view lives in the URL (`?view=`) so a query is shareable and
+  // restores in the same view; list is the desktop default since it always
+  // shows results (the map renders empty for data without coordinates).
+  const activeTab = searchParams.get('view') ?? 'list';
+  // Switching view never changes the filter set behind the user's back — the
+  // one exception is the Map tab, which applies "Has a location" as a real,
+  // chipped, removable filter (see applyViewFilterDefaults).
+  const setActiveTab = (next: string) =>
+    setSearchParams((params) => {
+      const nextParams = new URLSearchParams(params);
+      nextParams.set('view', next);
+
+      return applyViewFilterDefaults(nextParams, readMemoryView(next));
+    });
+  // Advanced filters render inside the header search panel and stay visible.
+  // Events is a What-bar filter, not a top-level view — rewrite legacy ?view=events. The view it
+  // once addressed (`EventsView`, a TimelineView pinned to Event cards) was deleted: nothing had
+  // rendered it since it was written, and this redirect is why. Old links keep landing on List.
+  useEffect(() => {
+    const view = searchParams.get('view');
+    if (!view || view === 'events') {
+      setSearchParams(
+        (params) => {
+          const nextParams = new URLSearchParams(params);
+          nextParams.set('view', 'list');
+
+          return nextParams;
+        },
+        { replace: true },
+      );
+    }
+  }, [searchParams, setSearchParams]);
+
+  // Matches the Sheet's `data-[state=closed]:duration-300` close animation.
+  const CLOSE_ANIMATION_MS = 300;
+  const closeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (activeEntity != null) {
+      // A (possibly new) entity is active — cancel any pending unmount and open.
+      if (closeTimerRef.current != null) {
+        window.clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+
+      setDetailsOpen(true);
+    }
+  }, [activeEntity]);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current != null) {
+        window.clearTimeout(closeTimerRef.current);
+      }
+    };
+  }, []);
+
+  const toggleactiveEntity = (active: boolean) => {
+    setDetailsOpen(active);
+
+    if (!active) {
+      // Keep the Sheet mounted while it animates out, then drop the entity.
+      if (closeTimerRef.current != null) {
+        window.clearTimeout(closeTimerRef.current);
+      }
+
+      closeTimerRef.current = window.setTimeout(() => {
+        setActiveEntity(null);
+        closeTimerRef.current = null;
+      }, CLOSE_ANIMATION_MS);
+    }
+  };
+
+  // Back (browser button) closes the open drawer instead of leaving the page.
+  useBackClosesSheet(detailsOpen && activeSheetEntity != null, () => toggleactiveEntity(false));
+
+  return (
+    <>
+      {/* View tabs (list / map / timeline / gallery / graph) live in the header nav-views portal. */}
+      <Portal.Slot id="nav-views">
+        <div className="flex flex-wrap items-center gap-1">
+          {viewTabs.map(({ value, label, titleKey, Icon }) => {
+            const title = t(titleKey);
+
+            return (
+              <Tooltip key={value} delayDuration={600}>
+                <Tooltip.Content>{title}</Tooltip.Content>
+                <Tooltip.Trigger asChild>
+                  <Button
+                    type="button"
+                    variant={activeTab === value ? 'secondary' : 'ghost'}
+                    size="sm"
+                    aria-label={title}
+                    aria-pressed={activeTab === value}
+                    onClick={() => setActiveTab(value)}
+                    className="h-8 gap-1.5 px-2"
+                  >
+                    <Icon className="h-4 w-4" strokeWidth={1.5} />
+                    <span className="hidden sm:inline">{label}</span>
+                  </Button>
+                </Tooltip.Trigger>
+              </Tooltip>
+            );
+          })}
+        </div>
+      </Portal.Slot>
+
+      <PageContent className="gap-2 p-0">
+        <MemoryHubShell fillHeight>
+          <div className="flex min-h-0 flex-1 flex-col gap-2 pb-2">
+            <div className="px-2">
+              <ExplorerToolbar open />
+            </div>
+            {/* With the heatmap showing, the List tab splits into two
+              independently-scrolled panes: wheeling over the left rail moves
+              the heatmap's window through time, while the result list on the
+              right keeps its own scroll. */}
+            {activeTab === 'list' && (
+              <div className="flex min-h-0 flex-1">
+                {timeInPlay && <ActivityTimelineRail className="shrink-0 border-r" />}
+                {eventsExplorer ? <ListView /> : <ExploreView />}
+              </div>
+            )}
+            {activeTab === 'map' && <LazyView viewKey="map" load={loadMapView} />}
+            {activeTab === 'timeline' && <LazyView viewKey="timeline" load={loadStoryTimelineView} />}
+            {activeTab === 'gallery' && <LazyView viewKey="gallery" load={loadGalleryView} />}
+            {activeTab === 'graph' && <LazyView viewKey="graph" load={loadGraphView} />}
+          </div>
+        </MemoryHubShell>
+      </PageContent>
+
+      {activeSheetEntity && (
+        <Sheet open={detailsOpen} onOpenChange={toggleactiveEntity}>
+          <EntityDetails entity={activeSheetEntity} />
+        </Sheet>
+      )}
+
+      <FileChunkModal entity={activeChunkEntity} onClose={() => setActiveEntity(null)} />
+    </>
+  );
+}

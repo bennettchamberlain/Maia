@@ -1,0 +1,470 @@
+import { Injectable, Optional } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, In, IsNull, MoreThanOrEqual, Not, Repository, type FindOptionsOrder } from 'typeorm';
+import { v7 as uuidv7 } from 'uuid';
+
+import { SYSTEM_USER, UserServiceContext, type ServiceContext } from '@ci/common/context';
+import { HbpeNotifyService } from '@ci/common/hbpe';
+import { LoggerService } from '@ci/common/logging';
+import {
+  type BulkInsertResult,
+  bulkInsertIdempotent,
+  INGEST_MERGE_KINDS,
+  INGEST_PRODUCER_PREFERENCE,
+  INGEST_REFRESH_COLUMNS,
+  keysetOrderOf,
+  keysetPaginate,
+  keysetSeek,
+  type KeysetPageArgs,
+  type KeysetPage,
+} from '@ci/common/persistence';
+import { EventService } from '@ci/domains/events';
+import type { EntityIdentifier, IndexableEntity } from '@ci/domains/search-next';
+
+import { BrowserActivity, BrowserActivityEntity } from '../entities/BrowserActivityEntity';
+import {
+  BrowserActivityCreatedEvent,
+  BrowserActivityUpdatedEvent,
+  BrowserActivityRemovedEvent,
+} from '../events';
+import type { CreateBrowserActivityDto, UpdateBrowserActivityDto } from '../types';
+
+interface Options {
+  limit?: number;
+  order?: FindOptionsOrder<BrowserActivityEntity>;
+  startTime?: Date;
+  endTime?: Date;
+  /** The How filter: `source_system` values to keep (the explorer's connectors). */
+  connectors?: string[];
+  /** Composite keyset cursor for the timed search path (see CalendarEventService). */
+  afterTime?: Date;
+  afterId?: string;
+}
+
+@Injectable()
+export class BrowserActivityService {
+  constructor(
+    @InjectRepository(BrowserActivityEntity)
+    private readonly browserActivityRepository: Repository<BrowserActivityEntity>,
+    private readonly eventService: EventService,
+    private readonly logger: LoggerService,
+    private readonly dataSource: DataSource,
+    @Optional() private readonly hbpeNotify?: HbpeNotifyService,
+  ) {
+    this.logger.setContext(BrowserActivityService.name);
+  }
+
+  async create(
+    context: UserServiceContext,
+    data: CreateBrowserActivityDto | CreateBrowserActivityDto[],
+  ): Promise<BrowserActivity | BrowserActivity[]> {
+    // Required for TypeScript type narrowing to work within the closure.
+    const userId = context.userId;
+
+    const isSingle = !Array.isArray(data);
+    const dataArray: CreateBrowserActivityDto[] = isSingle ? [data] : data;
+
+    const returned = await Promise.all(
+      dataArray.map(async (item) => {
+        const id = item.id ?? uuidv7();
+
+        const browserActivity = await this.browserActivityRepository.create({
+          id,
+          time: new Date(item.time),
+          user_id: userId,
+          device_id: item.device_id ?? null,
+          url: item.url,
+          title: item.title,
+          action_type: item.action_type,
+          properties: item.properties ?? {},
+          duration_seconds: item.duration_seconds,
+          scroll_depth_percent: item.scroll_depth_percent,
+          page_summary: item.page_summary,
+          category: item.category,
+          productivity_score: item.productivity_score,
+          is_incognito: item.is_incognito ?? false,
+          contains_sensitive: item.contains_sensitive ?? false,
+          source_type: item.source_type ?? null,
+          source_system: item.source_system ?? null,
+          source_id: item.source_id ?? null,
+        });
+
+        const result = await this.browserActivityRepository.save(browserActivity);
+
+        await this.eventService.send(BrowserActivityCreatedEvent, {
+          browserActivityId: result.id,
+        });
+        await this.hbpeNotify?.notifyBrowserActivity(result.user_id, result.time);
+
+        return BrowserActivityEntity.toEgressType(result);
+      }),
+    );
+
+    return isSingle ? returned[0] : returned;
+  }
+
+  /**
+   * Batch, idempotent browser-activity ingest for the importer. Dedupes on the
+   * provenance triple (source_type, source_system, source_id), scoped to the user,
+   * via one set-based INSERT ... ON CONFLICT DO NOTHING instead of a per-row
+   * findOne + save loop. Re-syncing the same triple returns the existing row
+   * instead of inserting a duplicate. Paired with the
+   * browser_activity_source_identity_uniq partial unique index, which also absorbs a
+   * lost insert race. Bulk ingest does NOT emit a per-row BrowserActivityCreatedEvent
+   * — search indexing is deferred to the post-load batch embed
+   * (POST /api/maintenance/search-index/backfill); single-row create() still emits.
+   *
+   * `ci.browser_activity` is the sole home for these rows. Wave D's dual-write
+   * into `ci.events` + `ci.content` was reverted (see the migration paired with
+   * this change): page views are not timeline events, and folding them there
+   * flooded the schedule calendar and the HBPE training corpus.
+   */
+  async createMany(
+    context: UserServiceContext,
+    data: CreateBrowserActivityDto[],
+  ): Promise<BrowserActivity[]> {
+    return (await this.createManyDetailed(context, data)).map(({ entity }) => entity);
+  }
+
+  /**
+   * Same ingest as {@link createMany}, reporting which rows this call actually
+   * INSERTED rather than found already present.
+   */
+  async createManyDetailed(
+    context: UserServiceContext,
+    data: CreateBrowserActivityDto[],
+  ): Promise<Array<BulkInsertResult<BrowserActivity>>> {
+    if (data.length === 0) {
+      return [];
+    }
+
+    const entities = data.map((item) =>
+      this.browserActivityRepository.create({
+        id: item.id ?? uuidv7(),
+        time: new Date(item.time),
+        user_id: context.userId,
+        device_id: item.device_id ?? null,
+        url: item.url,
+        title: item.title,
+        action_type: item.action_type,
+        properties: item.properties ?? {},
+        duration_seconds: item.duration_seconds,
+        scroll_depth_percent: item.scroll_depth_percent,
+        page_summary: item.page_summary,
+        category: item.category,
+        productivity_score: item.productivity_score,
+        is_incognito: item.is_incognito ?? false,
+        contains_sensitive: item.contains_sensitive ?? false,
+        source_type: item.source_type ?? null,
+        source_system: item.source_system ?? null,
+        source_id: item.source_id ?? null,
+      }),
+    );
+
+    const results = await bulkInsertIdempotent({
+      repository: this.browserActivityRepository,
+      entities,
+      primaryKey: 'id',
+      getTriple: (entity) => ({
+        sourceType: entity.source_type,
+        sourceSystem: entity.source_system,
+        sourceId: entity.source_id,
+      }),
+      scope: { user_id: context.userId },
+      conflictTarget: '(user_id, source_system, source_id) WHERE source_id IS NOT NULL',
+      identityColumns: ['source_system', 'source_id'],
+      sourceLedger: {
+        table: 'browser_activity',
+        userId: context.userId,
+        importRunId: context.importRunId ?? null,
+      },
+      // Centralized refresh contract — self-heals the capture-derived columns
+      // (action_type, properties, duration_seconds, scroll_depth_percent,
+      // is_incognito, contains_sensitive) on a conflicting re-sync from the
+      // SAME producer; a different producer (the extension after a History
+      // import, or vice versa) only fills what is still empty, merges the
+      // properties bag and ORs the privacy flags. Excludes title/url
+      // (user-editable via updateBrowserActivity) and the AI-generated insight
+      // columns (page_summary, category, productivity_score) so enrichment
+      // output survives a re-import. See INGEST_REFRESH_COLUMNS /
+      // INGEST_MERGE_KINDS .browser_activity for the full rationale.
+      conflictUpdateColumns: INGEST_REFRESH_COLUMNS.browser_activity,
+      conflictMergeKinds: INGEST_MERGE_KINDS.browser_activity,
+      // duration_seconds: the History file's measured dwell outranks the
+      // extension's default whichever arrived first.
+      conflictProducerPreference: INGEST_PRODUCER_PREFERENCE.browser_activity,
+    });
+
+    const egress = results.map(({ entity, inserted }) => ({
+      entity: BrowserActivityEntity.toEgressType(entity),
+      inserted,
+    }));
+
+    // Bulk ingest does NOT emit a per-row BrowserActivityCreatedEvent: the per-row
+    // pgboss fan-out was the dominant cost at import volume. Search indexing for
+    // bulk-loaded rows is deferred to the post-load batch embed
+    // (POST /api/maintenance/search-index/backfill). Single-row create() still emits.
+    await this.hbpeNotify?.notifyBrowserActivity(
+      context.userId,
+      results.map(({ entity }) => entity.time),
+    );
+
+    return egress;
+  }
+
+  async findAll(context: ServiceContext): Promise<BrowserActivity[]> {
+    const results = await this.browserActivityRepository.find({
+      where: {
+        ...(context.userId !== SYSTEM_USER && {
+          user_id: context.userId,
+        }),
+      },
+      order: {
+        time: 'DESC',
+      },
+      relations: ['user'],
+    });
+
+    return results.map((entity) => BrowserActivityEntity.toEgressType(entity));
+  }
+
+  /**
+   * Keyset-paginated page for the GraphQL connection — ordered by (time, id)
+   * DESC over the (user_id, time) index. Reads one page (+1 sentinel) instead of
+   * the whole 330k-row table, and drops the eager `user` join the in-memory path
+   * carried (only user_id is needed downstream).
+   */
+  async findPage(context: UserServiceContext, args: KeysetPageArgs): Promise<KeysetPage<BrowserActivity>> {
+    const page = await keysetPaginate(this.browserActivityRepository, args, {
+      alias: 'browserActivity',
+      timeProp: 'time',
+      userIdProp: 'user_id',
+      userId: context.userId,
+    });
+
+    return {
+      ...page,
+      entities: page.entities.map((entity) => BrowserActivityEntity.toEgressType(entity)),
+    };
+  }
+
+  async findByIds(context: ServiceContext, ids: string[]): Promise<(BrowserActivity | null)[]> {
+    const results = await this.browserActivityRepository.find({
+      where: {
+        id: In(ids),
+        ...(context.userId !== SYSTEM_USER && {
+          user_id: context.userId,
+        }),
+      },
+      order: { time: 'DESC' },
+      relations: ['user'],
+    });
+
+    const map = new Map(results.map((entity) => [entity.id, BrowserActivityEntity.toEgressType(entity)]));
+
+    return ids.map((id) => map.get(id) ?? null);
+  }
+
+  async findById(context: ServiceContext, id: string): Promise<BrowserActivity | null> {
+    const entity = await this.browserActivityRepository.findOne({
+      where: {
+        id,
+        ...(context.userId !== SYSTEM_USER && {
+          user_id: context.userId,
+        }),
+      },
+      relations: ['user'],
+    });
+
+    return entity == null ? null : BrowserActivityEntity.toEgressType(entity);
+  }
+
+  async update(
+    context: ServiceContext,
+    id: string,
+    data: UpdateBrowserActivityDto,
+  ): Promise<BrowserActivity | null> {
+    const { time: timeString, ...restData } = data;
+    const updateData: Record<string, unknown> = { ...restData };
+
+    if (timeString !== undefined) {
+      updateData.time = new Date(timeString);
+    }
+
+    const browserActivity = await this.browserActivityRepository.findOne({
+      where: {
+        id,
+        ...(context.userId !== SYSTEM_USER && {
+          user_id: context.userId,
+        }),
+      },
+    });
+
+    if (!browserActivity) {
+      return null;
+    }
+
+    await this.browserActivityRepository.update(
+      {
+        id,
+        ...(context.userId !== SYSTEM_USER && {
+          user_id: context.userId,
+        }),
+      },
+      updateData,
+    );
+
+    await this.eventService.send(BrowserActivityUpdatedEvent, {
+      browserActivityId: browserActivity.id,
+    });
+    const nextTime = (updateData.time as Date | undefined) ?? browserActivity.time;
+    await this.hbpeNotify?.notifyBrowserActivity(browserActivity.user_id, [browserActivity.time, nextTime]);
+
+    return this.findById(context, browserActivity.id);
+  }
+
+  async remove(context: ServiceContext, id: string): Promise<boolean> {
+    const browserActivity = await this.browserActivityRepository.findOne({
+      where: {
+        id,
+        ...(context.userId !== SYSTEM_USER && {
+          user_id: context.userId,
+        }),
+      },
+    });
+
+    if (!browserActivity) {
+      return false;
+    }
+
+    await this.browserActivityRepository.delete({
+      id,
+      ...(context.userId !== SYSTEM_USER && {
+        user_id: context.userId,
+      }),
+    });
+
+    await this.eventService.send(BrowserActivityRemovedEvent, {
+      browserActivityId: id,
+    });
+    await this.hbpeNotify?.notifyBrowserActivity(browserActivity.user_id, browserActivity.time);
+
+    return true;
+  }
+
+  /**
+   * The most recently categorized visit to this exact URL for this user,
+   * within `since`. Lets `BrowserActivityInsightListener` reuse a category
+   * instead of paying an LLM call for every revisit to the same page — the
+   * dominant case for a URL, not the exception.
+   */
+  async findMostRecentCategorized(
+    userId: string,
+    url: string,
+    since: Date,
+  ): Promise<Pick<BrowserActivityEntity, 'category' | 'productivity_score'> | null> {
+    return this.browserActivityRepository.findOne({
+      where: {
+        user_id: userId,
+        url,
+        category: Not(IsNull()),
+        time: MoreThanOrEqual(since),
+      },
+      order: { time: 'DESC' },
+      select: ['category', 'productivity_score'],
+    });
+  }
+
+  async getEntitiesForBrowserActivities(
+    context: ServiceContext,
+    options: Options,
+  ): Promise<EntityIdentifier<IndexableEntity>[]> {
+    let query = this.dataSource
+      .getRepository(BrowserActivityEntity)
+      .createQueryBuilder('browser-activity')
+      .select(['browser-activity.id'])
+      .where('browser-activity.user_id = :userId', { userId: context.userId });
+
+    if (options.limit) {
+      query = query.limit(options.limit);
+    }
+
+    // The direction `order` asks for (its first key, as for the primary sort); the tiebreak and the
+    // keyset below run the same way, so a page is always the rows PAST the cursor in that direction.
+    const direction = keysetOrderOf(options.order);
+
+    if (options.order) {
+      for (const [field, fieldDirection] of Object.entries(options.order)) {
+        query = query.orderBy(`browser-activity.${field}`, fieldDirection as 'ASC' | 'DESC');
+      }
+
+      // Deterministic tiebreak so same-timestamp rows page consistently.
+      query = query.addOrderBy('browser-activity.id', direction);
+    }
+
+    // Composite keyset: page strictly past (afterTime, afterId) in (time, id), in `order` — see keysetSeek.
+    if (options.afterTime && options.afterId) {
+      query = query.andWhere(
+        ...keysetSeek(
+          'browser-activity.time',
+          'browser-activity.id',
+          direction,
+          options.afterTime,
+          options.afterId,
+        ),
+      );
+    }
+
+    if (options.connectors && options.connectors.length > 0) {
+      query = query.andWhere('browser-activity.source_system IN (:...connectors)', {
+        connectors: options.connectors,
+      });
+    }
+
+    if (options.startTime) {
+      query = query.andWhere('browser-activity.time >= :startTime', { startTime: options.startTime });
+    }
+
+    if (options.endTime) {
+      query = query.andWhere('browser-activity.time <= :endTime', { endTime: options.endTime });
+    }
+
+    const results = await query.getRawMany();
+
+    return results.map((row: { 'browser-activity_id': string; type: IndexableEntity }) => ({
+      id: row['browser-activity_id'],
+      type: 'browser-activity' as IndexableEntity,
+    }));
+  }
+
+  /**
+   * True total of browser activities matching the same filters {@link getEntitiesForBrowserActivities}
+   * applies (minus the pagination-only `limit`/`order`/`afterTime`/`afterId`) — a real `COUNT(*)`,
+   * not the length of one `limit`-bounded page of identifiers. See CalendarEventService.countEntitiesForEvents.
+   */
+  async countEntitiesForBrowserActivities(
+    context: ServiceContext,
+    options: Pick<Options, 'startTime' | 'endTime' | 'connectors'>,
+  ): Promise<number> {
+    let query = this.dataSource
+      .getRepository(BrowserActivityEntity)
+      .createQueryBuilder('browser-activity')
+      .where('browser-activity.user_id = :userId', { userId: context.userId });
+
+    if (options.connectors && options.connectors.length > 0) {
+      query = query.andWhere('browser-activity.source_system IN (:...connectors)', {
+        connectors: options.connectors,
+      });
+    }
+
+    if (options.startTime) {
+      query = query.andWhere('browser-activity.time >= :startTime', { startTime: options.startTime });
+    }
+
+    if (options.endTime) {
+      query = query.andWhere('browser-activity.time <= :endTime', { endTime: options.endTime });
+    }
+
+    return query.getCount();
+  }
+}

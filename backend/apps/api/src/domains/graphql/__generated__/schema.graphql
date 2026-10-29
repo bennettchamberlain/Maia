@@ -1,0 +1,4228 @@
+# ------------------------------------------------------
+# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+# ------------------------------------------------------
+
+type ActionConnection implements Connection {
+  edges: [ActionEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type ActionEdge implements Edge {
+  cursor: String!
+  node: ActionType!
+}
+
+"""Metadata associated with an action"""
+type ActionMetadataType {
+  """Context explaining why this action is relevant"""
+  context: String
+
+  """Name of related person if applicable"""
+  relatedPerson: String
+
+  """Whether the user has seen/interacted with this action"""
+  seen: Boolean!
+
+  """Type of action: conversation_starter or time_suggestion"""
+  type: String
+}
+
+type ActionType implements Node & Taggable {
+  createdAt: DateTime!
+  dismissed: Boolean!
+  id: ID!
+  imageUrl: String
+
+  """Action metadata including seen status"""
+  metadata: ActionMetadataType!
+
+  """Priority/relevance level 1-10"""
+  priority: Int
+  seen: Boolean!
+
+  """Provenance: legacy | correlation | anomaly | suggestion"""
+  source: String
+  tags: [EntityTagType!]!
+  text: String!
+  thread: ThreadType
+  title: String!
+  updatedAt: DateTime!
+}
+
+"""
+Activity count for one local calendar day, rolled up from hourly UTC buckets
+"""
+type ActivityBucketType {
+  count: Int!
+
+  """Local calendar day, yyyy-MM-dd, in the user profile timezone"""
+  date: String!
+}
+
+type ActivityCountsType {
+  activities: Int @deprecated(reason: "Retired summary source; only set on summaries written before it was dropped.")
+  answers: Int
+  apiLogs: Int @deprecated(reason: "Retired summary source; only set on summaries written before it was dropped.")
+  browserActivity: Int
+  communications: Int
+  content: Int
+  events: Int
+  fileChunks: Int
+  files: Int
+  macosActivity: Int
+  measurements: Int @deprecated(reason: "Retired summary source; only set on summaries written before it was dropped.")
+  messages: Int
+  notes: Int
+  objectObservations: Int
+  objects: Int
+  position: Int
+  positions: Int @deprecated(reason: "Never populated — the source has always been named `position`. Use `position`.")
+  receiptLineItems: Int
+  receipts: Int
+  screenCaptures: Int @deprecated(reason: "Retired summary source; only set on summaries written before it was dropped.")
+  tasks: Int
+  toolInvocations: Int
+  total: Int!
+}
+
+"""
+Optional filters applied to the activity heatmap — mirrors the Memory explorer search filters.
+"""
+input ActivityTimelineFiltersInput {
+  """Restrict to events from these connectors"""
+  connectors: [String!]
+
+  """Restrict to these event types (How filter)"""
+  eventTypes: [String!]
+
+  """Exclude these indexable entity types"""
+  excludeTypes: [String!]
+
+  """Include only these indexable entity types"""
+  includeTypes: [String!]
+
+  """Restrict to events mentioning these people"""
+  people: [String!]
+
+  """Restrict to events at these places"""
+  places: [String!]
+
+  """Free-text search query"""
+  query: String
+
+  """Restrict to entities carrying these tags"""
+  tags: [String!]
+}
+
+input AddItemIdentifierInput {
+  itemId: ID!
+  namespace: ObjectIdentifierNamespace!
+  scope: ObjectIdentifierScopeInput
+  value: String!
+}
+
+input AddPersonIdentifierInput {
+  kind: String!
+  label: String
+  personId: ID!
+  value: String!
+}
+
+type AnswerConnection implements Connection {
+  edges: [AnswerEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type AnswerEdge implements Edge {
+  cursor: String!
+  node: AnswerType!
+}
+
+enum AnswerForm {
+  attribute
+  boolean
+  existence
+  identity
+  retrieval
+}
+
+type AnswerProvenanceType {
+  coveragePct: Int!
+  daysWithData: Int!
+  metric: String!
+  sources: [String!]!
+}
+
+enum AnswerSource {
+  peer
+  self
+}
+
+type AnswerType implements Node {
+  answer: String!
+  answerConfidence: Float
+  answerEvidence: JSON
+  answerMethod: String!
+  answerRationale: String
+  answerSource: String
+  answeredAt: DateTime!
+  id: ID!
+  question: QuestionType!
+}
+
+input AskActorInput {
+  kind: String!
+  label: String
+}
+
+type AskActorType {
+  kind: String!
+  label: String
+}
+
+type AskAnswerType {
+  answerSource: AnswerSource!
+  askId: ID!
+  consentBasis: String
+  createdAt: DateTime!
+  disclosedCount: Int!
+  form: AnswerForm!
+  id: ID!
+  items: [DisclosedItemType!]!
+  summary: String
+  withheldCount: Int!
+}
+
+enum AskAuditOutcome {
+  answered
+  auto_answered
+  declined
+  expired
+}
+
+type AskAuditType {
+  askId: ID
+  askerId: ID
+  consentBasis: String
+  createdAt: DateTime!
+  disclosedCount: Int!
+  id: ID!
+  outcome: AskAuditOutcome!
+  peerHandle: String
+  query: AskQueryType!
+  responderId: ID
+}
+
+type AskBroadcastType {
+  answered: Int!
+  createdAt: DateTime!
+  expiresAt: DateTime
+  id: ID!
+  query: AskQueryType!
+  recipients: Int!
+  waiting: Int!
+}
+
+type AskChannelType {
+  covered: [String!]!
+  keyThumbprint: String!
+  verifiedAt: DateTime!
+}
+
+input AskDisclosureHistoryInput {
+  counterpartyKey: String
+  from: DateTime
+  limit: Int
+  outcomes: [String!]
+  to: DateTime
+}
+
+type AskDisclosureHistoryPayload {
+  rows: [AskAuditType!]!
+  truncated: Boolean!
+}
+
+input AskDisclosureSummaryInput {
+  windowDays: Int
+}
+
+type AskDisclosureSummaryPayload {
+  summaries: [AskDisclosureSummaryType!]!
+  truncated: Boolean!
+}
+
+type AskDisclosureSummaryType {
+  askerId: ID
+  asksInWindow: Int!
+  autoAnswered: Int!
+  declined: Int!
+  expired: Int!
+  firstAt: DateTime!
+  itemsDisclosed: Int!
+  itemsInWindow: Int!
+  key: String!
+  lastAt: DateTime!
+  peerHandle: String
+  peerLinkId: ID
+  reviewed: Int!
+  total: Int!
+}
+
+type AskGrantPayload {
+  grant: AskGrantType
+  success: Boolean!
+}
+
+type AskGrantType {
+  active: Boolean!
+  createdAt: DateTime!
+  dataClass: String
+  expiresAt: DateTime
+  granteeId: ID
+  granteePeerLinkId: ID
+  id: ID!
+  lastUsedAt: DateTime
+  mode: GrantMode!
+  purpose: String
+  queryType: String!
+  revocationReason: String
+  revokedAt: DateTime
+  supersedesGrantId: ID
+  updatedAt: DateTime!
+  useCount: Int!
+  version: Int!
+}
+
+type AskPayload {
+  ask: AskType
+  success: Boolean!
+}
+
+input AskQueryInput {
+  actor: AskActorInput
+  dataClass: String
+  prompt: String!
+  queryType: String!
+}
+
+type AskQueryType {
+  actor: AskActorType
+  dataClass: String
+  prompt: String!
+  promptHiddenCharactersRemoved: Boolean!
+  purpose: String
+  queryType: String!
+}
+
+enum AskStatus {
+  answered
+  answering
+  declined
+  delivered
+  expired
+  sent
+  under_review
+}
+
+type AskType {
+  askerId: ID
+  broadcastId: ID
+  channel: AskChannelType
+  consentBasis: String
+  createdAt: DateTime!
+  direction: String!
+  expiresAt: DateTime
+  id: ID!
+  peerHandle: String
+  query: AskQueryType!
+  responderId: ID
+  status: AskStatus!
+  updatedAt: DateTime!
+}
+
+type BoundingBoxType {
+  h: Float!
+  w: Float!
+  x: Float!
+  y: Float!
+}
+
+"""One competing future at a clock step"""
+type BranchialBranchType {
+  id: String!
+
+  """Parent L0 class (WORK, LEISURE, ...)"""
+  l0: String!
+  mass: Float!
+  permutations: [BranchialPermutationType!]!
+  title: String!
+  why: String!
+}
+
+"""Who or what under a named future (slider 2, laid out in time)"""
+type BranchialPermutationType {
+  id: String!
+  mass: Float!
+  title: String!
+}
+
+"""A remaining daypart or week-ahead day"""
+type BranchialStepType {
+  branches: [BranchialBranchType!]!
+  id: String!
+  label: String!
+  startTime: String!
+}
+
+"""
+Branchial-time tree: occupancy spine from the histogram/week forecast, optionally named by an LLM guess from memory
+"""
+type BranchialTreeType {
+  """True when branch titles came from the memory guess, not raw L0 labels"""
+  guessed: Boolean!
+  question: String!
+  steps: [BranchialStepType!]!
+}
+
+type BrowserActivityConnection implements Connection {
+  edges: [BrowserActivityEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type BrowserActivityEdge implements Edge {
+  cursor: String!
+  node: BrowserActivityType!
+}
+
+type BrowserActivityType implements Node & Taggable {
+  actionType: String
+  duration: Float
+  id: ID!
+  scrollDepth: Float
+  tags: [EntityTagType!]!
+  time: DateTime!
+  title: String
+  url: String!
+}
+
+type BulkGraphEntityMapping {
+  entityId: ID!
+  key: String!
+}
+
+input BulkGraphInput {
+  entities: [GraphEntityInput!]!
+  relationships: [GraphRelationshipInput!]
+}
+
+type BulkGraphPayload {
+  entities: [BulkGraphEntityMapping!]!
+  entitiesProcessed: Int!
+  errors: [String!]!
+  relationshipsProcessed: Int!
+  success: Boolean!
+}
+
+type BulkItemRelationshipResult {
+  inserted: Int!
+  skipped: Int!
+}
+
+type CalibrationScoreType {
+  brier: Float
+  coverage: Float
+  driftFlag: Boolean!
+  ece: Float
+  l0Top1Acc: Float
+  l1Top3Acc: Float
+
+  """hmt / b0 / b1 / b2"""
+  modelVersion: String
+  nBuckets: Int
+  scoredAt: String!
+}
+
+type CommunicationAttachmentType {
+  contentId: ID
+  contentType: String
+  fileId: ID
+  filename: String
+  height: Int
+  previewUrl: String
+  size: Float
+  url: String
+  width: Int
+}
+
+type CommunicationConnection implements Connection {
+  edges: [CommunicationEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type CommunicationEdge implements Edge {
+  cursor: String!
+  node: CommunicationType!
+}
+
+type CommunicationType implements Node & Taggable {
+  attachments: [CommunicationAttachmentType!]!
+  content: String!
+  direction: String!
+  from: PersonType
+  id: ID!
+  metadata: JSON!
+  participantsMetadata: JSON!
+  preview: String
+  sourceId: String
+  sourceSystem: String
+  sourceType: String
+  subject: String
+  tags: [EntityTagType!]!
+  threadId: String
+  time: DateTime!
+  to(after: String, before: String, first: Int, last: Int): PersonConnection!
+  type: String!
+}
+
+type ConceptConnection implements Connection {
+  edges: [ConceptEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type ConceptEdge implements Edge {
+  cursor: String!
+  node: ConceptType!
+}
+
+type ConceptType implements Node & Taggable {
+  description: String
+  id: ID!
+  name: String
+  tags: [EntityTagType!]!
+}
+
+interface Connection {
+  edges: [Edge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type ConnectionConnection implements Connection {
+  edges: [ConnectionEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type ConnectionEdge implements Edge {
+  cursor: String!
+  node: ConnectionType!
+}
+
+type ConnectionSyncJobConnection implements Connection {
+  edges: [ConnectionSyncJobEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type ConnectionSyncJobEdge implements Edge {
+  cursor: String!
+  node: ConnectionSyncJobType!
+}
+
+type ConnectionSyncJobType implements Node {
+  completedAt: DateTime
+  connection: ConnectionType
+  connectionId: ID!
+  createdAt: DateTime!
+  cursor: JSON
+  data: JSON!
+  endpointName: String!
+  error: JSON
+  id: ID!
+  jobId: ID
+  nextCursor: JSON
+  properties: JSON
+  status: String!
+  type: String!
+  updatedAt: DateTime!
+  userId: ID!
+}
+
+type ConnectionType implements Node {
+  accountLabel: String
+  active: Boolean!
+  activeEndpoints: [String!]!
+  externalId: String
+  id: ID!
+  name: String
+  needsReauth: Boolean!
+  provider: ProviderType!
+  providerId: ID!
+  schedule: String
+  syncState: JSON
+  tokenExpiry: DateTime
+}
+
+type ContentConnection implements Connection {
+  edges: [ContentEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type ContentEdge implements Edge {
+  cursor: String!
+  node: ContentType!
+}
+
+type ContentFacets {
+  """Distinct `mimetype` values."""
+  mimetypes: [String!]!
+
+  """
+  Distinct delivering platforms — the How filter, over content alone. The ledger platform (`google_photos`, `whatsapp`) where one was recorded, else the row's `source_system`.
+  """
+  sourceSystems: [String!]!
+
+  """
+  Content type options: raw `type` values (post, note, like, …) plus, for `media` rows, the kind their mimetype says — image, video, audio, or `media` for watch/listen records and documents.
+  """
+  types: [String!]!
+}
+
+type ContentType implements Node & Taggable {
+  createdAt: DateTime!
+  event: EventType
+  externalId: String
+  id: ID!
+  mediaFilename: String
+  mediaSize: Float
+  mediaUrl: String
+  mimetype: String
+  playbackContentType: String
+  playbackUrl: String
+  player: EmbedPlayerType
+  previewUrl: String
+  sourceData: JSON
+  sourceId: String
+  sourceSystem: String
+  sourceType: String
+  sourceUrl: String
+  tags: [EntityTagType!]!
+  text: String
+  title: String
+  type: String
+  unfurl: UnfurlType
+  url: String
+}
+
+input CreateAnswerInput {
+  answer: String!
+  questionId: String!
+}
+
+input CreateAskBroadcastInput {
+  query: AskQueryInput!
+
+  """2–25 recipients."""
+  responderIds: [ID!]!
+}
+
+input CreateAskGrantInput {
+  dataClass: String
+  dataClasses: [String!]
+  delegation: String
+  granteeId: ID
+  granteePeerLinkId: ID
+  maxDisclosure: DisclosureRung
+  mode: GrantMode!
+  purpose: String
+  queryType: String!
+}
+
+input CreateAskInput {
+  query: AskQueryInput!
+  responderId: ID!
+}
+
+type CreateAskPayload {
+  ask: AskType
+  decision: String
+  success: Boolean!
+}
+
+input CreateBrowserActivityInput {
+  actionType: String
+  category: String
+  containsSensitive: Boolean
+  deviceId: String
+  durationSeconds: Int
+  isIncognito: Boolean
+  pageSummary: String
+  productivityScore: Float
+  properties: JSON
+  scrollDepthPercent: Float
+  sourceId: String
+  sourceSystem: String
+  sourceType: String
+  time: DateTime!
+  title: String
+  url: String!
+}
+
+input CreateCommunicationInput {
+  attachments: [JSON!]
+  communicationType: String!
+  content: String!
+  direction: String
+  durationSeconds: Int
+  fromEntityId: String
+  participantsMetadata: JSON
+  preview: String
+  sourceId: String
+  sourceSystem: String
+  sourceType: String
+  subject: String
+  threadId: String
+  time: DateTime!
+  toEntityIds: [String!]
+}
+
+input CreateConceptInput {
+  description: String
+  linkedId: String
+  linkedTable: String
+  name: String!
+}
+
+type CreateConceptPayload {
+  concept: ConceptType
+  success: Boolean!
+}
+
+input CreateConnectionInput {
+  accessToken: String
+  activeEndpoints: [String!]!
+  name: String
+  needsReauth: Boolean
+  providerId: ID!
+  refreshToken: String
+  schedule: String
+  syncState: JSON
+  tokenExpiry: DateTime
+}
+
+type CreateConnectionPayload {
+  connection: ConnectionType
+  success: Boolean!
+}
+
+input CreateConnectionSyncJobInput {
+  connectionId: ID!
+  endpointName: String!
+  error: JSON
+  id: ID
+  jobId: ID
+  properties: JSON
+  type: String!
+  userId: ID!
+}
+
+type CreateConnectionSyncJobPayload {
+  connectionSyncJob: ConnectionSyncJobType
+  success: Boolean!
+}
+
+input CreateContentInput {
+  eventId: ID
+  externalId: String
+  mimetype: String
+  sourceData: JSON
+  sourceId: String
+  sourceSystem: String
+  sourceType: String
+  sourceUrl: String
+  text: String
+  title: String
+  type: String
+  url: String
+}
+
+input CreateEventInput {
+  category: String
+  confidenceScore: Float
+  description: String
+  durationMinutes: Int
+  endTime: DateTime
+  eventType: String
+  isAllDay: Boolean
+
+  """
+  CI-Planning's manually-locked-block flag; settable/readable only, not yet enforced.
+  """
+  isLocked: Boolean
+  isRecurring: Boolean
+  locationCoordinates: JSON
+  locationEntityId: ID
+  locationName: String
+  metadata: JSON
+  organizerEntityId: ID
+  participantEntityIds: [ID!]
+  sharingLevel: String
+  sourceId: ID
+  sourceSystem: String
+  sourceType: String
+  startTime: DateTime!
+  status: String
+  title: String
+}
+
+input CreateItemInput {
+  """When it was bought or received."""
+  acquiredAt: DateTime
+
+  """Seller, giver or source, as free text."""
+  acquiredFrom: String
+  acquisitionMethod: ItemAcquisitionMethod
+  brand: String
+  category: String
+
+  """Dominant colour as #rrggbb."""
+  colorHex: String
+
+  """Colour names, dominant first."""
+  colors: [String!]
+
+  """
+  {material: fraction} summing to at most 1. Percentages are accepted and converted.
+  """
+  composition: JSON
+  condition: ItemCondition
+  currency: String
+  currentValue: Float
+  description: String
+
+  """
+  Shorthand such as "12 x 8 x 2 in". Fills only the axes not given individually.
+  """
+  dimensions: String
+
+  """
+  When it stops being usable. Distinct from a warranty, which is a contract.
+  """
+  expiresAt: DateTime
+
+  """Height, in millimetres."""
+  heightMm: Float
+
+  """Serial number, UPC, ISBN, order id, …"""
+  identifierCodes: JSON
+
+  """A digital item is refused a mass, a size and a volume."""
+  isDigital: Boolean
+
+  """Longest dimension, in millimetres."""
+  lengthMm: Float
+
+  """When the object was made, not when it was acquired."""
+  manufacturedAt: DateTime
+
+  """As-owned mass, in grams."""
+  massG: Float
+
+  """What the object is made of."""
+  materials: [String!]
+  metadata: JSON
+  model: String
+  name: String!
+  purchasePrice: Float
+  quantity: Int
+  subcategory: String
+  unitSystem: ItemUnitSystem
+
+  """Capacity — what it holds — in millilitres."""
+  volumeMl: Float
+
+  """Width, in millimetres."""
+  widthMm: Float
+}
+
+type CreateItemPayload {
+  item: ItemType
+  success: Boolean!
+}
+
+input CreateNoteInput {
+  content: String
+  id: String
+  title: String
+}
+
+type CreateNotePayload {
+  note: NoteType
+  success: Boolean!
+}
+
+input CreatePeerLinkInput {
+  displayName: String
+  memoryEndpoint: String!
+  peerHandle: String!
+  peerIssuer: String
+  peerSubject: String
+  personEntityId: ID
+  trustTier: PeerTrustTier
+}
+
+input CreatePersonInput {
+  addresses: [PersonAddressInput!]
+  avatarUrl: String
+  birthDate: String
+  city: String
+  contacts: [PersonContactInput!]
+  country: String
+  department: String
+  description: String
+  emails: [String!]
+  firstName: String
+  gender: String
+  jobTitle: String
+  lastName: String
+  linkedId: String
+  linkedTable: String
+  middleName: String
+  name: String!
+  nickname: String
+  organization: String
+  phones: [String!]
+  postalCode: String
+  pronouns: String
+  region: String
+  streetAddress: String
+  streetAddress2: String
+  website: String
+}
+
+type CreatePersonPayload {
+  person: PersonType
+  success: Boolean!
+}
+
+input CreatePlaceInput {
+  description: String
+  estimated: Boolean
+  geoFormat: String
+  geolocation: JSON
+  latitude: Float
+  locationBoundary: JSON
+  longitude: Float
+  name: String!
+  parentId: String
+  placeKind: String
+  properties: JSON
+  tracked: Boolean
+  type: String
+  uploaded: Boolean
+}
+
+input CreateProviderKeyInput {
+  clientId: String!
+  clientSecret: String!
+  providerId: ID!
+}
+
+input CreateQuestionInput {
+  category: String!
+  text: String!
+}
+
+input CreateRelationshipInput {
+  endDate: DateTime
+  fromNodeId: ID!
+  fromNodeType: String!
+  isBidirectional: Boolean
+  properties: JSON
+  startDate: DateTime
+  strength: Float
+  toNodeId: String!
+  toNodeType: String!
+  type: String!
+}
+
+type CreateRelationshipPayload {
+  relationship: RelationshipType
+  success: Boolean!
+}
+
+input CreateReminderInput {
+  """A planned block (`ci.events` id). See `taskId`."""
+  blockId: ID
+
+  """The instant this reminder fires. Must be in the future."""
+  fireAt: DateTime!
+
+  """Exactly one of `taskId`/`blockId` must be set."""
+  taskId: ID
+}
+
+type CreateReminderPayload {
+  reminder: ReminderType
+  success: Boolean!
+}
+
+input CreateSavedSearchInput {
+  description: String
+  entityTypes: [String!]
+  filters: SavedSearchFiltersInput
+  id: String
+  name: String
+  query: String
+  tags: [String!]
+}
+
+type CreateSavedSearchPayload {
+  savedSearch: SavedSearchType
+  success: Boolean!
+}
+
+input CreateTaskInput {
+  """User-local calendar date, `YYYY-MM-DD`."""
+  deferUntil: String
+  description: String
+  dueAt: DateTime
+  estimatedMinutes: Int
+  notes: String
+  parentId: ID
+
+  """0 (highest) to 5 (lowest). Defaults to 3."""
+  priority: Int
+
+  """User-local calendar date, `YYYY-MM-DD`."""
+  scheduledFor: String
+  status: TaskStatus
+
+  """Wall-clock `HH:MM`, user timezone. Zoneless."""
+  taskTime: String
+  title: String!
+}
+
+type CreateTaskPayload {
+  success: Boolean!
+  task: TaskType
+}
+
+input CreateThingInput {
+  acquiredAt: DateTime
+
+  """Seller, giver or source, as free text."""
+  acquiredFrom: String
+  acquisitionMethod: ItemAcquisitionMethod
+  brand: String
+  category: String
+
+  """Dominant colour as #rrggbb."""
+  colorHex: String
+
+  """Colour names, dominant first."""
+  colors: [String!]
+
+  """
+  {material: fraction} summing to at most 1. Percentages are accepted and converted.
+  """
+  composition: JSON
+  condition: ItemCondition
+  currency: String
+  currentValue: Float
+  description: String
+
+  """
+  Shorthand such as "12 x 8 x 2 in". Fills only the axes not given individually.
+  """
+  dimensions: String
+
+  """
+  When it stops being usable. Distinct from a warranty, which is a contract.
+  """
+  expiresAt: DateTime
+
+  """Height, in millimetres."""
+  heightMm: Float
+  identifierCodes: JSON
+
+  """A digital item is refused a mass, a size and a volume."""
+  isDigital: Boolean
+
+  """Longest dimension, in millimetres."""
+  lengthMm: Float
+
+  """When the object was made, not when it was acquired."""
+  manufacturedAt: DateTime
+
+  """As-owned mass, in grams."""
+  massG: Float
+
+  """What the object is made of."""
+  materials: [String!]
+  metadata: JSON
+  model: String
+  name: String!
+  purchasePrice: Float
+  sourceId: String
+  sourceSystem: String
+  sourceType: String
+  subcategory: String
+  unitSystem: ItemUnitSystem
+
+  """Capacity — what it holds — in millilitres."""
+  volumeMl: Float
+
+  """Width, in millimetres."""
+  widthMm: Float
+}
+
+"""One local-day row from the daily feature store"""
+type DailyMetricsType {
+  avgSentiment: Float
+
+  """ISO-8601 when this row was last computed"""
+  computedAt: String!
+  date: String!
+  kmTraveled: Float
+  meetingMinutes: Float
+  nConversations: Int
+  nDomains: Int
+  nMessages: Int
+  nPlaces: Int
+  nUniqueContacts: Int
+  outboundRatio: Float
+  screenMinutes: Float
+  sleepMinutes: Float
+  spendTotal: Float
+  timeAtHome: Float
+  timezone: String!
+}
+
+"""
+A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
+"""
+scalar DateTime
+
+input DeleteByIdInput {
+  id: String!
+}
+
+type DeleteByIdPayload {
+  deletedId: ID
+  success: Boolean!
+}
+
+"""
+A grounded catalog answer. The number is computed; the sentence is phrasing only.
+"""
+type DescriptiveAnswerType {
+  category: String!
+  key: String!
+  provenance: AnswerProvenanceType!
+  question: String!
+  text: String!
+  timeframe: String!
+  unit: String
+  value: Float
+}
+
+"""A catalog question the compute-then-narrate engine can answer"""
+type DescriptiveQuestionType {
+  """descriptive | predictive | correlational | anomaly | optimization"""
+  analyticType: String
+  category: String!
+  key: String!
+  question: String!
+}
+
+type DisclosedItemType {
+  id: String!
+  type: String!
+}
+
+enum DisclosureRung {
+  boolean
+  count
+  full
+  none
+  redacted
+  summary
+}
+
+"""HBPE renewal predictions: periodic behaviors coming due or overdue"""
+type DueForecastType {
+  due: [DueItemType!]!
+
+  """ISO-8601 timestamp when this list was generated"""
+  generatedAt: String!
+}
+
+"""A periodic behavior and when it is next expected (renewal prediction)"""
+type DueItemType {
+  clusterId: String!
+
+  """Periodicity confidence in [0,1]"""
+  confidence: Float!
+  daysSinceLast: Int!
+
+  """Days until due (negative = past the median interval)"""
+  dueInDays: Float!
+
+  """Parent L0 behavioral class"""
+  l0Class: String!
+
+  """ISO date of the last observed occurrence"""
+  lastSeen: String!
+  medianIntervalDays: Float!
+
+  """Human-readable cluster name"""
+  name: String!
+
+  """True once the gap exceeds the p90 inter-arrival interval"""
+  overdue: Boolean!
+
+  """ISO date of the next matching booked calendar event, or null if none"""
+  scheduledDate: String
+
+  """Credible due window [earliest, latest] in days from now"""
+  window: [Float!]!
+}
+
+interface Edge {
+  cursor: String!
+  node: Node!
+}
+
+type EmbedPlayerType {
+  aspectRatio: Float!
+  mediaKind: String!
+  playerUrl: String!
+  posterUrl: String
+  provider: String!
+  providerRef: String!
+}
+
+type EntityTagType implements Node {
+  id: ID!
+  label: String!
+  taggedAt: DateTime!
+}
+
+type EventConnection implements Connection {
+  edges: [EventEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type EventEdge implements Edge {
+  cursor: String!
+  node: EventType!
+}
+
+type EventType implements Node & Taggable {
+  category: String
+  confidenceScore: Float
+
+  """Content rows linked to this event via ci.content.event_id."""
+  contents(after: String, before: String, first: Int, last: Int): ContentConnection!
+  description: String
+  durationMinutes: Int
+  endTime: DateTime
+  eventType: String
+
+  """
+  'pending' when the local row has been changed here but not pushed back to `sourceSystem`.
+  """
+  externalSyncStatus: String
+  id: ID!
+  isAllDay: Boolean
+
+  """
+  True for a planned block placed by the deterministic placer running unattended; false for anything a human action produced (the Schedule button, a calendar drag, confirming a proposal). Lets the UI label honestly, e.g. "AI Briefing" vs "Day Overview".
+  """
+  isAuto: Boolean
+
+  """
+  CI-Planning's manually-locked-block flag. Settable via `updateEvent`; nothing currently refuses to move a locked block — a future reflow engine owns enforcing that.
+  """
+  isLocked: Boolean
+  isRecurring: Boolean
+
+  """
+  The last instant this row's startTime/endTime changed. Null means never observed moving.
+  """
+  lastMovedAt: DateTime
+  location: PlaceType
+  locationCoordinates: JSON
+  locationEntityId: ID
+  locationName: String
+  mediaContentType: String
+  mediaHeight: Int
+  mediaSize: Float
+  mediaUrl: String
+  mediaWidth: Int
+  metadata: JSON
+  organizer: PersonType
+  organizerEntityId: ID
+
+  """Parent event for sub-events / follow-ups. Children: filter by this id."""
+  parentEventId: ID
+  participantEntityIds: [ID!]
+  participants(after: String, before: String, first: Int, last: Int): PersonConnection!
+
+  """
+  Intended minutes for a planned block. Distinct from generated durationMinutes.
+  """
+  plannedMinutes: Int
+  playbackContentType: String
+  playbackUrl: String
+  previewUrl: String
+
+  """
+  RECURRENCE-ID (`YYYYMMDDTHHMMSSZ`) of an expanded occurrence; null on stored rows.
+  """
+  recurrenceId: String
+
+  """
+  Series master of an occurrence expanded from an RRULE at read time. Non-null means this node backs no stored row: its `id` addresses nothing, and it cannot be rescheduled or edited.
+  """
+  seriesMasterId: ID
+  sourceId: ID
+  sourceSystem: String
+  sourceType: String
+  startTime: DateTime!
+  status: String
+  tags: [EntityTagType!]!
+
+  """Task this planned block schedules (`event_type = planned_block`)."""
+  taskId: ID
+
+  """
+  How much of `startTime` is meaningful: 'second' | 'minute' | 'day' | 'ambiguous' | 'unknown'. 'unknown' pairs with `timeSource = 'ingest'` — no field of the stored instant carries information (see EventEntity.timePrecision).
+  """
+  timePrecision: String
+
+  """
+  Provenance for `startTime`: 'source' | 'user' | 'repaired' | 'ingest', or null for a row written before this column existed. 'ingest' means the value is NOT a real date — the source gave this record no time, and `startTime` carries the import wall clock only because the column is NOT NULL. A client MUST treat 'ingest' as "no date" rather than sort or display it as a real instant (see EventEntity.timeSource).
+  """
+  timeSource: String
+  title: String
+}
+
+type FileChunkType implements Node {
+  chunkIndex: Int!
+  chunkerVersion: String!
+  content: String!
+  createdAt: DateTime!
+  file: FileType
+  fileId: ID!
+  id: ID!
+  parserName: String!
+  parserVersion: String!
+  sectionTitle: String
+  sourceLocator: JSON
+  updatedAt: DateTime!
+}
+
+type FileConnection implements Connection {
+  edges: [FileEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type FileEdge implements Edge {
+  cursor: String!
+  node: FileType!
+}
+
+type FileType implements Node & Taggable {
+  contentType: String!
+  createdAt: DateTime!
+  description: String
+  externalId: String
+  filename: String
+  id: ID!
+  items(after: String, before: String, first: Int, last: Int): ItemConnection
+  parseError: String
+  parseStatus: String
+  parsedAt: DateTime
+  playbackContentType: String
+  playbackUrl: String
+  previewUrl: String
+  size: Float
+  sourceUrl: String
+  tags: [EntityTagType!]!
+  title: String
+  updatedAt: DateTime!
+}
+
+"""One Saturday hypothesis in the forage joint"""
+type ForageBranchType {
+  id: String!
+  mass: Float!
+  past: Boolean!
+  pinned: Boolean!
+  ready: Boolean!
+  topTexture: String
+}
+
+"""Activities that hang off (branch, who)"""
+type ForageInterestType {
+  activities: [String!]!
+  person: String!
+}
+
+"""A lake item scored as a saccade (expected free energy G)"""
+type ForageItemType {
+  ambiguity: Float!
+  epistemic: Float!
+  g: Float!
+  gaze: Int!
+  id: String!
+  label: String!
+  read: Boolean!
+  risk: Float!
+
+  """Index the fact came from: person, place, event, search, graph, derived"""
+  source: String
+}
+
+"""A named probability mass (branch, person, or delta)"""
+type ForageMassType {
+  label: String!
+  mass: Float!
+}
+
+"""One fact the eye already read"""
+type ForageReadType {
+  branchDelta: [ForageMassType!]!
+  cue: String!
+  epistemic: Float!
+  g: Float!
+  itemId: String!
+}
+
+"""
+CI Forager trial: discrete active inference over a memory lake. Not the occupancy histogram.
+"""
+type ForageTrialType {
+  attention: [ForageItemType!]!
+  branches: [ForageBranchType!]!
+  horizon: String!
+  interests: [ForageInterestType!]!
+
+  """demo or memory"""
+  kind: String
+  permutationBranch: String!
+  permutations: [ForageMassType!]!
+  pick: String
+  pin: String
+  question: String!
+  reads: [ForageReadType!]!
+  ready: Boolean!
+  resolved: Boolean!
+  texture: String
+  textureMass: Float
+}
+
+"""One 15-minute forecast bucket from the HBPE histogram"""
+type ForecastBucketType {
+  bucketIndex: Int!
+  l0Probs: [ProbabilityEntryType!]!
+  l1Probs: [ProbabilityEntryType!]!
+  l2Probs: [ProbabilityEntryType!]
+
+  """
+  Class to render for this bucket. Not argmax(l0Probs): the posterior is calibrated and answers UNKNOWN for most of a day, so HBPE prior-corrects the label. Null from an HBPE that predates the field.
+  """
+  predictedL0: String
+  q10: Float!
+  q50: Float!
+  q90: Float!
+
+  """ISO-8601 start time for this bucket"""
+  startTime: String!
+}
+
+type ForecastHistoryBucketType {
+  actualL0: String
+  bucketIndex: Int!
+  predictedL0: [ForecastHistoryProbType!]!
+}
+
+"""One past local day of logged forecast buckets"""
+type ForecastHistoryDayType {
+  buckets: [ForecastHistoryBucketType!]!
+  date: String!
+}
+
+type ForecastHistoryProbType {
+  label: String!
+  probability: Float!
+}
+
+"""96-bucket (15-min) HBPE day-ahead forecast"""
+type ForecastType {
+  buckets: [ForecastBucketType!]!
+
+  """ISO-8601 timestamp when this forecast was generated"""
+  generatedAt: String!
+
+  """
+  Forecast horizon, e.g. "48h"
+  """
+  horizon: String!
+
+  """Served histogram model: hmt, b1, or b2 (D3 gate)."""
+  modelVersion: String
+
+  """Live progress inside the active step, e.g. "1200 of 8400"."""
+  pipelineDetail: String
+
+  """Estimated seconds remaining in the active Predict/nightly step."""
+  pipelineEtaSeconds: Int
+
+  """True when the histogram is a cold-start baseline, not a trained HMT."""
+  stillLearning: Boolean!
+
+  """System status of the HBPE engine (COLD_START, TRAINING, READY)"""
+  systemStatus: String!
+}
+
+type GeocodeResultType {
+  cached: Boolean!
+  confidence: Float
+  latitude: Float
+  longitude: Float
+  normalizedAddress: String
+  status: String!
+}
+
+enum GrantMode {
+  auto
+  block
+  review
+}
+
+"""A directed typed edge (ci.relationships row)"""
+type GraphEdgeType {
+  fromEntityId: ID!
+  id: ID!
+  isActive: Boolean!
+  properties: JSON
+  strength: Float
+  toEntityId: ID!
+  type: String!
+}
+
+input GraphEntityInput {
+  description: String
+  entityType: String!
+  key: String!
+  name: String
+  properties: JSON
+  sourceSystem: String!
+}
+
+"""A graph node (ci.entities row, including CTI bases)"""
+type GraphNodeType {
+  description: String
+  entityType: String!
+  id: ID!
+  linkedId: String
+  linkedTable: String
+  name: String
+  properties: JSON
+}
+
+input GraphRelationshipInput {
+  fromKey: String!
+  properties: JSON
+  toKey: String!
+  type: String!
+}
+
+"""Knowledge graph projection over entities + relationships"""
+type GraphType {
+  edges: [GraphEdgeType!]!
+  nodes: [GraphNodeType!]!
+}
+
+type HouseholdTierType {
+  id: ID!
+  memberId: ID!
+  trustTier: String!
+  updatedAt: DateTime!
+}
+
+type InsightItemType {
+  keyActions: [String!]!
+  relatedEntityIds: [String!]
+  relevanceScore: Float!
+  summaryText: String!
+  tags: [String!]!
+  title: String!
+}
+
+"""
+How an item came to be owned. A purchase and a gift mean different things by acquiredAt.
+"""
+enum ItemAcquisitionMethod {
+  BORROWED
+  FOUND
+  GIFT
+  INHERITED
+  MADE
+  PURCHASED
+  SAMPLE
+  TRADED
+  UNKNOWN
+}
+
+enum ItemCondition {
+  BROKEN
+  FAIR
+  GOOD
+  LIKE_NEW
+  NA
+  NEW
+  POOR
+}
+
+type ItemConnection implements Connection {
+  edges: [ItemEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type ItemDuplicateGroupType {
+  items: [ItemType!]!
+  reason: ItemDuplicateReason!
+  totalItems: Int!
+  value: String!
+}
+
+"""
+What a duplicate group collapsed on: a shared identifier, the same product, or the same brand+model bought on the same day.
+"""
+enum ItemDuplicateReason {
+  BRAND_MODEL
+  IDENTIFIER
+  PRODUCT_NAME
+}
+
+type ItemDuplicatesPayload {
+  groups: [ItemDuplicateGroupType!]!
+  hasMore: Boolean!
+  totalCount: Int!
+}
+
+type ItemEdge implements Edge {
+  cursor: String!
+  node: ItemType!
+}
+
+"""
+Ownership state. A disposed thing is still a thing that happened, so it is never deleted.
+"""
+enum ItemLifecycleState {
+  ACTIVE
+  ARCHIVED
+  CONSUMED
+  DISPOSED
+  LENT_OUT
+  LOST
+  RETURNED
+  STORED
+}
+
+input ItemRelationshipInput {
+  fromSourceId: String!
+  fromSourceSystem: String!
+  fromSourceType: String!
+  metadata: JSON
+  relation: String!
+  toSourceId: String!
+  toSourceSystem: String!
+  toSourceType: String!
+}
+
+"""
+How to order the things list. NEWEST is served by the keyset index; the others order a bounded window of it.
+"""
+enum ItemSortOrder {
+  NAME_ASC
+  NAME_DESC
+  NEWEST
+  OLDEST
+  RECENTLY_ACQUIRED
+  RECENTLY_SEEN
+  VALUE_ASC
+  VALUE_DESC
+}
+
+type ItemType implements Node & Taggable {
+  """When it was bought or received."""
+  acquiredAt: DateTime
+
+  """Seller, giver or source."""
+  acquiredFrom: String
+  acquisition: ReceiptLineItemType
+  acquisitionMethod: ItemAcquisitionMethod
+  brand: String
+  category: String
+
+  """Dominant colour as #rrggbb."""
+  colorHex: String
+
+  """Colour names, dominant first."""
+  colors: [String!]
+
+  """{material: fraction}; {} when the proportions are unknown."""
+  composition: JSON!
+  condition: ItemCondition
+  createdAt: DateTime!
+  currency: String!
+  currentValue: Float
+  description: String
+
+  """When it stops being usable."""
+  expiresAt: DateTime
+  file: FileType
+
+  """Height, in millimetres."""
+  heightMm: Float
+  id: ID!
+  identifiers: [ObjectIdentifierType!]!
+
+  """
+  How sure we are this row is one real, distinct thing. 1.0 = a human said so or a barcode was scanned; lower = minted from a receipt line or guessed from a photo.
+  """
+  identityConfidence: Float!
+  isDigital: Boolean!
+
+  """
+  When this thing was last SEEN — by a confirmed sighting, not by being edited.
+  """
+  lastSeenAt: DateTime
+
+  """Longest dimension, in millimetres."""
+  lengthMm: Float
+
+  """Ownership state. A disposed thing keeps its row — it still happened."""
+  lifecycleState: ItemLifecycleState!
+
+  """When the object was made."""
+  manufacturedAt: DateTime
+
+  """As-owned mass, in grams."""
+  massG: Float
+
+  """What the object is made of."""
+  materials: [String!]
+  metadata: JSON
+  model: String
+  name: String
+  observations: [ObjectObservationType!]!
+  product: ProductModelType
+  purchasePrice: Float
+  quantity: Int!
+  sourceId: String
+  sourceSystem: String
+  sourceType: String
+  subcategory: String
+  tags: [EntityTagType!]!
+
+  """The unit system these measurements were entered in. Presentation only."""
+  unitSystem: ItemUnitSystem
+  updatedAt: DateTime!
+
+  """Capacity — what it holds — in millilitres."""
+  volumeMl: Float
+
+  """Width, in millimetres."""
+  widthMm: Float
+}
+
+"""
+Display preference for measurements. Stored values are always SI (millimetres, grams, millilitres) whichever this is.
+"""
+enum ItemUnitSystem {
+  IMPERIAL
+  METRIC
+}
+
+"""
+The `JSON` scalar type represents JSON values as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
+"""
+scalar JSON
+
+type KnownPlaceCandidateType {
+  confidence: Float!
+  eventCount: Int!
+  kind: String!
+  label: String!
+  lat: Float!
+  lng: Float!
+  locationId: String
+  presenceDays: Int!
+  presenceNights: Int!
+  sampleEvents: [KnownPlaceSampleEventType!]!
+}
+
+type KnownPlaceCoordinates {
+  lat: Float!
+  lng: Float!
+}
+
+input KnownPlaceCoordinatesInput {
+  lat: Float!
+  lng: Float!
+}
+
+type KnownPlaceSampleEventType {
+  id: String!
+  startTime: String!
+  title: String!
+}
+
+type KnownPlaceType {
+  activeFrom: String
+  activeTo: String
+  aliases: [String!]!
+  confidence: Float!
+  coordinates: KnownPlaceCoordinates
+  id: ID!
+  kind: String!
+  label: String!
+  locationId: String
+  source: String!
+  tags: [String!]!
+}
+
+input LinkItemToProductInput {
+  itemId: ID!
+  productId: ID
+}
+
+type MapPinType {
+  endTime: DateTime
+  eventType: String
+  id: ID!
+  latitude: Float!
+  locationName: String
+  longitude: Float!
+  startTime: DateTime
+  timeSource: String
+  title: String
+}
+
+type MapPinsType {
+  pins: [MapPinType!]!
+  totalCount: Int!
+  truncated: Boolean!
+}
+
+type MergeCandidateConnection {
+  edges: [MergeCandidateEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type MergeCandidateEdge {
+  cursor: String!
+  node: MergeCandidateType!
+}
+
+type MergeCandidateEvidenceType {
+  kind: String!
+  score: Float
+  value: String!
+}
+
+type MergeCandidateType {
+  createdAt: DateTime!
+  detectedBy: String!
+  detectorVersion: Int!
+  entityType: String!
+  evidence: [MergeCandidateEvidenceType!]!
+  id: ID!
+  people: [PersonType!]!
+  score: Float!
+  status: String!
+}
+
+input MergeItemsInput {
+  sourceIds: [ID!]!
+  targetId: ID!
+}
+
+type MergeItemsPayload {
+  counts: ObjectMergeCountsType
+  item: ItemType
+  success: Boolean!
+}
+
+input MergePeopleInput {
+  sourceIds: [ID!]!
+  targetId: ID!
+}
+
+type MergePeoplePayload {
+  person: PersonType
+  success: Boolean!
+}
+
+input MergePlacesInput {
+  sourceIds: [ID!]!
+  targetId: ID!
+}
+
+type MergePlacesPayload {
+  counts: PlaceMergeCountsType
+  place: PlaceType
+  success: Boolean!
+}
+
+input MergeProductModelsInput {
+  sourceIds: [ID!]!
+  targetId: ID!
+}
+
+type MergeProductModelsPayload {
+  counts: ProductMergeCountsType
+  product: ProductModelType
+  success: Boolean!
+}
+
+type MessageConnection implements Connection {
+  edges: [MessageEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type MessageEdge implements Edge {
+  cursor: String!
+  node: MessageType!
+}
+
+type MessageType implements Node {
+  content: String!
+  id: ID!
+  role: String
+  threadId: ID!
+}
+
+"""A dated metric or behavioral anomaly. Computed, not LLM-invented."""
+type MetricAnomalyType {
+  baseline: Float
+  coverage: Float!
+  date: String!
+  detector: String!
+  direction: String!
+  id: String!
+  metadata: JSON!
+  metric: String!
+  score: Float!
+  value: Float
+}
+
+"""
+A pairwise / lagged association over daily_metrics. Language is hypothesis ("associated with"), never cause.
+"""
+type MetricCorrelationType {
+  coverageMean: Float
+  effect: Float
+  id: String!
+  lagDays: Int!
+  metricA: String!
+  metricB: String!
+  n: Int!
+  novelty: Float!
+  pValue: Float
+  pearson: Float
+  qValue: Float
+  robust: Boolean!
+  spearman: Float
+  windowDays: Int!
+}
+
+"""One forecast day with its q10/q50/q90 band"""
+type MetricForecastPointType {
+  """YYYY-MM-DD"""
+  date: String!
+  q10: Float!
+  q50: Float!
+  q90: Float!
+}
+
+"""Seasonal-naive + EWMA forecast of a daily-metrics scalar"""
+type MetricForecastType {
+  """Fraction of the 90-day history window that had a value"""
+  coverage: Float!
+  horizonDays: Int!
+  metric: String!
+  points: [MetricForecastPointType!]!
+
+  """OK, NOT_ENOUGH_SIGNAL, or UNKNOWN_METRIC"""
+  status: String!
+}
+
+"""
+An evidence-linked suggestion. Never emitted without a correlation or anomaly FK.
+"""
+type MetricSuggestionType {
+  acceptedAt: String
+  dismissedAt: String
+  evidence: JSON!
+  id: String!
+  key: String!
+  priority: Int
+  text: String!
+  title: String!
+}
+
+type Mutation {
+  """Accept a candidate at a chosen time, minting a real event"""
+  acceptCandidate(endTime: DateTime, id: ID!, startTime: DateTime!): EventType!
+
+  """
+  Accept a proposed task into the open backlog. Keeps any preferred date as a hint; does not place a calendar block.
+  """
+  acceptProposedTask(id: ID!): TaskType
+
+  """Apply a pending automation change (mutate / complete / event revise)."""
+  acceptTaskPendingChange(id: ID!): ResolveTaskPendingChangePayload!
+  addItemIdentifier(input: AddItemIdentifierInput!): [ObjectIdentifierType!]!
+  addPersonIdentifier(input: AddPersonIdentifierInput!): [PersonIdentifierType!]!
+  approveAsk(id: ID!): AskPayload!
+
+  """
+  Break free text into schedule candidates. Adds to the slate; schedules nothing.
+  """
+  breakDownTasks(text: String!): [ScheduleCandidateType!]!
+  bulkIngestGraph(input: BulkGraphInput!): BulkGraphPayload!
+  bulkIngestItemRelationships(input: [ItemRelationshipInput!]!): BulkItemRelationshipResult!
+
+  """Soft-cancel a reminder. The row survives."""
+  cancelReminder(id: ID!): ReminderType
+
+  """
+  Mark a task done. Idempotent — the original completion instant is preserved.
+  """
+  completeTask(actualMinutes: Int, id: ID!): TaskType
+  confirmObservation(
+    id: ID!
+
+    """
+    The owned unit this sighting is of. Omit to confirm the resolution already on the row.
+    """
+    itemId: ID
+    productId: ID
+  ): ObjectObservationType
+  createAnswer(input: CreateAnswerInput!): AnswerType!
+  createAnswers(input: [CreateAnswerInput!]!): [AnswerType!]!
+  createAsk(input: CreateAskInput!): CreateAskPayload!
+  createAskBroadcast(input: CreateAskBroadcastInput!): AskBroadcastType!
+  createAskGrant(input: CreateAskGrantInput!): AskGrantPayload!
+  createBrowserActivities(input: [CreateBrowserActivityInput!]!): [BrowserActivityType!]!
+  createCommunications(input: [CreateCommunicationInput!]!): [CommunicationType!]!
+  createConcept(input: CreateConceptInput!): CreateConceptPayload!
+  createConcepts(input: [CreateConceptInput!]!): [ConceptType!]!
+  createConnection(input: CreateConnectionInput!): CreateConnectionPayload!
+  createConnectionSyncJob(input: CreateConnectionSyncJobInput!): CreateConnectionSyncJobPayload!
+  createContent(input: CreateContentInput!): ContentType!
+  createContents(input: [CreateContentInput!]!): [ContentType!]!
+  createEvent(input: CreateEventInput!): EventType!
+  createEvents(input: [CreateEventInput!]!): [EventType!]!
+  createItem(input: CreateItemInput!): CreateItemPayload!
+  createNote(input: CreateNoteInput!): CreateNotePayload!
+  createNotes(input: [CreateNoteInput!]!): [NoteType!]!
+  createPeerLink(input: CreatePeerLinkInput!): PeerLinkPayload!
+  createPeople(input: [CreatePersonInput!]!): [PersonType!]!
+  createPerson(input: CreatePersonInput!): CreatePersonPayload!
+  createPlace(input: CreatePlaceInput!): PlaceType!
+  createPlaces(input: [CreatePlaceInput!]!): [PlaceType!]!
+  createProviderKey(input: CreateProviderKeyInput!): ProviderKeyType!
+  createQuestion(input: CreateQuestionInput!): QuestionType!
+  createQuestions(input: [CreateQuestionInput!]!): [QuestionType!]!
+  createRelationship(input: CreateRelationshipInput!): CreateRelationshipPayload!
+  createReminder(input: CreateReminderInput!): CreateReminderPayload!
+  createSavedSearch(input: CreateSavedSearchInput!): CreateSavedSearchPayload!
+  createTask(input: CreateTaskInput!): CreateTaskPayload!
+  createThings(input: [CreateThingInput!]!): [ItemType!]!
+  declineAsk(id: ID!): AskPayload!
+
+  """
+  Reject a candidate. reason: not_now | wrong_time | not_like_this | never
+  """
+  declineCandidate(id: ID!, reason: String = "not_now"): ScheduleCandidateType!
+
+  """Decline a proposed task (archives it)."""
+  declineProposedTask(id: ID!): TaskType
+
+  """Dismiss a pending automation change without applying it."""
+  declineTaskPendingChange(id: ID!): ResolveTaskPendingChangePayload!
+
+  """
+  Push a task to a later user-local date (`YYYY-MM-DD`) and count the push.
+  """
+  deferTask(id: ID!, until: String!): TaskType
+  deleteBrowserActivity(input: DeleteByIdInput!): DeleteByIdPayload!
+  deleteCommunication(input: DeleteByIdInput!): DeleteByIdPayload!
+  deleteConcept(input: DeleteByIdInput!): DeleteByIdPayload!
+  deleteConnection(input: DeleteByIdInput!): DeleteByIdPayload!
+  deleteConnectionSyncJob(input: DeleteByIdInput!): DeleteByIdPayload!
+  deleteContent(input: DeleteByIdInput!): DeleteByIdPayload!
+  deleteEvent(input: DeleteByIdInput!): DeleteByIdPayload!
+  deleteItem(input: DeleteByIdInput!): DeleteByIdPayload!
+  deleteNote(input: DeleteByIdInput!): DeleteByIdPayload!
+  deletePerson(input: DeleteByIdInput!): DeleteByIdPayload!
+  deletePlace(input: DeleteByIdInput!): DeleteByIdPayload!
+  deleteProviderKey(id: ID!): Boolean!
+  deleteRelationship(input: DeleteByIdInput!): DeleteByIdPayload!
+  deleteSavedSearch(input: DeleteByIdInput!): DeleteByIdPayload!
+  deleteTag(input: DeleteByIdInput!): DeleteByIdPayload!
+  deleteTask(input: DeleteByIdInput!): DeleteByIdPayload!
+
+  """Pin a branch so the eye hunts inside it"""
+  foragePin(branch: String!): ForageTrialType
+
+  """Rebuild the memory lake from people, places, events, and indexes"""
+  forageReset: ForageTrialType
+
+  """
+  Read the next lake item by expected free energy; may query indexes when the lake runs thin
+  """
+  forageSample: ForageTrialType
+
+  """
+  Name occupancy branches from memory via the LLM; falls back to occupancy labels on failure
+  """
+  guessBranchialForecast: BranchialTreeType
+  linkItemToProduct(input: LinkItemToProductInput!): UpdateItemPayload!
+
+  """Mark an action as dismissed"""
+  markActionAsDismissed(id: ID!): ActionType
+
+  """Mark an action as seen"""
+  markActionAsSeen(id: ID!): ActionType
+
+  """Mark a summary as dismissed"""
+  markSummaryAsDismissed(id: ID!): SummaryType
+
+  """Mark a summary as seen"""
+  markSummaryAsSeen(id: ID!): SummaryType
+  mergeItems(input: MergeItemsInput!): MergeItemsPayload!
+  mergePeople(input: MergePeopleInput!): MergePeoplePayload!
+  mergePlaces(input: MergePlacesInput!): MergePlacesPayload!
+  mergeProductModels(input: MergeProductModelsInput!): MergeProductModelsPayload!
+
+  """
+  Accept into Unscheduled: open if proposed, drop pending suggestions, remove any calendar block.
+  """
+  planTask(id: ID!): TaskType
+
+  """
+  Rebuild stay-point clusters and recency-decayed transitions for the current user
+  """
+  rebuildPlaces: String!
+
+  """
+  Recompute and upsert a trailing window of daily metrics for the signed-in user.
+  """
+  refreshDailyMetrics(days: Int, timezone: String): [DailyMetricsType!]!
+
+  """
+  Mark a suggested duplicate group as distinct things, so it is never re-proposed
+  """
+  rejectItemDuplicates(itemIds: [ID!]!): Boolean!
+  rejectObservation(id: ID!): ObjectObservationType
+
+  """
+  Mark a suggested duplicate group as distinct people, so it is never re-proposed
+  """
+  rejectPersonDuplicates(personIds: [ID!]!): Boolean!
+
+  """
+  Mark a suggested duplicate group as distinct places, so it is never re-proposed
+  """
+  rejectPlaceDuplicates(placeIds: [ID!]!): Boolean!
+  removeAnswer(id: ID!): Boolean!
+  removeContent(id: ID!): Boolean!
+  removeEvent(id: ID!): Boolean!
+  removeItemIdentifier(input: RemoveItemIdentifierInput!): [ObjectIdentifierType!]!
+  removePersonIdentifier(input: RemovePersonIdentifierInput!): [PersonIdentifierType!]!
+  removePlace(id: ID!): Boolean!
+  removeQuestion(id: ID!): Boolean!
+
+  """Move a completed task back to open."""
+  reopenTask(id: ID!): TaskType
+
+  """
+  Move an event to a new time, keeping its duration. Externally-sourced events are moved locally only and marked pending — the change is not pushed to the source calendar.
+  """
+  rescheduleEvent(endTime: DateTime, id: ID!, startTime: DateTime!): EventType
+  restoreEvent(input: RestoreByIdInput!): EventType
+
+  """Return a placed event to the slate, deleting the event it minted"""
+  returnEventToSlate(eventId: ID!): ScheduleCandidateType!
+  revokeAskGrant(id: ID!): AskGrantPayload!
+  revokePeerLink(id: ID!): PeerLinkPayload!
+  runAsk(disclosureForm: AnswerForm, id: ID!, redactItemIds: [String!]): RunAskPayload!
+
+  """
+  Place an open task into the next free workday gap as a planned calendar block. The click is consent — trust dial does not re-ask.
+  """
+  scheduleTask(
+    """Owner-local YYYY-MM-DD to prefer."""
+    date: String
+
+    """
+    Paired with `startTime`. Omit to keep the task’s own estimate (or the existing block’s duration, if moving one).
+    """
+    endTime: DateTime
+    estimatedMinutes: Int
+    id: ID!
+
+    """
+    An exact instant to place at — a calendar drop, not a "put this somewhere" click. When given, the gap solver is bypassed entirely and `date` is ignored.
+    """
+    startTime: DateTime
+  ): ScheduleTaskPayload!
+  sendPeerAsk(input: SendPeerAskInput!): SendPeerAskPayload!
+  setCategoryDirectionEnabled(input: SetCategoryDirectionEnabledInput!): Boolean!
+  setEntityCategories(input: SetEntityCategoriesInput!): [TagType!]!
+  setHouseholdTier(input: SetHouseholdTierInput!): HouseholdTierType!
+  setSavedSearchSharing(input: SetSavedSearchSharingInput!): UpdateSavedSearchPayload!
+  setTagCategories(input: SetTagCategoriesInput!): SetTagGroupingPayload!
+  setTagDirections(input: SetTagDirectionsInput!): SetTagGroupingPayload!
+  setTagKind(input: SetTagKindInput!): SetTagKindPayload!
+
+  """Defer a candidate until a future instant"""
+  snoozeCandidate(id: ID!, until: DateTime!): ScheduleCandidateType!
+
+  """Register (or re-point) a browser Web Push endpoint."""
+  subscribeToPush(input: PushSubscriptionInput!): Boolean!
+
+  """
+  Refresh the slate from current actions and insight key_actions. Idempotent; returns rows written.
+  """
+  syncScheduleSuggestions: Int!
+  tagEntities(input: TagEntitiesInput!): [TaggableEntityType!]!
+
+  """Manually trigger the HBPE pipeline for the current user"""
+  triggerHbpe: String!
+
+  """Remove the planned block for this task and clear scheduledFor."""
+  unscheduleTask(id: ID!): TaskType
+
+  """Remove a browser Web Push endpoint."""
+  unsubscribeFromPush(endpoint: String!): Boolean!
+  untagEntities(input: TagEntitiesInput!): [TaggableEntityType!]!
+  updateAnswer(input: UpdateAnswerInput!): AnswerType
+  updateAskGrant(id: ID!, input: UpdateAskGrantInput!): AskGrantPayload!
+  updateBrowserActivity(input: UpdateBrowserActivityInput!): BrowserActivityType
+  updateCommunication(input: UpdateCommunicationInput!): CommunicationType
+  updateConcept(input: UpdateConceptInput!): UpdateConceptPayload!
+  updateConnection(input: UpdateConnectionInput!): UpdateConnectionPayload!
+  updateConnectionSyncJob(input: UpdateConnectionSyncJobInput!): UpdateConnectionSyncJobPayload!
+  updateContent(input: UpdateContentInput!): ContentType
+  updateCurrentUser(input: UpdateCurrentUserInput!): UserType
+  updateEvent(input: UpdateEventInput!): EventType
+  updateFile(input: UpdateFileInput!): FileType
+  updateItem(input: UpdateItemInput!): UpdateItemPayload!
+  updateKnownPlace(input: UpdateKnownPlaceInput!): KnownPlaceType!
+  updateNote(input: UpdateNoteInput!): UpdateNotePayload!
+  updatePeerLink(input: UpdatePeerLinkInput!): PeerLinkPayload!
+  updatePerson(input: UpdatePersonInput!): UpdatePersonPayload!
+  updatePlace(input: UpdatePlaceInput!): PlaceType
+  updateProviderKey(id: ID!, input: UpdateProviderKeyInput!): ProviderKeyType
+  updateQuestion(input: UpdateQuestionInput!): QuestionType
+  updateRelationship(input: UpdateRelationshipInput!): UpdateRelationshipPayload!
+  updateSavedSearch(input: UpdateSavedSearchInput!): UpdateSavedSearchPayload!
+  updateTag(input: UpdateTagInput!): UpdateTagPayload!
+  updateTask(input: UpdateTaskInput!): UpdateTaskPayload!
+}
+
+interface Node {
+  id: ID!
+}
+
+type NoteConnection implements Connection {
+  edges: [NoteEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type NoteEdge implements Edge {
+  cursor: String!
+  node: NoteType!
+}
+
+type NoteType implements Node & Taggable {
+  content: String
+  createdAt: DateTime!
+  id: ID!
+  tags: [EntityTagType!]!
+  title: String
+  updatedAt: DateTime!
+}
+
+type ObjectByIdentifierPayload {
+  """Confidence in the CLAIM that was matched."""
+  confidence: Float
+  item: ItemType
+  matched: Boolean!
+
+  """
+  The namespace the value normalized into — not always the one asked for.
+  """
+  namespace: ObjectIdentifierNamespace
+  product: ProductModelType
+  subjectType: ObjectIdentifierSubjectType
+  value: String
+}
+
+"""
+What kind of code an identifier is. gtin/isbn/asin/imei/vin are globally unique; the rest are unique only within a scope.
+"""
+enum ObjectIdentifierNamespace {
+  ASIN
+  CUSTOM
+  GTIN
+  IMEI
+  ISBN
+  MPN
+  ORDER_ID
+  QR
+  RFID
+  SERIAL
+  SKU
+  VIN
+}
+
+input ObjectIdentifierScopeInput {
+  brand: String
+  sourceSystem: String
+}
+
+"""
+Whether a claim identifies a catalog MODEL (every unit shares a GTIN) or one owned INSTANCE (a serial).
+"""
+enum ObjectIdentifierSubjectType {
+  OBJECT_INSTANCE
+  PRODUCT_MODEL
+}
+
+type ObjectIdentifierType {
+  confidence: Float!
+  createdAt: DateTime!
+  isPrimary: Boolean!
+  namespace: ObjectIdentifierNamespace!
+  qualifier: String!
+  rawValue: String
+  source: String
+  value: String!
+}
+
+type ObjectMergeCountsType {
+  identifiers: Int!
+  objectParent: Int!
+  objectRelated: Int!
+  observations: Int!
+  receiptLineItems: Int!
+  searchRowsDeleted: Int!
+  tagLinksMoved: Int!
+}
+
+type ObjectObservationType implements Node {
+  attributes: JSON!
+  bbox: BoundingBoxType
+
+  """A human confirmed this link. Written only by confirmObservation."""
+  confirmedByUser: Boolean!
+  contentId: ID
+  createdAt: DateTime!
+  cropContentId: ID
+
+  """How sure the detector was it saw something."""
+  detectionConfidence: Float
+  detector: String
+  detectorVersion: String
+  eventId: ID
+  fileId: ID
+  id: ID!
+  label: String!
+  labelSource: ObservationLabelSource
+
+  """
+  The cropped thumbnail of the sighting, or the whole frame when there is no crop.
+  """
+  media: ContentType
+  metadata: JSON!
+  observedAt: DateTime!
+  place: PlaceType
+  placeEntityId: ID
+
+  """How sure the ladder was about the link."""
+  resolutionConfidence: Float
+  resolutionMethod: ObservationResolutionMethod!
+  resolvedObjectId: ID
+  resolvedProductId: ID
+  sourceKind: ObservationSourceKind!
+  updatedAt: DateTime!
+}
+
+"""What produced the label."""
+enum ObservationLabelSource {
+  CLIP
+  IMPORT
+  OLLAMA_VISION
+  USER
+  YOLO
+}
+
+"""
+Which rung of the resolution ladder linked the sighting to an owned unit.
+"""
+enum ObservationResolutionMethod {
+  EMBEDDING
+  IDENTIFIER
+  LABEL
+  NONE
+  PLACE_PRIOR
+  USER
+}
+
+"""What kind of frame the sighting came from."""
+enum ObservationSourceKind {
+  LIVE_CAMERA
+  MANUAL
+  PHOTO
+  SCREENSHOT
+  VIDEO_FRAME
+}
+
+type PageInfo {
+  endCursor: String
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+}
+
+type PeerLinkPayload {
+  peerLink: PeerLinkType
+  success: Boolean!
+}
+
+enum PeerLinkStatus {
+  active
+  pending
+  revoked
+}
+
+type PeerLinkType {
+  avatarUrl: String
+  createdAt: DateTime!
+  displayName: String
+  id: ID!
+  memoryEndpoint: String!
+  peerHandle: String!
+  personEntityId: ID
+  revokedAt: DateTime
+  status: PeerLinkStatus!
+  trustTier: PeerTrustTier!
+  updatedAt: DateTime!
+}
+
+enum PeerTrustTier {
+  family
+  peer
+  stranger
+  trusted
+}
+
+input PersonAddressInput {
+  city: String
+  country: String
+  isPrimary: Boolean
+  label: String
+  postalCode: String
+  region: String
+  streetAddress: String
+  streetAddress2: String
+}
+
+type PersonAddressType {
+  city: String
+  country: String
+  formatted: String
+  isPrimary: Boolean!
+  label: String
+  postalCode: String
+  region: String
+  streetAddress: String
+  streetAddress2: String
+}
+
+type PersonConnection implements Connection {
+  edges: [PersonEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+input PersonContactInput {
+  isPrimary: Boolean
+  kind: String!
+  label: String
+  value: String!
+}
+
+type PersonDuplicateGroupType {
+  people: [PersonType!]!
+  reason: String!
+  totalPeople: Int!
+  value: String!
+}
+
+type PersonDuplicatesPayload {
+  groups: [PersonDuplicateGroupType!]!
+  hasMore: Boolean!
+  totalCount: Int!
+}
+
+type PersonEdge implements Edge {
+  cursor: String!
+  node: PersonType!
+}
+
+type PersonIdentifierType {
+  isPrimary: Boolean!
+  kind: String!
+  label: String
+  rawValue: String
+  source: String
+  value: String!
+  verifiedAt: DateTime
+}
+
+type PersonInteractionStatsType {
+  communicationCount: Int!
+  eventCount: Int!
+  lastInteractionAt: DateTime
+}
+
+type PersonType implements Node & Taggable {
+  address: String
+  addresses: [PersonAddressType!]!
+  appearedAt: DateTime
+  avatarUrl: String
+  birthDate: String
+  city: String
+  country: String
+  department: String
+  description: String
+  firstName: String
+  gender: String
+  id: ID!
+  identifiers: [PersonIdentifierType!]!
+  incomingRelationships(limit: Int): [RelationshipType!]
+  interactionStats: PersonInteractionStatsType!
+  isSelf: Boolean!
+  jobTitle: String
+  lastName: String
+  middleName: String
+  name: String
+  nickname: String
+  organization: String
+  outgoingRelationships(limit: Int): [RelationshipType!]
+  postalCode: String
+  pronouns: String
+  region: String
+  streetAddress: String
+  streetAddress2: String
+  tags: [EntityTagType!]!
+  website: String
+}
+
+type PlaceConnection implements Connection {
+  edges: [PlaceEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type PlaceDuplicateGroupType {
+  places: [PlaceType!]!
+  reason: PlaceDuplicateReason!
+  totalPlaces: Int!
+  value: String!
+}
+
+"""
+What a duplicate place group collapsed on: the same provider place id, or the same name within 150 m.
+"""
+enum PlaceDuplicateReason {
+  NAME_PROXIMITY
+  PLACE_ID
+}
+
+type PlaceDuplicatesPayload {
+  groups: [PlaceDuplicateGroupType!]!
+  hasMore: Boolean!
+  totalCount: Int!
+}
+
+type PlaceEdge implements Edge {
+  cursor: String!
+  node: PlaceType!
+}
+
+"""
+A likely next place from the stay-point transition model (recency-decayed, hour/dow backoff)
+"""
+type PlaceForecastItemType {
+  backoffLevel: String
+  clusterId: String
+  label: String
+  lastSeen: String
+  lat: Float!
+  lng: Float!
+  probability: Float!
+  share: Float!
+  visits: Int!
+}
+
+type PlaceMergeCountsType {
+  childPlaces: Int!
+  events: Int!
+  identifiers: Int!
+  objects: Int!
+  observations: Int!
+  positions: Int!
+  receipts: Int!
+  relationshipsDropped: Int!
+  relationshipsFrom: Int!
+  relationshipsTo: Int!
+  searchRowsDeleted: Int!
+  tagLinksMoved: Int!
+}
+
+type PlaceNearType {
+  distanceMeters: Float!
+  place: PlaceType!
+}
+
+type PlaceType implements Node & Taggable {
+  appearedAt: DateTime
+  boundary: JSON
+  description: String
+  entityType: String!
+  estimated: Boolean
+  geoFormat: String
+  geolocation: JSON
+  id: ID!
+  incomingRelationships(limit: Int): [RelationshipType!]
+  latitude: Float
+  locationBoundary: JSON
+  longitude: Float
+  name: String
+  outgoingRelationships(limit: Int): [RelationshipType!]
+  parent: PlaceType
+  parentId: ID
+  placeKind: String
+  properties: JSON!
+  tags: [EntityTagType!]!
+  tracked: Boolean
+  type: String
+  uploaded: Boolean
+  visitStats: PlaceVisitStatsType!
+}
+
+type PlaceVisitStatsType {
+  firstVisitAt: DateTime
+  lastVisitAt: DateTime
+  status: String!
+  visitCount: Int!
+}
+
+type PositionPointType {
+  activityType: String
+  cursor: String!
+  endTime: DateTime!
+  fixCount: Int!
+  latitude: Float!
+  longitude: Float!
+  startTime: DateTime!
+}
+
+type PositionTrackExtentType {
+  count: Int!
+  end: DateTime!
+  start: DateTime!
+}
+
+input PositionTrackInput {
+  after: String
+  bbox: [Float!]
+  endTime: String
+  first: Int
+  maxPoints: Int
+  startTime: String
+}
+
+type PositionTrackType {
+  bucketSeconds: Int
+  endCursor: String
+  hasNextPage: Boolean!
+  points: [PositionPointType!]!
+  totalCount: Int
+}
+
+"""
+Forecast self-consistency against Qwen-derived behavior labels — not ground-truth accuracy.
+"""
+type PredictionCalibrationType {
+  basis: String!
+  history: [CalibrationScoreType!]!
+  latest: CalibrationScoreType
+}
+
+"""A single label→probability entry from the HBPE histogram"""
+type ProbabilityEntryType {
+  label: String!
+  probability: Float!
+}
+
+type ProductMergeCountsType {
+  identifiers: Int!
+  objectProduct: Int!
+  observations: Int!
+  receiptLineItems: Int!
+}
+
+type ProductModelConnection implements Connection {
+  edges: [ProductModelEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type ProductModelEdge implements Edge {
+  cursor: String!
+  node: ProductModelType!
+}
+
+type ProductModelType implements Node & Taggable {
+  brand: String
+  category: String
+  createdAt: DateTime!
+  currency: String
+  description: String
+  id: ID!
+  identifiers: [ObjectIdentifierType!]!
+
+  """
+  How sure we are this model is a real, distinct product. 1.0 = asserted by a human or a catalog; lower = derived from a receipt line or a vision guess.
+  """
+  identityConfidence: Float!
+  image: ContentType
+
+  """ci.content row holding the catalog image."""
+  imageContentId: ID
+  isDigital: Boolean!
+
+  """ci.content rows holding manuals."""
+  manualContentIds: [ID!]
+  manufacturer: String
+  metadata: JSON!
+  modelNumber: String
+
+  """Manufacturer list price in integer MINOR units of `currency`."""
+  msrpMinor: Int
+
+  """The ci.entities node mirroring this model."""
+  productEntityId: ID
+  productType: String
+  sourceId: String
+  sourceSystem: String
+  sourceType: String
+
+  """Descriptive specifications."""
+  spec: JSON!
+  subcategory: String
+  tags: [EntityTagType!]!
+  title: String!
+  updatedAt: DateTime!
+
+  """Variant AXES only ({color, capacity, size}) — never descriptive specs."""
+  variantAttributes: JSON!
+}
+
+type ProviderConnection implements Connection {
+  edges: [ProviderEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type ProviderEdge implements Edge {
+  cursor: String!
+  node: ProviderType!
+}
+
+type ProviderEndpointType {
+  TTL: Float
+  description: String!
+  iterationType: String!
+  name: String!
+}
+
+type ProviderKeyType implements Node {
+  clientId: String!
+  clientSecretHint: String
+  createdAt: DateTime!
+  hasClientSecret: Boolean!
+  id: ID!
+  providerId: ID!
+  updatedAt: DateTime!
+  userId: ID!
+}
+
+type ProviderThemeType {
+  backgroundColor: String
+  borderColor: String
+}
+
+type ProviderType implements Node {
+  appSetupUrl: String
+  authType: String
+  description: String
+  endpoints: [ProviderEndpointType!]!
+  id: ID!
+  localOnly: Boolean!
+  logoUrl: String
+  name: String
+  openidKeyLink: String
+  providerKeys: ProviderKeyType
+  scopes: [String!]
+  theme: ProviderThemeType
+}
+
+input PushSubscriptionInput {
+  """PushSubscription.getKey("auth"), base64url-encoded."""
+  auth: String!
+  endpoint: String!
+
+  """PushSubscription.getKey("p256dh"), base64url-encoded."""
+  p256dh: String!
+  userAgent: String
+}
+
+type Query {
+  action(id: ID!): ActionType
+  actions(after: String, before: String, first: Int, last: Int): ActionConnection!
+
+  """
+  Precomputed activity counts per local calendar day, with day boundaries in the user profile timezone. Eventually consistent: refreshed from the source tables every 15 minutes. When filters are supplied, counts reflect the same Memory explorer constraints as the search results.
+  """
+  activityTimeline(
+    """Inclusive last day, yyyy-MM-dd"""
+    end: String!
+
+    """
+    Optional Memory explorer filters (entity types, tags, who/where/how, search query)
+    """
+    filters: ActivityTimelineFiltersInput
+
+    """Inclusive first day, yyyy-MM-dd"""
+    start: String!
+  ): [ActivityBucketType!]!
+  answer(id: ID!): AnswerType
+  answers(after: String, before: String, first: Int, last: Int): AnswerConnection!
+  ask(id: ID!): AskType
+  askAnswer(id: ID!): AskAnswerType
+  askDisclosureHistory(input: AskDisclosureHistoryInput): AskDisclosureHistoryPayload!
+  askDisclosureSummary(input: AskDisclosureSummaryInput): AskDisclosureSummaryPayload!
+  askGrant(id: ID!): AskGrantType
+  askInbox: [AskType!]!
+  askOutbox: [AskType!]!
+
+  """
+  Occupancy spine: remaining dayparts and week-ahead days as a walkable tree
+  """
+  branchialForecast: BranchialTreeType
+  browserActivities(after: String, before: String, first: Int, last: Int): BrowserActivityConnection!
+  browserActivity(id: ID!): BrowserActivityType
+
+  """
+  Answers catalog questions of one analytic type (descriptive, correlational, anomaly, optimization, predictive).
+  """
+  catalogAnswers(analyticType: String!, date: String): [DescriptiveAnswerType!]!
+  communication(id: ID!): CommunicationType
+  communications(after: String, before: String, first: Int, last: Int): CommunicationConnection!
+  concept(id: ID!): ConceptType
+  concepts(after: String, before: String, first: Int, last: Int): ConceptConnection!
+  connection(id: ID!): ConnectionType
+  connectionSyncJob(id: ID!): ConnectionSyncJobType
+  connectionSyncJobs(after: String, before: String, connectionId: ID, endpointName: String, first: Int, last: Int, type: String): ConnectionSyncJobConnection!
+  connections(after: String, before: String, first: Int, last: Int): ConnectionConnection!
+  content(id: ID!): ContentType
+
+  """
+  The distinct type / mimetype / source values the content library can filter by.
+  """
+  contentFacets: ContentFacets!
+  contents(
+    after: String
+    before: String
+
+    """
+    Keep only rows delivered by these platforms (the values `contentFacets.sourceSystems` offers) — the same How filter the explorer takes.
+    """
+    connectors: [String!]
+    first: Int
+    last: Int
+
+    """Keep only these mimetypes."""
+    mimetypes: [String!]
+
+    """
+    Substring of the title, text or URL — the header search box on /memory/content.
+    """
+    query: String
+
+    """Keep only these `type` values."""
+    types: [String!]
+  ): ContentConnection!
+
+  """
+  Precomputed daily feature-store rows for the signed-in user over an inclusive yyyy-MM-dd range.
+  """
+  dailyMetrics(
+    """Inclusive first day, yyyy-MM-dd"""
+    from: String!
+
+    """Inclusive last day, yyyy-MM-dd"""
+    to: String!
+  ): [DailyMetricsType!]!
+
+  """
+  Events deleted by deleteEvent and not yet restored — the handle restoreEvent needs. Newest first.
+  """
+  deletedEvents(after: String, before: String, first: Int, last: Int): EventConnection!
+
+  """Answers every catalog question from stored daily_metrics."""
+  descriptiveAnswers(date: String): [DescriptiveAnswerType!]!
+
+  """The question catalog the compute-then-narrate engine can answer."""
+  descriptiveQuestions(analyticType: String): [DescriptiveQuestionType!]!
+
+  """
+  Fetch HBPE renewal predictions: periodic behaviors coming due or overdue
+  """
+  dueForecast: DueForecastType
+  entityCategories(entityId: ID!): [TagType!]!
+  event(id: ID!): EventType
+
+  """
+  Distinct data sources / connectors (event.source_system) present for the user.
+  """
+  eventSources: [String!]!
+
+  """Distinct event types ("how things happened") present for the user."""
+  eventTypes: [String!]!
+  events(after: String, before: String, first: Int, last: Int): EventConnection!
+
+  """
+  Events overlapping [from, to) — calendar read path. Excludes cancelled/no-show; keeps tentative. Allowlisted types: calendar_event, meeting, appointment, planned_block, plus events with no event_type (user-created and accepted suggestions).
+  """
+  eventsInRange(from: DateTime!, to: DateTime!): [EventType!]!
+
+  """Get actions for the feed, prioritizing unseen actions"""
+  feedActions(limit: Int! = 5): [ActionType!]!
+  file(id: ID!): FileType
+  files(after: String, before: String, first: Int, last: Int): FileConnection!
+
+  """
+  CI Forager over the user memory lake: people, places, events, search indexes, and derived forecasts
+  """
+  forage: ForageTrialType
+
+  """Fetch the HBPE day-ahead forecast histogram"""
+  forecast(horizon: String = "24h"): ForecastType
+
+  """Past forecast-vs-actual buckets from hbpe.prediction_log"""
+  forecastHistory(days: Int = 5): [ForecastHistoryDayType!]!
+  geocode(query: String!): GeocodeResultType!
+  geocodingConfigured: Boolean!
+
+  """
+  User knowledge graph (entities + relationships). Preferred over REST /api/graph/*.
+  """
+  graph(entityType: String, limit: Int = 200): GraphType!
+  item(id: ID!): ItemType
+  itemDuplicates(limit: Int, offset: Int): ItemDuplicatesPayload!
+  items(
+    after: String
+    before: String
+    brand: String
+    category: String
+    condition: ItemCondition
+    first: Int
+
+    """Only things that do (or do not) carry a barcode, serial or other code."""
+    hasIdentifier: Boolean
+    last: Int
+    lifecycleState: ItemLifecycleState
+
+    """Substring of name, description, brand, model or category."""
+    query: String
+    sort: ItemSortOrder
+  ): ItemConnection!
+  knownPlaceCandidates: [KnownPlaceCandidateType!]!
+  knownPlaces(kind: String): [KnownPlaceType!]!
+
+  """
+  Located events as map markers for the given filters. Events-only and located-only; returns the whole matching set in one read (capped at 20000 pins), not a page.
+  """
+  mapPins(input: SearchInput!, limit: Int): MapPinsType!
+  me: UserType
+  mergeCandidates(after: String, first: Int, status: String): MergeCandidateConnection!
+
+  """
+  Computed metric and behavioral anomalies. Not the free-text list inside summaries.
+  """
+  metricAnomalies(metric: String, since: String): [MetricAnomalyType!]!
+
+  """
+  Pairwise / lagged associations. Hypotheses ("associated with"), never causes.
+  """
+  metricCorrelations(robustOnly: Boolean, windowDays: Int): [MetricCorrelationType!]!
+
+  """1–7 day seasonal-naive + EWMA forecast of daily-metrics scalars"""
+  metricForecast(days: Int = 3): [MetricForecastType!]!
+
+  """
+  Evidence-linked suggestions. Findings persist even when derivation.engines is off.
+  """
+  metricSuggestions(includeDismissed: Boolean): [MetricSuggestionType!]!
+  myAskBroadcasts: [AskBroadcastType!]!
+  myAskGrantHistory: [AskGrantType!]!
+  myAskGrants: [AskGrantType!]!
+  myHouseholdTiers: [HouseholdTierType!]!
+  myPeerLinks: [PeerLinkType!]!
+  node(id: ID!): Node
+  note(id: ID!): NoteType
+  notes(after: String, before: String, first: Int, last: Int): NoteConnection!
+  oAuthCallbackUrl: String!
+  objectByIdentifier(brand: String, namespace: ObjectIdentifierNamespace!, sourceSystem: String, value: String!): ObjectByIdentifierPayload!
+  peerLink(id: ID!): PeerLinkType
+  people(after: String, before: String, first: Int, last: Int, query: String): PersonConnection!
+  person(id: ID!): PersonType
+  personDuplicates(limit: Int, offset: Int, reasons: [String!]): PersonDuplicatesPayload!
+  place(id: ID!): PlaceType
+  placeDuplicates(limit: Int, offset: Int): PlaceDuplicatesPayload!
+
+  """
+  Likely next places from the stay-point transition model (recency-decayed, hour/dow backoff)
+  """
+  placeForecast(horizonHours: Int = 4, k: Int = 5): [PlaceForecastItemType!]!
+  places(after: String, before: String, first: Int, last: Int, query: String): PlaceConnection!
+  placesContaining(latitude: Float!, limit: Int, longitude: Float!): [PlaceType!]!
+  placesNear(latitude: Float!, limit: Int, longitude: Float!, radiusMeters: Float): [PlaceNearType!]!
+
+  """
+  Planned blocks (`event_type = planned_block`) overlapping [from, to). SQL-pushdown, not the explorer events() feed.
+  """
+  plannedBlocks(from: DateTime!, to: DateTime!): [EventType!]!
+
+  """
+  The signed-in user's location history (ci.position) as a downsampled, keyset-paged trace for the map. Filtered by viewport bounding box and time range.
+  """
+  positionTrack(input: PositionTrackInput): PositionTrackType!
+
+  """
+  The signed-in user's whole ci.position history (first fix, last fix, count), unpaged.
+  """
+  positionTrackExtent(input: PositionTrackInput): PositionTrackExtentType
+
+  """Forecast self-consistency scores (not ground-truth accuracy)"""
+  predictionCalibration(limit: Int = 14): PredictionCalibrationType
+  productModel(id: ID!): ProductModelType
+  productModels(
+    after: String
+    brand: String
+    category: String
+    first: Int
+    isDigital: Boolean
+    productType: String
+
+    """Case-insensitive substring of the title."""
+    query: String
+    subcategory: String
+  ): ProductModelConnection!
+  provider(id: ID!): ProviderType
+  providers(after: String, before: String, first: Int, last: Int): ProviderConnection!
+
+  """
+  The VAPID public key, base64url — null when push is not configured on this appliance.
+  """
+  pushPublicKey: String
+  question(id: ID!): QuestionType
+  questions(after: String, before: String, first: Int, last: Int): QuestionConnection!
+  receipt(id: ID!): ReceiptType
+  receipts(after: String, extractionState: ReceiptExtractionState, first: Int, merchantName: String, purchasedFrom: DateTime, purchasedTo: DateTime): ReceiptConnection!
+  relationship(id: ID!): RelationshipType
+  relationships(after: String, before: String, first: Int, last: Int): RelationshipConnection!
+
+  """Reminders not soft-cancelled, ordered by fireAt."""
+  reminders: [ReminderType!]!
+  reverseGeocode(latitude: Float!, longitude: Float!): ReverseGeocodeResultType!
+  savedSearch(id: ID!): SavedSearchType
+  savedSearches(after: String, before: String, first: Int, isSeed: Boolean, last: Int, query: String): SavedSearchConnection!
+
+  """Open schedule candidates whose plausible window overlaps [from, to)"""
+  scheduleCandidates(from: DateTime!, to: DateTime!): [ScheduleCandidateType!]!
+  search(input: SearchInput!): SearchResultConnection!
+  sharedSavedSearch(token: String!): SavedSearchType
+
+  """
+  Distinct data sources (source_system) present for the user across every browsed table — events, communications, content, browser activity, receipts, products and things. The How picker's option list; `eventSources` is the events-only subset. Takes the same includeTypes / excludeTypes pair as `search`, so the list is pared to the kinds a What selection has in play — a source no selected kind carries would select nothing.
+  """
+  sourceSystems(excludeTypes: [String!], includeTypes: [String!]): [String!]!
+  summaries(after: String, before: String, first: Int, last: Int): SummaryConnection!
+  summary(id: ID!): SummaryType
+  tag(id: ID!): TagType
+  tags(after: String, before: String, first: Int, last: Int): TagConnection!
+  task(id: ID!): TaskType
+
+  """Pending trust-dial confirmations for mutate/complete/revise/schedule."""
+  taskPendingChanges(taskId: ID): [TaskPendingChangeType!]!
+  tasks(
+    after: String
+    before: String
+    first: Int
+    last: Int
+
+    """
+    Only direct children of this task. Pass null (omit) for no parent filter.
+    """
+    parentId: ID
+
+    """User-local calendar date, `YYYY-MM-DD`."""
+    scheduledFor: String
+    status: [TaskStatus!]
+  ): TaskConnection!
+  thread(id: ID!): ThreadType
+  threads(after: String, before: String, first: Int, last: Int): ThreadConnection!
+  unresolvedObservations(limit: Int, offset: Int): [ObjectObservationType!]!
+
+  """
+  Fetch the HBPE week-horizon occurrence forecast (per-day cluster probabilities)
+  """
+  weekForecast(includeToday: Boolean = false): WeekForecastType
+}
+
+type QuestionConnection implements Connection {
+  edges: [QuestionEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type QuestionEdge implements Edge {
+  cursor: String!
+  node: QuestionType!
+}
+
+type QuestionType implements Node {
+  answerTier: String
+  category: String!
+  createdByLlm: Boolean
+  id: ID!
+  isSeedQuestion: Boolean
+  questionType: String
+  text: String!
+}
+
+"""Where a candidate came from — the "because" behind a suggestion"""
+type RationaleSourceType {
+  id: ID!
+
+  """summary | insight | answer | item | relationship | due | action"""
+  kind: String!
+  note: String
+}
+
+"""Where the purchase happened."""
+enum ReceiptChannel {
+  APP
+  IN_STORE
+  ONLINE
+  PHONE
+  UNKNOWN
+}
+
+type ReceiptConnection implements Connection {
+  edges: [ReceiptEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type ReceiptEdge implements Edge {
+  cursor: String!
+  node: ReceiptType!
+}
+
+"""How far structured extraction got on the receipt document."""
+enum ReceiptExtractionState {
+  EXTRACTED
+  FAILED
+  MANUAL
+  NOT_APPLICABLE
+  PENDING
+}
+
+type ReceiptLineItemType {
+  brand: String
+  category: String
+  createdAt: DateTime!
+  currency: String
+  description: String!
+  id: ID!
+
+  """
+  False for ebooks, subscriptions and gift cards. Only physical lines mint owned units.
+  """
+  isPhysical: Boolean!
+  lineNumber: Int!
+  metadata: JSON!
+  mintedObjectId: ID
+  modelNumber: String
+  productId: ID
+  quantity: Float!
+  receiptId: ID!
+
+  """Integer MINOR units of `currency`."""
+  totalPriceMinor: Int
+
+  """Integer MINOR units of `currency`."""
+  unitPriceMinor: Int
+  updatedAt: DateTime!
+}
+
+type ReceiptType implements Node & Taggable {
+  channel: ReceiptChannel
+  createdAt: DateTime!
+  currency: String
+
+  """Integer MINOR units of `currency`."""
+  discountMinor: Int
+  documentContentId: ID
+  eventId: ID
+  extractionConfidence: Float
+  extractionError: String
+  extractionModel: String
+  extractionState: ReceiptExtractionState!
+  id: ID!
+  lineItems: [ReceiptLineItemType!]!
+  merchantEntityId: ID
+  merchantName: String
+  metadata: JSON!
+  orderNumber: String
+
+  """Last four digits only. A full card number is never stored."""
+  paymentLast4: String
+  paymentMethod: String
+  placeEntityId: ID
+  purchasedAt: DateTime
+
+  """Integer MINOR units of `currency`."""
+  shippingMinor: Int
+  sourceFileId: ID
+  sourceId: String
+  sourceMessageId: String
+  sourceSystem: String
+  sourceType: String
+
+  """Integer MINOR units of `currency`."""
+  subtotalMinor: Int
+  tags: [EntityTagType!]!
+
+  """Integer MINOR units of `currency`."""
+  taxMinor: Int
+
+  """Integer MINOR units of `currency`."""
+  tipMinor: Int
+
+  """Integer MINOR units of `currency`."""
+  totalMinor: Int
+  updatedAt: DateTime!
+}
+
+type RelationshipConnection implements Connection {
+  edges: [RelationshipEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type RelationshipEdge implements Edge {
+  cursor: String!
+  node: RelationshipType!
+}
+
+type RelationshipType implements Node {
+  endDate: DateTime
+  fromNodeId: ID!
+  fromNodeType: String!
+  id: ID!
+  isBidirectional: Boolean!
+  properties: JSON
+  startDate: DateTime
+  strength: Float
+  toNodeId: ID!
+  toNodeType: String!
+  type: String!
+}
+
+"""
+'auto' is reserved for a future due-date derivation engine; today every reminder is 'manual'.
+"""
+enum ReminderSource {
+  auto
+  manual
+}
+
+"""
+A reminder's claim state. Fired is terminal in this milestone — there is no snooze yet.
+"""
+enum ReminderStatus {
+  cancelled
+  fired
+  pending
+}
+
+type ReminderType implements Node {
+  """A planned block — a `ci.events` row."""
+  blockId: ID
+  createdAt: DateTime!
+  fireAt: DateTime!
+  firedAt: DateTime
+  id: ID!
+  source: ReminderSource!
+  status: ReminderStatus!
+  taskId: ID
+}
+
+input RemoveItemIdentifierInput {
+  itemId: ID!
+  namespace: ObjectIdentifierNamespace!
+  scope: ObjectIdentifierScopeInput
+  value: String!
+}
+
+input RemovePersonIdentifierInput {
+  kind: String!
+  personId: ID!
+  value: String!
+}
+
+type ResolveTaskPendingChangePayload {
+  change: TaskPendingChangeType
+  success: Boolean!
+  task: TaskType
+}
+
+input RestoreByIdInput {
+  id: String!
+}
+
+type ReverseGeocodeResultType {
+  placeName: String
+  status: String!
+}
+
+type RunAskPayload {
+  answer: AskAnswerType
+  ask: AskType
+  disclosedCount: Int
+  success: Boolean!
+  withheldCount: Int
+}
+
+type SavedSearchConnection implements Connection {
+  edges: [SavedSearchEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type SavedSearchEdge implements Edge {
+  cursor: String!
+  node: SavedSearchType!
+}
+
+input SavedSearchFiltersInput {
+  areas: [[Float!]!]
+  bbox: [Float!]
+  connectors: [String!]
+  datePreset: String
+  direction: String
+  endTime: String
+  eventTypes: [String!]
+  fileKinds: [String!]
+  hasLocation: Boolean
+  people: [String!]
+  places: [String!]
+  semantic: Boolean
+  sortBy: String
+  sortOrder: String
+  startTime: String
+  view: String
+}
+
+type SavedSearchFiltersType {
+  areas: [[Float!]!]
+  bbox: [Float!]
+  connectors: [String!]
+  datePreset: String
+  direction: String
+  endTime: String
+  eventTypes: [String!]
+  fileKinds: [String!]
+  hasLocation: Boolean
+  people: [String!]
+  places: [String!]
+  semantic: Boolean
+  sortBy: String
+  sortOrder: String
+  startTime: String
+  view: String
+}
+
+type SavedSearchType implements Node {
+  createdAt: DateTime!
+  description: String
+  entityTypes: [String!]
+  filters: SavedSearchFiltersType
+  id: ID!
+  isPublic: Boolean!
+  isSeed: Boolean!
+  name: String
+  query: String
+  shareExpiresAt: DateTime
+  shareMaxDisclosure: String
+  shareToken: String
+  tags: [String!]
+  updatedAt: DateTime!
+}
+
+"""A proposed activity — the "possible" layer of the schedule"""
+type ScheduleCandidateType {
+  confidence: Float
+  description: String
+  durationMinutes: Int
+  energyCost: Int
+
+  """Best-slot score; null until the solver runs"""
+  fitScore: Float
+  generator: String
+  id: ID!
+  l0Class: String
+
+  """
+  Saved how-you'd-do-it compose for this card, when the user has personalized it
+  """
+  personalization: JSON
+
+  """The sentence shown to the user. Never empty."""
+  rationale: String!
+  rationaleSources: [RationaleSourceType!]!
+  status: String!
+
+  """exact | day | week | month | season"""
+  timeFlex: String!
+  title: String!
+  windowEnd: DateTime!
+  windowStart: DateTime!
+}
+
+type ScheduleTaskPayload {
+  event: EventType
+
+  """placed | proposed | already_placed | no_gap | skipped"""
+  status: String
+  success: Boolean!
+  task: TaskType
+}
+
+input SearchInput {
+  after: String
+  areas: [[Float!]!]
+  bbox: [Float!]
+  connectors: [String!]
+  direction: String
+  endTime: String
+  eventTypes: [String!]
+  excludeTypes: [String!]
+  fileKinds: [String!]
+  first: Int
+  hasLocation: Boolean
+  includeFiles: Boolean
+  includeTypes: [String!]
+  people: [String!]
+  places: [String!]
+  query: String
+  semantic: Boolean
+  shareToken: String
+  sortBy: String
+  sortOrder: String
+  startTime: String
+  tags: [String!]
+}
+
+type SearchResultConnection {
+  edges: [SearchResultEdge!]!
+  matchingTags: [TagType!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type SearchResultEdge {
+  cursor: String!
+  node: SearchResultType!
+}
+
+union SearchResultType = ActionType | AnswerType | BrowserActivityType | CommunicationType | ConceptType | ContentType | EventType | FileChunkType | FileType | ItemType | NoteType | PersonType | PlaceType | ProductModelType | ReceiptType | TaskType | ThreadType
+
+input SendPeerAskInput {
+  archetype: String!
+  dataClass: String
+  from: String
+  handle: String!
+  minMinutes: Int
+  peerAccessToken: String!
+  prompt: String!
+  purpose: String
+  subject: String
+  to: String
+}
+
+type SendPeerAskPayload {
+  answer: AskAnswerType
+  ask: AskType
+  reason: String
+  status: String
+  success: Boolean!
+}
+
+input SetCategoryDirectionEnabledInput {
+  categoryId: ID!
+  directionId: ID!
+  enabled: Boolean!
+}
+
+input SetEntityCategoriesInput {
+  categoryIds: [ID!]!
+  entityId: ID!
+}
+
+input SetHouseholdTierInput {
+  memberId: ID!
+
+  """One of: household, family, trusted, peer, stranger"""
+  trustTier: String!
+}
+
+input SetSavedSearchSharingInput {
+  expiresAt: DateTime
+  id: ID!
+  isPublic: Boolean!
+  maxDisclosure: String
+}
+
+input SetTagCategoriesInput {
+  categoryIds: [ID!]!
+  id: ID!
+}
+
+input SetTagDirectionsInput {
+  directionIds: [ID!]!
+  id: ID!
+}
+
+type SetTagGroupingPayload {
+  success: Boolean!
+  tags: [TagType!]!
+}
+
+input SetTagKindInput {
+  id: ID!
+  kind: TagKind!
+}
+
+type SetTagKindPayload {
+  success: Boolean!
+  tag: TagType
+}
+
+type SummaryConnection implements Connection {
+  edges: [SummaryEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type SummaryEdge implements Edge {
+  cursor: String!
+  node: SummaryType!
+}
+
+type SummaryType implements Node {
+  activityCounts: ActivityCountsType!
+  anomalies: [String!]!
+  confidenceScore: Float
+  createdAt: DateTime!
+  dailyRhythm: [String!]
+  dismissed: Boolean!
+  id: ID!
+  insights: [InsightItemType!]!
+  keyAccomplishments: [String!]
+  keyInsights: [String!]!
+  moodIndicators: [String!]
+  notableEvents: [String!]!
+  periodEnd: DateTime!
+  periodStart: DateTime!
+  periodType: String!
+  productivityPatterns: [String!]
+  seen: Boolean!
+  socialInteractions: [String!]
+  sourceTypes: [String!]!
+  summaryText: String!
+  tags: [String!]!
+  timezone: String!
+  title: String
+  updatedAt: DateTime!
+}
+
+type TagConnection implements Connection {
+  edges: [TagEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type TagEdge implements Edge {
+  cursor: String!
+  node: TagType!
+}
+
+input TagEntitiesInput {
+  ids: [ID!]!
+  labels: [String!]!
+}
+
+"""
+The taxonomy LEVEL a tag sits at: a brand-set direction (Home/Work/Community), an intention grouped under directions, or a category grouped over intentions. Orthogonal to a tag application's level on EntityTagType, which is a per-entity dilution weight, not a taxonomy level.
+"""
+enum TagKind {
+  category
+  direction
+  intention
+}
+
+type TagType implements Node {
+  categories: [TagType!]!
+  description: String
+  directionOptOuts: [TagType!]!
+  directions: [TagType!]!
+  entities(after: String, before: String, first: Int, last: Int): TaggableEntityConnection!
+  entityCount: Int!
+  id: ID!
+  isBase: Boolean!
+  kind: TagKind
+  label: String!
+  muted: Boolean!
+}
+
+interface Taggable {
+  tags: [EntityTagType!]!
+}
+
+type TaggableEntityConnection {
+  edges: [TaggableEntityEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type TaggableEntityEdge {
+  cursor: String!
+  node: TaggableEntityType!
+}
+
+union TaggableEntityType = ActionType | BrowserActivityType | CommunicationType | ConceptType | ContentType | EventType | FileType | ItemType | NoteType | PersonType | PlaceType | ProductModelType | ReceiptType | TaskType | ThreadType
+
+type TaskConnection implements Connection {
+  edges: [TaskEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type TaskEdge implements Edge {
+  cursor: String!
+  node: TaskType!
+}
+
+"""What automation wants to do to a task (or its planned event)."""
+enum TaskPendingChangeKind {
+  complete
+  event_revise
+  mutate
+  schedule
+}
+
+enum TaskPendingChangeStatus {
+  accepted
+  declined
+  pending
+}
+
+type TaskPendingChangeType implements Node {
+  confidence: Float
+  createdAt: DateTime!
+  id: ID!
+  kind: TaskPendingChangeKind!
+  patch: JSON!
+  rationale: String
+  resolvedAt: DateTime
+  status: TaskPendingChangeStatus!
+  taskId: ID!
+}
+
+"""Lifecycle state of a planning task."""
+enum TaskStatus {
+  archived
+  delegated
+  done
+  in_progress
+  open
+  proposed
+  skipped
+}
+
+type TaskType implements Node & Taggable {
+  actualMinutes: Int!
+
+  """
+  Direct children. Nesting is parent_id only — walk this field for a tree.
+  """
+  children: [TaskType!]!
+  completedAt: DateTime
+  createdAt: DateTime!
+
+  """How many times this task has been pushed to a later day."""
+  deferCount: Int!
+
+  """
+  User-local calendar date, `YYYY-MM-DD`, before which the task stays hidden.
+  """
+  deferUntil: String
+  description: String
+
+  """Deadline, as an instant."""
+  dueAt: DateTime
+  estimatedMinutes: Int
+  id: ID!
+  notes: String
+
+  """Parent task, for subtasks."""
+  parentId: ID
+
+  """
+  True when a planned calendar block exists. `scheduledFor` alone is a preferred date, not a placement.
+  """
+  placedOnCalendar: Boolean!
+
+  """0 (highest) to 5 (lowest). Defaults to 3."""
+  priority: Int!
+
+  """User-local calendar date, `YYYY-MM-DD`. Not an instant."""
+  scheduledFor: String
+
+  """Where the task came from: `manual`, or an ingest source."""
+  sourceKind: String!
+  status: TaskStatus!
+  tags: [EntityTagType!]!
+
+  """
+  Wall-clock time of day, `HH:MM:SS`, in the user timezone. Zoneless by design.
+  """
+  taskTime: String
+  title: String!
+  updatedAt: DateTime!
+}
+
+type ThreadConnection implements Connection {
+  edges: [ThreadEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type ThreadEdge implements Edge {
+  cursor: String!
+  node: ThreadType!
+}
+
+type ThreadType implements Node & Taggable {
+  description: String
+  generationStatus: String!
+  id: ID!
+  messages(after: String, before: String, first: Int, last: Int): MessageConnection!
+  name: String
+  tags: [EntityTagType!]!
+}
+
+"""
+How the apps write a time of day. 'auto' leaves it to the device's language settings; 'h12' always writes 3:43 PM and 'h23' always writes 15:43.
+"""
+enum TimeFormat {
+  auto
+  h12
+  h23
+}
+
+type UnfurlType {
+  authorName: String
+  authorUrl: String
+  canonicalUrl: String
+  description: String
+  durationSeconds: Int
+  externalRef: String
+  fetchedAt: DateTime!
+  payload: JSON!
+  resolver: String!
+  siteName: String
+  status: String!
+  thumbnailUrl: String
+  title: String
+}
+
+input UpdateAnswerInput {
+  answer: String!
+  id: ID!
+}
+
+input UpdateAskGrantInput {
+  clearExpiry: Boolean
+  dataClass: String
+  dataClasses: [String!]
+  expiresAt: DateTime
+  maxDisclosure: DisclosureRung
+  mode: GrantMode
+  purpose: String
+}
+
+input UpdateBrowserActivityInput {
+  id: ID!
+  title: String
+  url: String
+}
+
+input UpdateCommunicationInput {
+  content: String
+  id: ID!
+  subject: String
+}
+
+input UpdateConceptInput {
+  description: String
+  id: String!
+  name: String!
+}
+
+type UpdateConceptPayload {
+  concept: ConceptType
+  success: Boolean!
+}
+
+input UpdateConnectionInput {
+  accessToken: String
+  active: Boolean
+  activeEndpoints: [String!]
+  id: ID!
+  name: String
+  needsReauth: Boolean
+  refreshToken: String
+  schedule: String
+  syncState: JSON
+  tokenExpiry: DateTime
+}
+
+type UpdateConnectionPayload {
+  connection: ConnectionType
+  success: Boolean!
+}
+
+input UpdateConnectionSyncJobInput {
+  completedAt: DateTime
+  endpointName: String
+  error: JSON
+  id: ID!
+  jobId: ID
+  properties: JSON
+  type: String
+}
+
+type UpdateConnectionSyncJobPayload {
+  connectionSyncJob: ConnectionSyncJobType
+  success: Boolean!
+}
+
+input UpdateContentInput {
+  externalId: String
+  id: ID!
+  mimetype: String
+  sourceData: JSON
+  sourceUrl: String
+  text: String
+  title: String
+  type: String
+  url: String
+}
+
+input UpdateCurrentUserInput {
+  timeFormat: TimeFormat
+  timezone: String
+}
+
+input UpdateEventInput {
+  category: String
+  confidenceScore: Float
+  description: String
+  durationMinutes: Int
+  endTime: DateTime
+  eventType: String
+  id: ID!
+  isAllDay: Boolean
+
+  """
+  CI-Planning's manually-locked-block flag; settable/readable only, not yet enforced.
+  """
+  isLocked: Boolean
+  isRecurring: Boolean
+  locationCoordinates: JSON
+  locationEntityId: ID
+  locationName: String
+  metadata: JSON
+  organizerEntityId: ID
+  participantEntityIds: [ID!]
+  sourceId: ID
+  sourceSystem: String
+  sourceType: String
+  startTime: DateTime
+  status: String
+  title: String
+}
+
+input UpdateFileInput {
+  description: String
+  id: ID!
+  title: String
+}
+
+input UpdateItemInput {
+  """When it was bought or received."""
+  acquiredAt: DateTime
+
+  """Seller, giver or source, as free text."""
+  acquiredFrom: String
+  acquisitionMethod: ItemAcquisitionMethod
+  brand: String
+  category: String
+
+  """Dominant colour as #rrggbb."""
+  colorHex: String
+
+  """Colour names, dominant first."""
+  colors: [String!]
+
+  """
+  {material: fraction} summing to at most 1. Percentages are accepted and converted.
+  """
+  composition: JSON
+  condition: ItemCondition
+  currency: String
+  currentValue: Float
+  description: String
+
+  """
+  Shorthand such as "12 x 8 x 2 in". Fills only the axes not given individually.
+  """
+  dimensions: String
+
+  """
+  When it stops being usable. Distinct from a warranty, which is a contract.
+  """
+  expiresAt: DateTime
+
+  """Height, in millimetres."""
+  heightMm: Float
+  id: ID!
+
+  """A digital item is refused a mass, a size and a volume."""
+  isDigital: Boolean
+
+  """Longest dimension, in millimetres."""
+  lengthMm: Float
+  lifecycleState: ItemLifecycleState
+
+  """When the object was made, not when it was acquired."""
+  manufacturedAt: DateTime
+
+  """As-owned mass, in grams."""
+  massG: Float
+
+  """What the object is made of."""
+  materials: [String!]
+  metadata: JSON
+  model: String
+  name: String!
+  purchasePrice: Float
+  subcategory: String
+  unitSystem: ItemUnitSystem
+
+  """Capacity — what it holds — in millilitres."""
+  volumeMl: Float
+
+  """Width, in millimetres."""
+  widthMm: Float
+}
+
+type UpdateItemPayload {
+  item: ItemType
+  success: Boolean!
+}
+
+input UpdateKnownPlaceInput {
+  activeFrom: String
+  activeTo: String
+  aliases: [String!]
+  confidence: Float
+  coordinates: KnownPlaceCoordinatesInput
+  kind: String!
+  knownPlaceId: String
+  label: String!
+  locationId: String
+  source: String
+  tags: [String!]
+}
+
+input UpdateNoteInput {
+  content: String
+  expectedUpdatedAt: DateTime
+  id: String!
+  title: String
+}
+
+type UpdateNotePayload {
+  note: NoteType
+  success: Boolean!
+}
+
+input UpdatePeerLinkInput {
+  displayName: String
+  id: ID!
+  peerIssuer: String
+  peerSubject: String
+  personEntityId: ID
+  trustTier: PeerTrustTier
+}
+
+input UpdatePersonInput {
+  addresses: [PersonAddressInput!]
+  avatarUrl: String
+  birthDate: String
+  city: String
+  contacts: [PersonContactInput!]
+  country: String
+  department: String
+  description: String
+  firstName: String
+  gender: String
+  id: String!
+  jobTitle: String
+  lastName: String
+  middleName: String
+  name: String
+  nickname: String
+  organization: String
+  postalCode: String
+  pronouns: String
+  region: String
+  streetAddress: String
+  streetAddress2: String
+  website: String
+}
+
+type UpdatePersonPayload {
+  person: PersonType
+  success: Boolean!
+}
+
+input UpdatePlaceInput {
+  description: String
+  estimated: Boolean
+  geoFormat: String
+  geolocation: JSON
+  id: String!
+  latitude: Float
+  locationBoundary: JSON
+  longitude: Float
+  name: String!
+  parentId: String
+  placeKind: String
+  properties: JSON
+  tracked: Boolean
+  type: String
+  uploaded: Boolean
+}
+
+input UpdateProviderKeyInput {
+  clientId: String
+  clientSecret: String
+}
+
+input UpdateQuestionInput {
+  category: String!
+  id: ID!
+  text: String!
+}
+
+input UpdateRelationshipInput {
+  endDate: DateTime
+  id: ID!
+  isBidirectional: Boolean
+  properties: JSON
+  startDate: DateTime
+  strength: Float
+}
+
+type UpdateRelationshipPayload {
+  relationship: RelationshipType
+  success: Boolean!
+}
+
+input UpdateSavedSearchInput {
+  description: String
+  entityTypes: [String!]
+  filters: SavedSearchFiltersInput
+  id: ID!
+  name: String
+  query: String
+  tags: [String!]
+}
+
+type UpdateSavedSearchPayload {
+  savedSearch: SavedSearchType
+  success: Boolean!
+}
+
+input UpdateTagInput {
+  description: String
+  id: ID!
+  label: String
+}
+
+type UpdateTagPayload {
+  merged: Boolean!
+  movedEntityCount: Int!
+  success: Boolean!
+  tag: TagType
+  updatedSavedSearchCount: Int!
+}
+
+input UpdateTaskInput {
+  actualMinutes: Int
+
+  """User-local calendar date, `YYYY-MM-DD`."""
+  deferUntil: String
+  description: String
+  dueAt: DateTime
+  estimatedMinutes: Int
+  id: ID!
+  notes: String
+  parentId: ID
+  priority: Int
+
+  """User-local calendar date, `YYYY-MM-DD`."""
+  scheduledFor: String
+  status: TaskStatus
+
+  """Wall-clock `HH:MM`, user timezone. Zoneless."""
+  taskTime: String
+  title: String
+}
+
+type UpdateTaskPayload {
+  success: Boolean!
+  task: TaskType
+}
+
+type UserType implements Node {
+  avatarUrl: String
+  email: String!
+  entity: PersonType
+  id: ID!
+  isAdmin: Boolean!
+  name: String!
+  needsIdentityStep: Boolean!
+  onboarded: Boolean!
+  timeFormat: TimeFormat!
+  timezone: String!
+}
+
+"""One L1 cluster likely to occur on a forecast day"""
+type WeekForecastClusterType {
+  clusterId: String!
+
+  """Time-of-day tendency (night/morning/afternoon/evening shares)"""
+  daypartProbs: [ProbabilityEntryType!]!
+
+  """Parent L0 behavioral class (WORK, EXERCISE, ...)"""
+  l0Class: String!
+
+  """Human-readable cluster name (user-specific, discovered from behavior)"""
+  name: String!
+
+  """Probability the cluster occurs at least once that day"""
+  pOccur: Float!
+
+  """
+  True when a booked calendar event pins this cell (known, not predicted)
+  """
+  scheduled: Boolean!
+}
+
+"""Occurrence forecast for a single day of the week horizon"""
+type WeekForecastDayType {
+  clusters: [WeekForecastClusterType!]!
+
+  """ISO date (UTC calendar day)"""
+  date: String!
+
+  """Day-of-week name"""
+  dow: String!
+}
+
+"""
+HBPE week-horizon occurrence forecast (event-level, not bucket occupancy)
+"""
+type WeekForecastType {
+  days: [WeekForecastDayType!]!
+
+  """ISO-8601 timestamp when this forecast was generated"""
+  generatedAt: String!
+  horizon: String!
+}

@@ -1,0 +1,322 @@
+{
+  "host": "0.0.0.0",
+  "port": 3030,
+  "hostname": "ci-server.localhost",
+  "logging": {
+    "level": "info"
+  },
+  "cors": {
+    "allowedOrigins": []
+  },
+  "auth": {
+    "local": {
+      "saltRounds": 10
+    },
+    "jwt": {
+      "authTokenSecret": "AUTH_TOKEN_SECRET",
+      "authTokenExpiration": "5m",
+      "refreshTokenSecret": "AUTH_REFRESH_TOKEN_SECRET",
+      "refreshTokenExpiration": "7d"
+    },
+    "session": {
+      "fieldPepper": "AUTH_SESSION_PEPPER",
+      "duration": "7d",
+      "refreshGracePeriod": "30s"
+    },
+    "csrf": {
+      "secret": "AUTH_CSRF_TOKEN_SECRET"
+    },
+    "encryption": {
+      "fieldKey": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "cookies": {
+      "sessionTokenName": "sessionToken",
+      "csrfTokenName": "csrfToken"
+    },
+    "providers": {
+      "google": {
+        "id": "0198779b-182c-716e-9275-b81d99a47fdb"
+      },
+      "microsoft": {
+        "id": "0198779b-3c33-73da-84e5-82e0df145260"
+      },
+      "facebook": {
+        "id": "dbb8002f-12da-4cd9-b02b-37db7791a900"
+      },
+      "spotify": {
+        "id": "019cbaf2-d789-7723-aada-7e3d709663f5"
+      },
+      "github": {
+        "id": "019d7a32-e4b0-7f01-b5c2-8a1d3e6f9c04"
+      },
+      "reddit": {
+        "id": "019e2b55-a4c1-7f02-b8d4-0c3e5a8f6b07"
+      },
+      "signal": {
+        "id": "019e3d77-c6e3-8f14-da06-2b5f7c0e1d19"
+      },
+      "steam": {
+        "id": "019d6470-f9e1-720f-a3ce-299842abaece"
+      },
+      "slack": {
+        "id": "019e3c66-b5d2-7f03-c9e5-1a4f6b9d0c08"
+      },
+      "dropbox": {
+        "id": "01a10dc2-7dc5-7d4c-b3ab-7d3caaf7ebd3"
+      }
+    },
+    "oauth": {
+      "callbackUrl": ""
+    },
+    "openid": {
+      "callbackUrl": ""
+    },
+    "oidc": {
+      "issuerUrl": "",
+      "publicBaseUrl": "",
+      "nativeRedirectScheme": "companion"
+    },
+    "connect": {
+      "hubOrigins": "",
+      "hubInternalUrl": "",
+      "devDirectWakeUrl": "",
+      "devDirectWakeToken": ""
+    },
+    "portal": {
+      "enabled": true,
+      "issuer": "https://hub.ci.computer",
+      "jwksUri": "https://hub.ci.computer/api/auth/jwks",
+      "audience": "ci-server,ci-hub,ci-import-tools,ci-browser-extension,ci-even,ci-applet",
+      "pushRelayUrl": "",
+      "serviceClients": "",
+      "applianceAudience": "",
+      "captureClients": "ci-import-tools,ci-browser-extension,ci-even,ci-applet"
+    },
+    "hubForwardAuth": {
+      "enabled": false,
+      "secret": "",
+      "identitySecret": "",
+      "audience": "",
+      "requireAudience": "auto",
+      "maxSkewMs": 30000
+    },
+    "loginThrottle": {
+      "enabled": true,
+      "maxAttempts": 10,
+      "windowSeconds": 900,
+      "lockoutSeconds": 900
+    }
+  },
+  "db": {
+    "type": "postgres",
+    "host": "database",
+    "port": 5432,
+    "database": "companion",
+    "username": "companion",
+    "password": "DATABASE_PASSWORD",
+    "logging": false
+  },
+  "staticfiles": {
+    "storageUrl": "http://object-store:9000",
+    "region": "us-east-1",
+    "bucket": "companion",
+    "auth": {
+      "signatureUrl": "http://object-store:9000",
+      "signatureTTL": 3600,
+      "accessKeyId": "OBJECT_STORE_USERNAME",
+      "secretAccessKey": "OBJECT_STORE_PASSWORD"
+    }
+  },
+  "graphql": {
+    "maxQueryComplexity": 150,
+    "maxDepth": 12
+  },
+  "powersync": {
+    "url": "",
+    "jwtSecret": "",
+    "audience": "powersync",
+    "tokenTtl": "300s",
+    "jwtKid": "ci-powersync-hs256"
+  },
+  "services": {
+    "ollama": {
+      "host": "http://host.docker.internal:11434"
+    },
+    "hbpe": {
+      "host": "http://hbpe-service:8002"
+    },
+    "parser": {
+      "host": "http://summary-service:8002"
+    },
+    "summary": {
+      "host": "http://summary-service:8001"
+    }
+  },
+  "signalCli": {
+    "restUrl": "http://127.0.0.1:8080"
+  },
+  "embedding": {
+    "model": "nomic-embed-text",
+    "batchSize": 32,
+    "maxInputChars": 8000,
+    "concurrency": 4,
+    "coalesceWindowMs": 15,
+    "minTextLength": 3,
+    "types": []
+  },
+  "queues": {
+    "concurrency": 10,
+    "fetchBatchSize": 10,
+    "perQueueConcurrency": 6,
+    "jobTimeoutSeconds": 7200,
+    "replayedDeadLetterRetentionDays": 30
+  },
+  "import": {
+    "scratchDir": "/var/tmp/ci-import",
+    "roots": [],
+    "uploadsDir": "/var/lib/ci-import/uploads",
+    "inboxDir": "/var/lib/ci-import/inbox",
+    "inboxHostDir": "",
+    "maxArchiveEntries": 2000000,
+    "maxArchiveBytes": 107374182400,
+    "databaseDataDir": "",
+    "retention": {
+      "enabled": true,
+      "stagingDays": 7,
+      "runHistoryDays": 90,
+      "maxRunsPerSweep": 200,
+      "deleteBatchSize": 5000
+    }
+  },
+  "accountDeletion": {
+    "graceDays": 30,
+    "purge": {
+      "enabled": true,
+      "batchSize": 500,
+      "maxAccountsPerRun": 5,
+      "retryBackoffMinutes": 60,
+      "excludedColumns": []
+    }
+  },
+  "enrichment": {
+    "window": {
+      "enabled": true,
+      "start": "01:00",
+      "durationMinutes": 300,
+      "budgetMinutes": 90,
+      "timezone": ""
+    },
+    "rotation": {
+      "turnMinutes": 20,
+      "usersPerTurn": 1
+    }
+  },
+  "media": {
+    "videoPlayback": {
+      "maxEdge": 1920
+    }
+  },
+  "reflection": {
+    "minAnswerConfidence": 0.4,
+    "autoPromoteThresholdCautious": 1,
+    "autoPromoteThresholdBalanced": 0.55,
+    "autoPromoteThresholdHandsOff": 0.7,
+    "alwaysReviewBelowConfidence": 0.55
+  },
+  "agent": {
+    "memoryRetention": {
+      "enabled": true,
+      "processedDays": 365,
+      "stuckAfterDays": 7,
+      "stuckAlertRepeatDays": 7,
+      "deleteBatchSize": 500
+    }
+  },
+  "agentMemory": {
+    "turnFragments": {
+      "intervalMinutes": 10,
+      "lookbackMinutes": 120,
+      "settleMinutes": 3,
+      "maxTurnsPerUser": 25,
+      "minFragmentChars": 40,
+      "maxSideChars": 2000
+    }
+  },
+  "features": {
+    "scheduled.answer.inferencing": true,
+    "scheduled.connection.sync": true,
+    "pinned.demo.models": false,
+    "enable.system.prompt": true,
+    "advanced.theme.tab": false,
+    "require.signup.codes": true,
+    "today.page": false,
+    "files.page": true,
+    "insights.page": true,
+    "chat.page": true,
+    "jobs.page": true,
+    "import.page": true,
+    "planning.enabled": true,
+    "planning.page": true,
+    "planning.emptyState": true,
+    "self.page": true,
+    "stats.page": true,
+    "schedule.page": true,
+    "forecast.page": false,
+    "tags.page": true,
+    "hbpe": true,
+    "agent.memory.compaction": false,
+    "agent.memory.turnFragments": false,
+    "shared.search": true,
+    "onboarding.preference.steps": false,
+    "actions": true,
+    "smart.rotation": false,
+    "ask": true,
+    "grounded.prompts": true,
+    "derivation.engines": true,
+    "ingest.selfHeal": true,
+    "solid.protocol": false,
+    "tools.pendingActions": true,
+    "graphql.ide": true
+  },
+  "environment": {
+    "database.query.logging": false
+  },
+  "ciPortal": {
+    "url": "",
+    "apiKey": "",
+    "deviceId": ""
+  },
+  "unfurl": {
+    "enabled": true,
+    "ratePerSecond": 2,
+    "openGraph": true,
+    "cachePosters": true
+  },
+  "geocoding": {
+    "apiKey": "",
+    "batchSize": 200,
+    "rateLimitPerSecond": 10,
+    "provider": "portal",
+    "portalBaseUrl": "https://hub.ci.computer"
+  },
+  "consumption": {
+    "store": "postgres"
+  },
+  "peers": {
+    "directoryUrl": "",
+    "memoryEndpoint": "",
+    "handle": "",
+    "audience": "",
+    "timeoutMs": 10000,
+    "requireHttpSignature": false,
+    "signingKeyJwk": "",
+    "allowCgnatEndpoints": false
+  },
+  "push": {
+    "vapid": {
+      "publicKey": "",
+      "privateKey": "",
+      "subject": "mailto:admin@companion.local"
+    }
+  }
+}

@@ -1,0 +1,248 @@
+import { defineEvent } from '@ci/domains/events';
+
+/**
+ * Event emitted when creating a new user.
+ *
+ * @see {@link UserService.create} - The method that emits this event
+ */
+export const FileCreatedEvent = 'file.created';
+export const FileUpdatedEvent = 'file.updated';
+export const FileUploadedEvent = 'file.uploaded';
+export const FileRemovedEvent = 'file.deleted';
+export const PreviewGeneratedEvent = 'preview.generated';
+
+/**
+ * Event payload of the event {@link FileCreatedEvent}.
+ *
+ * @see {@link FileCreatedEvent} - The event this payload is associated with
+ * @see {@link FileService.create} - The method that emits this event payload
+ */
+export type FileCreatedPayload = {
+  /** The identifier of the newly created user */
+  fileId: string;
+};
+
+export type FileUploadedPayload = {
+  /** The identifier of the newly created user */
+  fileId: string;
+  userId: string;
+  /** The upload was a deliberate thing-capture shot; see ThingVisionListener. */
+  thingCapture: boolean;
+  skipDescription?: boolean;
+  model?: string;
+  /**
+   * The upload was a deliberate "save to Memory" (the phone's Capture sheet).
+   * Present only when true; see UploadFileDto.memoryCapture.
+   */
+  memoryCapture?: boolean;
+  /** ISO instant the device made the media; only with `memoryCapture`. See UploadFileDto.capturedAt. */
+  capturedAt?: string;
+};
+
+/**
+ * Event payload of the event {@link FileUpdatedEvent}.
+ *
+ * @see {@link FileUpdatedEvent} - The event this payload is associated with
+ * @see {@link FileService.update} - The method that emits this event payload
+ */
+export type FileUpdatedPayload = {
+  /** The identifier of the newly created user */
+  fileId: string;
+};
+
+/**
+ * Event payload of the event {@link FileRemovedEvent}.
+ *
+ * @see {@link FileRemovedEvent} - The event this payload is associated with
+ * @see {@link FileService.remove} - The method that emits this event payload
+ */
+export type FileDeletedPayload = {
+  /** The identifier of the newly created user */
+  fileId: string;
+};
+
+export type PreviewGeneratedPayload = {
+  userId: string;
+  previewId: string;
+  model?: string;
+  /**
+   * When true, the capture source (e.g. Companion Capture with its own vision endpoint)
+   * already produced a title/description — it writes them via PATCH /files/:id —
+   * so {@link ImageDescriptionListener} skips its Ollama pass. Absent/false means
+   * the server should generate the description as usual.
+   */
+  skipDescription?: boolean;
+};
+
+/**
+ * Request to backfill `ci.files.width`/`height` for ORIGINAL image/video files
+ * that lack them (dimensions weren't captured at ingest before the preview pass
+ * recorded them). Consumed out-of-band by {@link MediaDimensionsBackfillListener}.
+ */
+export const MediaDimensionsBackfillRequestEvent = 'file.media-dimensions-backfill-request';
+
+export type MediaDimensionsBackfillRequestPayload = {
+  /** Owner whose files are probed. */
+  userId: string;
+  /** Max files to record dimensions for in this batch (default: listener's DEFAULT_LIMIT). */
+  limit?: number;
+};
+
+/**
+ * Requeue vision description for originals that still lack a description
+ * (skipped while image description was off, or failed on a non-vision model).
+ * Fired when the user turns image description back on in Settings.
+ */
+export const ImageDescriptionBackfillRequestEvent = 'file.image-description-backfill-request';
+
+export type ImageDescriptionBackfillRequestPayload = {
+  userId: string;
+  /** Max originals to requeue in this batch (default: listener DEFAULT_LIMIT). */
+  limit?: number;
+  /**
+   * Keyset cursor: only originals with an id below this one (ids are UUIDv7,
+   * so "below" is "older"). Absent on the request Settings fires; the listener
+   * sets it when it chains the next page after a full one.
+   */
+  afterParentFileId?: string;
+};
+
+/**
+ * Ask for an `enrich.file_preview` sweep now, rather than at the stage's
+ * scheduled cadence: generate the PREVIEW variant for every ORIGINAL image
+ * or video of the user's that has none. Consumed by the pipeline domain's
+ * `FilePreviewSweepRequestListener`, which starts the sweep — the same
+ * handoff shape as `UnfurlSweepRequestEvent`.
+ */
+export const FilePreviewSweepRequestEvent = 'file.preview-sweep-request';
+
+/** Dedicated queue for the request, so it is not queued behind preview generation itself. */
+export const FILE_PREVIEW_SWEEP_QUEUE = 'file-preview-sweep';
+
+export type FilePreviewSweepRequestPayload = {
+  userId: string;
+  /** Who asked — for the log line. */
+  requestedBy: string;
+};
+
+/**
+ * Ask for the browser-playable `PLAYBACK` rendition of one stored video (see
+ * `VideoPlaybackService`). Sent by `FilePreviewService` once a video's preview
+ * exists — and when the poster cannot be made — so an upload gets its rendition
+ * minutes after landing instead of
+ * waiting for the nightly `enrich.video_playback` sweep. Consumed by
+ * `VideoPlaybackGenerationListener` in this domain.
+ */
+export const VideoPlaybackRequestEvent = 'file.video-playback-request';
+
+/**
+ * Its own queue, concurrency 1: a transcode is a CPU-bound run of about the
+ * clip's length, and it must never sit in front of preview generation or
+ * descriptions. `policy: 'short'` + a per-file singleton key fold repeat
+ * requests for one file into one job.
+ */
+export const VIDEO_PLAYBACK_QUEUE = 'video-playback';
+
+export type VideoPlaybackRequestPayload = {
+  userId: string;
+  /** The ORIGINAL video's `ci.files` id. */
+  fileId: string;
+};
+
+/**
+ * Ask for an `enrich.video_playback` sweep now: produce the PLAYBACK rendition
+ * for every stored video of the user's that needs one and has none. Consumed
+ * by the pipeline domain's `VideoPlaybackSweepRequestListener`, the same
+ * handoff shape as {@link FilePreviewSweepRequestEvent}.
+ */
+export const VideoPlaybackSweepRequestEvent = 'file.video-playback-sweep-request';
+
+/** Dedicated queue for the request, so it is not queued behind the transcodes themselves. */
+export const VIDEO_PLAYBACK_SWEEP_QUEUE = 'video-playback-sweep';
+
+export type VideoPlaybackSweepRequestPayload = {
+  userId: string;
+  /** Who asked — for the log line. */
+  requestedBy: string;
+};
+
+defineEvent<FileCreatedPayload>(FileCreatedEvent);
+defineEvent<FileUpdatedPayload>(FileUpdatedEvent);
+defineEvent<FileUploadedPayload>(FileUploadedEvent);
+defineEvent<FileDeletedPayload>(FileRemovedEvent);
+defineEvent<PreviewGeneratedPayload>(PreviewGeneratedEvent);
+defineEvent<MediaDimensionsBackfillRequestPayload>(MediaDimensionsBackfillRequestEvent);
+defineEvent<ImageDescriptionBackfillRequestPayload>(ImageDescriptionBackfillRequestEvent);
+defineEvent<FilePreviewSweepRequestPayload>(FilePreviewSweepRequestEvent);
+defineEvent<VideoPlaybackRequestPayload>(VideoPlaybackRequestEvent);
+defineEvent<VideoPlaybackSweepRequestPayload>(VideoPlaybackSweepRequestEvent);
+
+declare module '@ci/domains/events/registry' {
+  interface EventRegistry {
+    [FileCreatedEvent]: FileCreatedPayload;
+    [FileUpdatedEvent]: FileUpdatedPayload;
+    [FileUploadedEvent]: FileUploadedPayload;
+    [FileRemovedEvent]: FileDeletedPayload;
+    [PreviewGeneratedEvent]: PreviewGeneratedPayload;
+    [MediaDimensionsBackfillRequestEvent]: MediaDimensionsBackfillRequestPayload;
+    [ImageDescriptionBackfillRequestEvent]: ImageDescriptionBackfillRequestPayload;
+    [FilePreviewSweepRequestEvent]: FilePreviewSweepRequestPayload;
+    [VideoPlaybackRequestEvent]: VideoPlaybackRequestPayload;
+    [VideoPlaybackSweepRequestEvent]: VideoPlaybackSweepRequestPayload;
+  }
+}
+
+/**
+ * Event emitted when creating a new user.
+ *
+ * @see {@link UserService.create} - The method that emits this event
+ */
+export const SavedSearchCreatedEvent = 'savedSearch.created';
+export const SavedSearchUpdatedEvent = 'savedSearch.updated';
+export const SavedSearchUploadedEvent = 'savedSearch.uploaded';
+export const SavedSearchDeletedEvent = 'savedSearch.deleted';
+
+/**
+ * Event payload of the event {@link SavedSearchCreatedEvent}.
+ *
+ * @see {@link SavedSearchCreatedEvent} - The event this payload is associated with
+ * @see {@link SavedSearchService.create} - The method that emits this event payload
+ */
+export type SavedSearchCreatedPayload = {
+  /** The identifier of the newly created user */
+  savedSearchId: string;
+};
+
+/**
+ * Event payload of the event {@link SavedSearchUpdatedEvent}.
+ *
+ * @see {@link SavedSearchUpdatedEvent} - The event this payload is associated with
+ * @see {@link SavedSearchService.update} - The method that emits this event payload
+ */
+export type SavedSearchUpdatedPayload = {
+  /** The identifier of the newly created user */
+  savedSearchId: string;
+};
+
+/**
+ * Event payload of the event {@link SavedSearchDeletedEvent}.
+ *
+ * @see {@link SavedSearchDeletedEvent} - The event this payload is associated with
+ * @see {@link SavedSearchService.remove} - The method that emits this event payload
+ */
+export type SavedSearchDeletedPayload = {
+  /** The identifier of the newly created user */
+  savedSearchId: string;
+};
+
+defineEvent<SavedSearchCreatedPayload>(SavedSearchCreatedEvent);
+defineEvent<SavedSearchUpdatedPayload>(SavedSearchUpdatedEvent);
+defineEvent<SavedSearchDeletedPayload>(SavedSearchDeletedEvent);
+
+declare module '@ci/domains/events/registry' {
+  interface EventRegistry {
+    [SavedSearchCreatedEvent]: SavedSearchCreatedPayload;
+    [SavedSearchUpdatedEvent]: SavedSearchUpdatedPayload;
+    [SavedSearchDeletedEvent]: SavedSearchDeletedPayload;
+  }
+}

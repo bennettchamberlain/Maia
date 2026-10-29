@@ -1,0 +1,99 @@
+// Kotlin, like @ci/capacitor-local-hub and @ci/capacitor-local-llm, so this module
+// bootstraps the Kotlin Gradle plugin itself in a per-subproject buildscript block. See
+// @ci/capacitor-local-llm's android/build.gradle for the full reasoning on why this uses a
+// plain local `def` rather than `ext.kotlin_version` (an unqualified `ext` write inside a
+// nested buildscript block leaks across sibling subprojects in this Gradle/Groovy setup).
+//
+// This module depends on nothing but the Android framework (android.speech.*) and
+// Capacitor, so it just tracks the same current stable Kotlin release local-hub uses
+// rather than pinning to satisfy a third-party library's metadata version.
+ext {
+    junitVersion = project.hasProperty('junitVersion') ? rootProject.ext.junitVersion : '4.13.2'
+    androidxAppCompatVersion = project.hasProperty('androidxAppCompatVersion') ? rootProject.ext.androidxAppCompatVersion : '1.7.0'
+    androidxJunitVersion = project.hasProperty('androidxJunitVersion') ? rootProject.ext.androidxJunitVersion : '1.2.1'
+    androidxTestRunnerVersion = project.hasProperty('androidxTestRunnerVersion') ? rootProject.ext.androidxTestRunnerVersion : '1.6.1'
+    androidxEspressoCoreVersion = project.hasProperty('androidxEspressoCoreVersion') ? rootProject.ext.androidxEspressoCoreVersion : '3.6.1'
+}
+
+buildscript {
+    def speechKotlinVersion = '2.0.21'
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.10.0'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$speechKotlinVersion"
+    }
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+android {
+    namespace "com.companionintelligence.speech"
+    compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 36
+    defaultConfig {
+        // Must not exceed the app's own minSdk (24) — the manifest merger rejects a library
+        // requiring a higher floor than its consumer. The API-31/33/34 speech APIs this
+        // plugin uses are each guarded by an explicit Build.VERSION.SDK_INT check at the
+        // call site (see SpeechRecognitionController's tier selection), with a documented
+        // best-effort path for API 23–30.
+        minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 24
+        targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 36
+        versionCode 1
+        versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    lintOptions {
+        abortOnError false
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+    kotlinOptions {
+        jvmTarget = "21"
+    }
+}
+
+// SpeechRecognitionLogicTest reads ../src/definitions.ts off disk to check that the
+// RecognitionTier wire values are members of the TypeScript SpeechRecognitionTier union.
+// Gradle cannot see that dependency — the file is on no classpath and in no source set — so
+// without declaring it the test task stays UP-TO-DATE through exactly the TypeScript edit it
+// exists to catch. Verified: renaming a union member left the task skipped and the build
+// green until this was added.
+tasks.withType(Test).configureEach {
+    inputs.file("${projectDir}/../src/definitions.ts").withPropertyName('speechPluginDefinitions')
+}
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+dependencies {
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+    implementation project(':capacitor-android')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+
+    // No speech dependency: android.speech.SpeechRecognizer and android.speech.tts.TextToSpeech
+    // are both framework APIs. Nothing here ships a model or talks to a network service.
+
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    // Declared explicitly, not left to arrive transitively. `testInstrumentationRunner`
+    // above names androidx.test.runner.AndroidJUnitRunner, so this artifact has to be on
+    // the androidTest runtime classpath or every instrumented run in this module dies with
+    // "Unable to find instrumentation info". Until this line existed it resolved only as a
+    // transitive of espresso-core, which no test here imports -- dropping that unused
+    // dependency would have silently taken the runner with it.
+    androidTestImplementation "androidx.test:runner:$androidxTestRunnerVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+}

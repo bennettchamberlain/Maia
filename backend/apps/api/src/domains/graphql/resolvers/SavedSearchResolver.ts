@@ -1,0 +1,275 @@
+import { BadRequestException, UseGuards } from '@nestjs/common';
+import { Mutation, Query, Resolver, Args, ID } from '@nestjs/graphql';
+
+import { Context, type RequestContext, toServiceContext } from '@ci/common/context';
+import { FeatureService } from '@ci/common/feature';
+import { JwtOrApiKeyAuthGuard } from '@ci/common/guards';
+import { parseDisclosureRung } from '@ci/domains/asks';
+import { isValidAreas, isValidBbox, SavedSearchService } from '@ci/domains/files';
+import { UpdateSavedSearchPayload } from '@ci/domains/graphql/types/UpdateSavedSearchPayload';
+import type { IndexableEntity } from '@ci/domains/search-next';
+import { INDEXABLE_ENTITIES } from '@ci/domains/search-next';
+
+import { GraphqlPrivacy } from '../decorators/GraphqlPrivacy';
+import { CreateSavedSearchInput } from '../types/CreateSavedSearchInput';
+import { CreateSavedSearchPayload } from '../types/CreateSavedSearchPayload';
+import { DeleteByIdInput } from '../types/DeleteByIdInput';
+import { DeleteByIdPayload } from '../types/DeleteByIdPayload';
+import { GlobalUID } from '../types/GlobalUID';
+import { PaginationArgs } from '../types/PaginationArgs';
+import { SavedSearchConnection } from '../types/SavedSearchConnection';
+import { SavedSearchEdge } from '../types/SavedSearchEdge';
+import { SavedSearchType } from '../types/SavedSearchType';
+import { SetSavedSearchSharingInput } from '../types/SetSavedSearchSharingInput';
+import { UpdateSavedSearchInput } from '../types/UpdateSavedSearchInput';
+import { Paginator } from '../utils/Paginator';
+
+/**
+ * A stored filter set is replayed verbatim by the explorer and the shared
+ * viewer, so a map area that is not four finite numbers is refused here rather
+ * than saved and then silently ignored by every search that loads it.
+ */
+function assertValidFilters(filters: { bbox?: number[]; areas?: number[][] } | null | undefined): void {
+  if (filters?.bbox != null && !isValidBbox(filters.bbox)) {
+    throw new BadRequestException('bbox must be [minLon, minLat, maxLon, maxLat]');
+  }
+
+  if (filters?.areas != null && !isValidAreas(filters.areas)) {
+    throw new BadRequestException('every area must be [minLon, minLat, maxLon, maxLat]');
+  }
+}
+
+@UseGuards(JwtOrApiKeyAuthGuard)
+@Resolver(() => SavedSearchType)
+export class SavedSearchResolver {
+  constructor(
+    private readonly savedSearchService: SavedSearchService,
+    private readonly featureService: FeatureService,
+  ) {}
+
+  @Mutation(() => CreateSavedSearchPayload)
+  // Plain create — a new row, nothing pre-existing touched.
+  @GraphqlPrivacy({ destructive: false })
+  async createSavedSearch(
+    @Context() context: RequestContext,
+    @Args('input') input: CreateSavedSearchInput,
+  ): Promise<CreateSavedSearchPayload> {
+    const serviceContext = toServiceContext(context);
+
+    if (input.entityTypes) {
+      input.entityTypes.map((entity) => {
+        if (!isIndexableEntity(entity)) {
+          throw new BadRequestException(`Entity type ${entity} is not valid`);
+        }
+      });
+    }
+
+    assertValidFilters(input.filters);
+
+    const entity = await this.savedSearchService.create(serviceContext, {
+      // A client-minted id (an offline replica's), or none: the service mints one.
+      id: input.id ? GlobalUID.parse('saved-search', input.id) : undefined,
+      name: input.name,
+      description: input.description,
+      query: input.query,
+      entityTypes: input.entityTypes,
+      tags: input.tags,
+      filters: input.filters,
+    });
+
+    if (entity == null) {
+      return {
+        success: false,
+      };
+    }
+
+    return {
+      success: true,
+      savedSearch: entity ? SavedSearchType.toType(entity) : undefined,
+    };
+  }
+
+  @Mutation(() => UpdateSavedSearchPayload)
+  // savedSearchService.update() patches only the caller's own row's fields (name/description/
+  // query/entityTypes/tags/filters); an absent `tags` is deliberately left alone rather than
+  // cleared (see the service's own comment), so no unrelated stored data is lost.
+  @GraphqlPrivacy({ destructive: false })
+  async updateSavedSearch(
+    @Context() context: RequestContext,
+    @Args('input') input: UpdateSavedSearchInput,
+  ): Promise<UpdateSavedSearchPayload> {
+    const serviceContext = toServiceContext(context);
+
+    const id = GlobalUID.parse('saved-search', input.id);
+
+    assertValidFilters(input.filters);
+
+    const entity = await this.savedSearchService.update(serviceContext, id, {
+      name: input.name,
+      description: input.description,
+      query: input.query,
+      entityTypes: input.entityTypes,
+      tags: input.tags,
+      filters: input.filters,
+    });
+
+    if (entity == null) {
+      return {
+        success: false,
+      };
+    }
+
+    return {
+      success: true,
+      savedSearch: entity ? SavedSearchType.toType(entity) : undefined,
+    };
+  }
+
+  @Mutation(() => UpdateSavedSearchPayload)
+  // savedSearchService.setSharing() only flips isPublic and the shareToken/posture fields on the
+  // caller's own row (clearing posture when turning sharing off, per its doc comment); the saved
+  // search itself, and its name/query/filters, stay fully intact. Re-callable either direction.
+  @GraphqlPrivacy({ destructive: false })
+  async setSavedSearchSharing(
+    @Context() context: RequestContext,
+    @Args('input') input: SetSavedSearchSharingInput,
+  ): Promise<UpdateSavedSearchPayload> {
+    const serviceContext = toServiceContext(context);
+
+    const id = GlobalUID.parse('saved-search', input.id);
+
+    // Parsed at the boundary rather than coerced on read: an owner who typed a
+    // rung that does not exist meant a restriction, and silently storing the
+    // strictest one would hand them a link that discloses nothing, with no
+    // explanation. See `parseDisclosureRung`.
+    const maxDisclosure = parseDisclosureRung(input.maxDisclosure);
+
+    if (input.expiresAt != null && input.expiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException('expiresAt must be in the future');
+    }
+
+    const entity = await this.savedSearchService.setSharing(serviceContext, id, input.isPublic, {
+      maxDisclosure,
+      expiresAt: input.expiresAt ?? null,
+    });
+
+    if (entity == null) {
+      return {
+        success: false,
+      };
+    }
+
+    return {
+      success: true,
+      savedSearch: SavedSearchType.toType(entity),
+    };
+  }
+
+  @Mutation(() => DeleteByIdPayload)
+  // savedSearchService.remove() hard-deletes the row with no restore path in the schema.
+  @GraphqlPrivacy({ access: 'delete', destructive: true })
+  async deleteSavedSearch(
+    @Context() context: RequestContext,
+    @Args('input') input: DeleteByIdInput,
+  ): Promise<DeleteByIdPayload> {
+    const serviceContext = toServiceContext(context);
+
+    const id = GlobalUID.parse('saved-search', input.id);
+
+    const success = await this.savedSearchService.remove(serviceContext, id);
+
+    if (!success) {
+      return {
+        success: false,
+      };
+    }
+
+    return {
+      success,
+      deletedId: input.id,
+    };
+  }
+
+  @Query(() => SavedSearchConnection)
+  async savedSearches(
+    @Context() context: RequestContext,
+    @Args() pagination: PaginationArgs,
+    @Args('query', { type: () => String, nullable: true }) query?: string,
+    @Args('isSeed', { type: () => Boolean, nullable: true }) isSeed?: boolean,
+  ): Promise<SavedSearchConnection> {
+    const serviceContext = toServiceContext(context);
+
+    // First visit (or a fresh Memory) gets the starter library. No-ops when the
+    // user already has any saved search, so a reboot cannot duplicate seeds.
+    await this.savedSearchService.ensureDefaults(serviceContext);
+
+    const entities = await this.savedSearchService.findAll(serviceContext, { query, isSeed });
+
+    const { slice, pageInfo, totalCount } = Paginator.paginate(entities, {
+      ...pagination,
+      getId: (entity) => GlobalUID.encode('saved-search', entity.id),
+    });
+
+    const edges: SavedSearchEdge[] = slice.map((entity) => {
+      const node = SavedSearchType.toType(entity);
+
+      return {
+        node,
+        cursor: node.id,
+      };
+    });
+
+    return {
+      edges,
+      pageInfo,
+      totalCount,
+    };
+  }
+
+  @Query(() => SavedSearchType, { nullable: true })
+  async savedSearch(
+    @Context() context: RequestContext,
+    @Args('id', { type: () => ID }) gid: string,
+  ): Promise<SavedSearchType | null> {
+    const serviceContext = toServiceContext(context);
+
+    const id = GlobalUID.parse('saved-search', gid);
+
+    const entity = await this.savedSearchService.findById(serviceContext, id);
+
+    return entity ? SavedSearchType.toType(entity) : null;
+  }
+
+  /**
+   * Resolve a shared saved search by its capability token (the `/shared/<token>`
+   * link). Guarded like everything else — sharing is limited to signed-in users —
+   * but not owner-scoped: any authenticated viewer holding a valid token gets the
+   * search definition (name/description/filters) to drive the read-only viewer.
+   * Returns null for unknown/revoked tokens.
+   */
+  @Query(() => SavedSearchType, { nullable: true })
+  async sharedSavedSearch(@Args('token') token: string): Promise<SavedSearchType | null> {
+    // Gated behind 'shared.search': while the access model is being hardened the
+    // shared-URL surface stays dark. Disabled resolves to null — indistinguishable
+    // from an unknown/revoked token — so the viewer shows "link unavailable".
+    if (!(await this.featureService.isFeatureEnabled('shared.search'))) {
+      return null;
+    }
+
+    const entity = await this.savedSearchService.findByShareToken(token);
+
+    if (entity == null) {
+      return null;
+    }
+
+    // Never echo the capability token back on the viewer path — the holder
+    // already has it, and reflecting it only widens where the secret lands
+    // (logs, response bodies, client caches). The owner-scoped savedSearch /
+    // setSavedSearchSharing paths remain the only places shareToken is exposed.
+    return { ...SavedSearchType.toType(entity), shareToken: null };
+  }
+}
+
+function isIndexableEntity(type: string): type is IndexableEntity {
+  return INDEXABLE_ENTITIES.includes(type as IndexableEntity);
+}

@@ -1,0 +1,326 @@
+import { createHash } from 'crypto';
+
+import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
+
+import { Context, type RequestContext, toServiceContext } from '@ci/common/context';
+import {
+  MEMORY_SCOPE,
+  READ_CAPABILITY,
+  RequireCapability,
+  RequireScopes,
+  WRITE_CAPABILITY,
+} from '@ci/common/decorators';
+import { ApiKeyGuard, JwtOrApiKeyAuthGuard } from '@ci/common/guards';
+import { LoggerService } from '@ci/common/logging';
+import { ValidationPipe } from '@ci/common/pipes';
+import { untrustedBlock } from '@ci/common/prompt/untrustedBlock';
+import { CommunicationService, CommunicationType, UserContextService } from '@ci/domains/memory';
+
+import { AgentMemoryService } from '../services/AgentMemoryService';
+import { ForecastContextService } from '../services/ForecastContextService';
+import { MemoryCompactionService } from '../services/MemoryCompactionService';
+import { RecallService } from '../services/RecallService';
+import {
+  agentMemorySchema,
+  memoryDriftSchema,
+  recallSchema,
+  turnSchema,
+  type AgentMemoryDto,
+  type MemoryDriftDto,
+  type RecallDto,
+  type TurnDto,
+} from '../types';
+
+const TURN_MESSAGE_CATEGORY = 'agent-turn';
+
+function createAgentTurnMessageId(input: {
+  userId: string;
+  platform: string;
+  sessionId?: string;
+  role: 'user' | 'assistant';
+  content: string;
+}): string {
+  const digest = createHash('sha256').update(JSON.stringify(input)).digest();
+  const bytes = Buffer.from(digest.subarray(0, 16));
+
+  // UUID v8 uses custom deterministic bytes while preserving UUID shape.
+  bytes[6] = (bytes[6] & 0x0f) | 0x80;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+  const hex = bytes.toString('hex');
+
+  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20, 32)].join(
+    '-',
+  );
+}
+
+@Controller('memory')
+export class MemoryController {
+  constructor(
+    private readonly userContextService: UserContextService,
+    private readonly recallService: RecallService,
+    private readonly agentMemoryService: AgentMemoryService,
+    private readonly communicationService: CommunicationService,
+    private readonly forecastContextService: ForecastContextService,
+    private readonly compactionService: MemoryCompactionService,
+    private readonly logger: LoggerService,
+  ) {
+    logger.setContext(MemoryController.name);
+  }
+
+  /**
+   * L0 — static user profile block for the agent system prompt.
+   *
+   * Returns a pre-formatted markdown block summarising the user's knowledge
+   * graph: name, relationships, preferences, and dossier. Intended to be
+   * called once per session (system_prompt_block), not per turn.
+   *
+   * Because harnesses cache this block for the length of a session, nothing
+   * that moves with the wall clock or with ingest volume belongs in it:
+   * `## Quick Stats` (graph totals) is suppressed, and the forecast block is
+   * asked for in its `stable` form (no `Generated:` line, no "still ahead of
+   * now" filter). Anything genuinely per-turn goes through `POST /memory/recall`.
+   */
+  @UseGuards(ApiKeyGuard)
+  @RequireScopes(MEMORY_SCOPE)
+  @RequireCapability(READ_CAPABILITY)
+  @Get('context')
+  async context(@Context() context: RequestContext) {
+    const serviceContext = toServiceContext(context);
+
+    try {
+      const userCtx = await this.userContextService.getUserContextForLLM(serviceContext.userId);
+      const blocks: string[] = [];
+
+      if (userCtx) {
+        blocks.push(
+          this.userContextService.formatContextForSystemPrompt(userCtx, { includeQuickStats: false }),
+        );
+      }
+
+      const forecastBlock = await this.forecastContextService.getRestOfDayBlock(serviceContext, new Date(), {
+        stable: true,
+      });
+      if (forecastBlock) {
+        blocks.push(forecastBlock);
+      }
+
+      // The guard is emitted HERE, server-side, not left to the harness. The
+      // caller of this route is an out-of-process agent holding an API key that
+      // also carries WRITE capability, and a harness author who never read the
+      // docs is exactly the threat model — the boundary cannot be opt-in.
+      return { block: untrustedBlock(blocks.join('\n\n')) };
+    } catch (err) {
+      this.logger.warn(`L0 context failed for user ${context.userId}: ${err}`);
+
+      return { block: '' };
+    }
+  }
+
+  /**
+   * L1 — per-turn hybrid search against the knowledge graph.
+   *
+   * Runs a keyword/semantic search using the query, then hydrates matched
+   * entity IDs into readable names and content.
+   */
+  @UseGuards(ApiKeyGuard)
+  @RequireScopes(MEMORY_SCOPE)
+  // A POST that only searches — the reason capability is declared per route rather than inferred
+  // from the HTTP method, which would lock a read-only key out of the one thing it exists to do.
+  @RequireCapability(READ_CAPABILITY)
+  @Post('recall')
+  async recall(@Context() context: RequestContext, @Body(new ValidationPipe(recallSchema)) input: RecallDto) {
+    const { block, resultCount } = await this.recallService.recall(toServiceContext(context), {
+      query: input.query,
+      maxResults: input.maxResults,
+    });
+
+    return { block, resultCount };
+  }
+
+  /**
+   * Stores a raw memory fragment written by the agent or by Hermes's built-in
+   * memory system (on_memory_write hook).  The fragment is saved verbatim to
+   * ci.agent_memory; the compaction cron promotes it into the knowledge graph.
+   *
+   * Invoked by:
+   *   - Hermes 'on_memory_write'
+   */
+  @UseGuards(ApiKeyGuard)
+  @RequireScopes(MEMORY_SCOPE)
+  @RequireCapability(WRITE_CAPABILITY)
+  @HttpCode(201)
+  @Post('write')
+  async write(
+    @Context() context: RequestContext,
+    @Body(new ValidationPipe(agentMemorySchema)) input: AgentMemoryDto,
+  ) {
+    return this.agentMemoryService.create(toServiceContext(context), input);
+  }
+
+  /**
+   * Lists memory fragments flagged as `conflicted` so agents or users can
+   * reconcile contradictory claims (`knowl` governance pattern).
+   */
+  @UseGuards(JwtOrApiKeyAuthGuard)
+  @RequireScopes(MEMORY_SCOPE)
+  @RequireCapability(READ_CAPABILITY)
+  @Get('conflicts')
+  async conflicts(@Context() context: RequestContext) {
+    const items = await this.agentMemoryService.findConflicts(toServiceContext(context));
+
+    return { items };
+  }
+
+  /**
+   * Checks active governed memories for evidence/path drift against a set of
+   * modified files (`knowl` staleness drift detection).
+   */
+  @UseGuards(JwtOrApiKeyAuthGuard)
+  @RequireScopes(MEMORY_SCOPE)
+  @RequireCapability(READ_CAPABILITY)
+  @HttpCode(200)
+  @Post('drift')
+  async drift(
+    @Context() context: RequestContext,
+    @Body(new ValidationPipe(memoryDriftSchema)) input: MemoryDriftDto,
+  ) {
+    return this.agentMemoryService.detectDrift(toServiceContext(context), input.changedPaths, {
+      markConflicted: input.markConflicted,
+    });
+  }
+
+  /**
+   * Ingests a conversation turn into the database.
+   *
+   * Invoked by:
+   *   - OpenClaw 'afterTurn'
+   *   - Hermes 'sync_turn'
+   */
+  @UseGuards(ApiKeyGuard)
+  @RequireScopes(MEMORY_SCOPE)
+  @RequireCapability(WRITE_CAPABILITY)
+  @HttpCode(201)
+  @Post('turn')
+  async turn(@Context() context: RequestContext, @Body(new ValidationPipe(turnSchema)) input: TurnDto) {
+    const serviceContext = toServiceContext(context);
+    const sessionId = input.sessionId?.trim();
+    const platform = input.platform?.trim() || 'agent';
+    const persistableMessages: Array<{ role: 'user' | 'assistant'; content: string }> =
+      input.messages.flatMap((message) =>
+        (message.role === 'user' || message.role === 'assistant') && message.content.trim().length > 0
+          ? [{ role: message.role, content: message.content }]
+          : [],
+      );
+    let created = 0;
+    let skipped = 0;
+
+    for (const message of persistableMessages) {
+      const content = message.content.trim();
+      const id = createAgentTurnMessageId({
+        userId: serviceContext.userId,
+        platform,
+        sessionId,
+        role: message.role,
+        content,
+      });
+      const [existing] = await this.communicationService.findByIds(serviceContext, [id]);
+
+      if (existing) {
+        skipped += 1;
+        continue;
+      }
+
+      try {
+        await this.communicationService.create(serviceContext, {
+          id,
+          time: new Date(Date.now() + created),
+          communication_type: CommunicationType.CHAT,
+          // Direction is from the owner's side, as for every other message:
+          // what the owner typed to the agent was sent by them (outbound) and
+          // the agent's reply was written to them (inbound). Recall reads it
+          // as "I wrote" / "someone else wrote to me" (SerializerService).
+          direction: message.role === 'user' ? 'outbound' : 'inbound',
+          thread_id: sessionId,
+          participants_metadata: {
+            platform,
+            role: message.role,
+            sessionId,
+          },
+          subject: `${platform} conversation`,
+          content,
+          preview: content.slice(0, 240),
+          category: TURN_MESSAGE_CATEGORY,
+        });
+        created += 1;
+      } catch (err) {
+        // `id` is content-derived, not a provenance triple, so
+        // CommunicationService.create's triple-based dedup doesn't cover this
+        // call; the `findByIds` check above only catches a sequential retry,
+        // not two concurrent OpenClaw/Hermes deliveries of the same turn
+        // racing each other onto the same primary key.
+        if ((err as { code?: string })?.code === '23505') {
+          skipped += 1;
+          continue;
+        }
+
+        throw err;
+      }
+    }
+
+    skipped += input.messages.length - persistableMessages.length;
+
+    return { created, skipped };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Settings UI endpoints (JWT or API key — usable from the browser)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Manually triggers the memory compaction worker for the current user's
+   * unprocessed fragments.  The LLM call runs in the background; the response
+   * returns immediately with the number of queued fragments.
+   */
+  // JWT/session principals (the browser settings UI) are unaffected by scope
+  // enforcement (no api-key scopes); an API key must carry the 'memory' scope,
+  // matching the other memory endpoints so an intentionally non-memory key
+  // can't compact.
+  @UseGuards(JwtOrApiKeyAuthGuard)
+  @RequireScopes(MEMORY_SCOPE)
+  // Compaction promotes raw fragments into the knowledge graph, so it writes.
+  @RequireCapability(WRITE_CAPABILITY)
+  @HttpCode(200)
+  @Post('compact')
+  async compact(@Context() context: RequestContext) {
+    const userId = context.userId;
+
+    if (!userId) {
+      return { queued: 0 };
+    }
+
+    // minAgeMinutes: 0 — bypass the settling delay used by the cron.
+    // When a user explicitly triggers compaction they want it to process
+    // everything immediately, regardless of how recently the fragments were
+    // written.
+    // limit 1000 — a manual trigger means "process everything now"; the cron
+    // path keeps a smaller batch, but here we don't want a backlog to be
+    // silently truncated (e.g. a large bulk import of 100s of fragments).
+    const unprocessed = await this.agentMemoryService.findUnprocessed(toServiceContext(context), {
+      limit: 1000,
+      minAgeMinutes: 0,
+    });
+
+    if (unprocessed.length === 0) {
+      return { queued: 0 };
+    }
+
+    void this.compactionService
+      .compactForUser({ userId }, unprocessed)
+      .catch((err: unknown) =>
+        this.logger.error('Manual compaction failed', err instanceof Error ? err : new Error(String(err))),
+      );
+
+    return { queued: unprocessed.length };
+  }
+}

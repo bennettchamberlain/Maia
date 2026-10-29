@@ -1,0 +1,144 @@
+import { UseGuards } from '@nestjs/common';
+import { Mutation, Query, Resolver, Args, ID } from '@nestjs/graphql';
+
+import { Context, type RequestContext, toServiceContext } from '@ci/common/context';
+import { JwtOrApiKeyAuthGuard } from '@ci/common/guards';
+import { MaxArraySizePipe } from '@ci/common/pipes';
+import { QuestionService } from '@ci/domains/intelligence';
+
+import { GraphqlPrivacy } from '../decorators/GraphqlPrivacy';
+import { CreateQuestionInput } from '../types/CreateQuestionInput';
+import { GlobalUID } from '../types/GlobalUID';
+import { PaginationArgs } from '../types/PaginationArgs';
+import { QuestionConnection } from '../types/QuestionConnection';
+import { QuestionEdge } from '../types/QuestionEdge';
+import { QuestionType } from '../types/QuestionType';
+import { UpdateQuestionInput } from '../types/UpdateQuestionInput';
+import { Paginator } from '../utils/Paginator';
+
+@UseGuards(JwtOrApiKeyAuthGuard)
+@Resolver(() => QuestionType)
+export class QuestionResolver {
+  constructor(private readonly questionService: QuestionService) {}
+
+  @Mutation(() => QuestionType)
+  // Plain create — a new row, nothing pre-existing touched.
+  @GraphqlPrivacy({ destructive: false })
+  async createQuestion(
+    @Context() context: RequestContext,
+    @Args('input') input: CreateQuestionInput,
+  ): Promise<QuestionType> {
+    const serviceContext = toServiceContext(context);
+
+    const entity = await this.questionService.create(serviceContext, {
+      text: input.text,
+      category: input.category,
+    });
+
+    return QuestionType.toType(entity);
+  }
+
+  /**
+   * Batch equivalent of N {@link createQuestion} calls in one round-trip.
+   * Returns the created questions in input order.
+   */
+  @Mutation(() => [QuestionType])
+  // Batch create — new rows only.
+  @GraphqlPrivacy({ destructive: false })
+  async createQuestions(
+    @Context() context: RequestContext,
+    @Args('input', { type: () => [CreateQuestionInput] }, new MaxArraySizePipe())
+    input: CreateQuestionInput[],
+  ): Promise<QuestionType[]> {
+    const serviceContext = toServiceContext(context);
+
+    const questions = await this.questionService.createMany(
+      serviceContext,
+      input.map((item) => ({
+        text: item.text,
+        category: item.category,
+      })),
+    );
+
+    return questions.map((question) => QuestionType.toType(question));
+  }
+
+  @Mutation(() => QuestionType, { nullable: true })
+  // questionService.update() patches only text/subcategory on the caller's own row; see its
+  // own copy-on-write doc comment — it forks rather than mutating a shared catalogue row.
+  @GraphqlPrivacy({ destructive: false })
+  async updateQuestion(
+    @Context() context: RequestContext,
+    @Args('input') input: UpdateQuestionInput,
+  ): Promise<QuestionType | null> {
+    const serviceContext = toServiceContext(context);
+
+    const id = GlobalUID.parse('question', input.id);
+
+    const entity = await this.questionService.update(serviceContext, id, {
+      text: input.text,
+      subcategory: input.category,
+    });
+
+    return entity ? QuestionType.toType(entity) : entity;
+  }
+
+  @Mutation(() => Boolean)
+  // questionService.remove() hard-deletes the row (own-private-only, per its doc comment) with
+  // no restore path in the schema.
+  @GraphqlPrivacy({ access: 'delete', destructive: true })
+  async removeQuestion(
+    @Context() context: RequestContext,
+    @Args('id', { type: () => ID }) gid: string,
+  ): Promise<boolean> {
+    const serviceContext = toServiceContext(context);
+
+    const id = GlobalUID.parse('question', gid);
+
+    return this.questionService.remove(serviceContext, id);
+  }
+
+  @Query(() => QuestionConnection)
+  async questions(
+    @Context() context: RequestContext,
+    @Args() pagination: PaginationArgs,
+  ): Promise<QuestionConnection> {
+    const serviceContext = toServiceContext(context);
+
+    const entities = await this.questionService.findAll(serviceContext);
+
+    const { slice, pageInfo, totalCount } = Paginator.paginate(entities, {
+      ...pagination,
+      getId: (entity) => GlobalUID.encode('question', entity.id),
+    });
+
+    const edges: QuestionEdge[] = slice.map((entity) => {
+      const node = QuestionType.toType(entity);
+
+      return {
+        node,
+        cursor: node.id,
+      };
+    });
+
+    return {
+      edges,
+      pageInfo,
+      totalCount,
+    };
+  }
+
+  @Query(() => QuestionType, { nullable: true })
+  async question(
+    @Context() context: RequestContext,
+    @Args('id', { type: () => ID }) gid: string,
+  ): Promise<QuestionType | null> {
+    const serviceContext = toServiceContext(context);
+
+    const id = GlobalUID.parse('question', gid);
+
+    const entity = await this.questionService.findById(serviceContext, id);
+
+    return entity ? QuestionType.toType(entity) : null;
+  }
+}

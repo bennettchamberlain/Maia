@@ -1,0 +1,1929 @@
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+
+import { useMutation } from '@apollo/client';
+import { GlobalUID, useDeviceLayout } from '@ci/common';
+import { Badge, Button, Dialog, Input, Label, Popover, Select, Tooltip, cn, useToast } from '@ci/shadcn';
+import {
+  Activity,
+  ArrowUpDown,
+  Calendar as CalendarIcon,
+  ChevronDown,
+  Clock,
+  Database,
+  EyeOff,
+  Filter,
+  Map as MapIcon,
+  MapPin,
+  MessageSquare,
+  Save,
+  Scan,
+  Shapes,
+  Share2,
+  Sparkles,
+  Tag,
+  Users,
+  X,
+  Image as ImageIcon,
+} from '@ci/shadcn/icons';
+import { useLocation, useSearchParams } from 'react-router-dom';
+import { v7 as uuid7 } from 'uuid';
+
+import { useAnswersFromDevice, useReplicaDatabase } from '@/api/powersync/deviceFallback';
+import {
+  createLocalSavedSearch,
+  toResolvedSavedSearch,
+  updateLocalSavedSearch,
+} from '@/api/powersync/localSavedSearches';
+import { useFeatures } from '@/common/feature';
+import { MenuShield } from '@/components/MenuShield';
+import { ActivityFilter } from '@/components/SearchBox/ActivityFilter';
+import { ConnectorFilter } from '@/components/SearchBox/ConnectorFilter';
+import { MESSAGE_DIRECTION_LABELS, readMessageDirection } from '@/components/SearchBox/DirectionToggle';
+import { EntityTypeFilter } from '@/components/SearchBox/EntityTypeFilter';
+import { FileKindFilter } from '@/components/SearchBox/FileKindFilter';
+import {
+  FILTER_DRAG_TYPE,
+  isFilterDrag,
+  readFilterDrag,
+  type FilterDragKind,
+} from '@/components/SearchBox/filterDrag';
+import { EntityNameFilter } from '@/components/SearchBox/NameFilter';
+import { SEARCH_PANEL_LAYER_PROPS } from '@/components/SearchBox/SearchBox';
+import { AVAILABLE_ENTITY_TYPES, savedEntityTypesFor, useDropdown } from '@/components/SearchBox/useDropdown';
+import { type FragmentType } from '@/graphql';
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat';
+import type { DateTimeFormatter } from '@/lib/dateTimeFormat';
+import { filterValueLabel, sourceFilterLabel } from '@/lib/sourceNames';
+
+import { CREATE_SAVED_SEARCH } from '../../../SavedSearchesPage/CreateSavedSearchModal';
+import { UPDATE_SAVED_SEARCH } from '../../../SavedSearchesPage/EditSavedSearchModal';
+import type { SavedSearchGridItemFragment } from '../../../SavedSearchesPage/SavedSearch';
+import { ShareSavedSearchModal } from '../../../SavedSearchesPage/ShareSavedSearchModal';
+import { AREAS_PARAM, LEGACY_BBOX_PARAM, readAreasParam } from '../../bbox';
+import { fileKindLabel } from '../../fileKinds';
+import { buildSavedSearchFilters } from '../../savedSearchFilters';
+import { useSavedSearchById } from '../../useSavedSearchResolution';
+
+import {
+  WHEN_PRESET_GRID,
+  datePresetLabel,
+  isRollingDatePreset,
+  type DatePresetSelection,
+} from './datePresets';
+import {
+  FILTER_PARAMS,
+  LOADED_SEARCH_PARAM,
+  addEntityFilter,
+  countActiveFilters,
+  eventsInPlay,
+  filterValueKey,
+  narrowedEntityTypes,
+  peopleInPlay,
+  readCsvParam,
+  readListParam,
+  removeEntityFilter,
+  writeCsvFilterParam,
+} from './filterParams';
+import { SavedSearchPicker } from './SavedSearchPicker';
+import { currentSortValue, explorerSortOptions } from './sortOptions';
+import { droppedFilters, readMemoryView, unsupportedReason, type FilterDimension } from './viewFilterSupport';
+
+/* The date grid sits inside a Popover and behind `showCustomPicker`, so it can
+   never be on screen at first paint — but importing it eagerly still put
+   react-day-picker in the chunk everyone downloads, because the Main layout
+   mounts GlobalSearchBox, which reaches into this module for SearchPanelFilters. */
+const Calendar = lazy(() =>
+  import('@ci/shadcn/src/components/coalescers/calendar').then((m) => ({ default: m.Calendar })),
+);
+
+const START_OF_DAY_TIME = '00:00';
+const END_OF_DAY_TIME = '23:59';
+
+function localDateInputValue(date: Date): string {
+  // Four digits, as a date field writes it, so these compare as strings.
+  const year = String(date.getFullYear()).padStart(4, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
+function dateInputValue(value: string): string {
+  if (!value) {
+    return '';
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return localDateInputValue(date);
+}
+
+function timeInputValue(value: string, fallback: string): string {
+  if (!value) {
+    return fallback;
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return fallback;
+  }
+
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+/**
+ * A typed date worth applying. A date field reports a value as soon as its
+ * three parts are filled, so typing the year 2026 passes through the years 2,
+ * 20 and 202 on the way — real dates, and never the one meant. Four digits
+ * is the tell that the year is finished.
+ */
+function isCompleteDateValue(value: string): boolean {
+  const match = /^(\d{4})-\d{2}-\d{2}$/.exec(value);
+
+  return match != null && Number(match[1]) >= 1000;
+}
+
+/** The local day a `yyyy-mm-dd` names, for pointing the calendar at it. */
+function localDateFromInputValue(value: string): Date {
+  const [year, month, day] = value.split('-').map(Number);
+
+  return new Date(year, month - 1, day);
+}
+
+/** The month the calendar opens on: where the range starts, else today. */
+function calendarMonthFor(dateFrom: string, dateTo: string): Date {
+  const shown = dateInputValue(dateFrom) || dateInputValue(dateTo);
+
+  return shown ? localDateFromInputValue(shown) : new Date();
+}
+
+// The years the calendar's year dropdown offers. Back far enough for a
+// scanned childhood photo, forward far enough for a calendar entry booked
+// years out; a date typed outside it still applies, the grid just cannot
+// page to it.
+const CALENDAR_START_MONTH = new Date(1900, 0);
+const CALENDAR_YEARS_AHEAD = 10;
+
+function isCompleteTimeValue(value: string): boolean {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value);
+
+  return Boolean(match);
+}
+
+function dateTimeIso(dateValue: string, timeValue: string, mode: 'start' | 'end'): string | undefined {
+  if (!dateValue) {
+    return undefined;
+  }
+
+  const [year, month, day] = dateValue.split('-').map(Number);
+  const [hours, minutes] = timeValue.split(':').map(Number);
+
+  if ([year, month, day, hours, minutes].some((part) => !Number.isFinite(part))) {
+    return undefined;
+  }
+
+  const date = new Date(
+    year,
+    month - 1,
+    day,
+    hours,
+    minutes,
+    mode === 'end' ? 59 : 0,
+    mode === 'end' ? 999 : 0,
+  );
+
+  if (!Number.isFinite(date.getTime())) {
+    return undefined;
+  }
+
+  return date.toISOString();
+}
+
+function rangeHasDetailedTime(dateFrom: string, dateTo: string): boolean {
+  const fromHasTime = Boolean(dateFrom) && timeInputValue(dateFrom, START_OF_DAY_TIME) !== START_OF_DAY_TIME;
+  const toHasTime = Boolean(dateTo) && timeInputValue(dateTo, END_OF_DAY_TIME) !== END_OF_DAY_TIME;
+
+  return fromHasTime || toHasTime;
+}
+
+function formatDateLabel(dateFrom: string, dateTo: string, formatter: DateTimeFormatter): string {
+  const includeTime = rangeHasDetailedTime(dateFrom, dateTo);
+  const fmt = (value: string) => {
+    const date = new Date(value);
+    const dateLabel = date.toLocaleDateString();
+
+    if (!includeTime) {
+      return dateLabel;
+    }
+
+    // The time the person typed into this device's time input, read back on the same clock —
+    // so only the hour cycle applies. The profile zone would echo a different hour than the
+    // one they entered whenever the device is somewhere else.
+    return `${dateLabel}, ${formatter.clock(date.getHours(), date.getMinutes())}`;
+  };
+
+  if (dateFrom && dateTo) {
+    return `${fmt(dateFrom)} – ${fmt(dateTo)}`;
+  }
+
+  if (dateFrom) {
+    return `After ${fmt(dateFrom)}`;
+  }
+
+  if (dateTo) {
+    return `Before ${fmt(dateTo)}`;
+  }
+
+  return 'Any time';
+}
+
+/**
+ * One removable filter chip inside the drop area.
+ *
+ * `inactiveReason` marks a filter the current view cannot apply: the chip stays
+ * (it is still set, and still applies in the other views) but reads as struck
+ * through and dimmed, with the reason in a tooltip. Silently dropping it would
+ * make the same URL mean different things view to view with nothing on screen
+ * to say so — see viewFilterSupport.
+ */
+function FilterChip({
+  icon: Icon,
+  label,
+  removeLabel,
+  onRemove,
+  inactiveReason,
+}: {
+  icon: typeof Users;
+  label: string;
+  removeLabel: string;
+  onRemove: () => void;
+  inactiveReason?: string | null;
+}) {
+  const body = (
+    <span className="flex min-w-0 items-center gap-1">
+      <Icon className="h-3 w-3 shrink-0 text-muted-foreground" />
+      <span className={cn('max-w-[220px] truncate', inactiveReason && 'line-through')}>{label}</span>
+      {inactiveReason && <EyeOff className="h-3 w-3 shrink-0 text-muted-foreground" />}
+    </span>
+  );
+
+  return (
+    <Badge
+      variant="secondary"
+      className={cn('h-7 max-w-full shrink-0 gap-1 pl-2 pr-1', inactiveReason && 'opacity-60')}
+    >
+      {inactiveReason ? (
+        <Tooltip delayDuration={200}>
+          <Tooltip.Content className="max-w-[260px]">
+            Not applied in this view. {inactiveReason}
+          </Tooltip.Content>
+          <Tooltip.Trigger asChild>
+            <span
+              tabIndex={0}
+              className="flex min-w-0 items-center rounded"
+              aria-label={`${label} — not applied in this view. ${inactiveReason}`}
+            >
+              {body}
+            </span>
+          </Tooltip.Trigger>
+        </Tooltip>
+      ) : (
+        body
+      )}
+      <Tooltip delayDuration={600}>
+        <Tooltip.Content>{removeLabel}</Tooltip.Content>
+        <Tooltip.Trigger asChild>
+          <button
+            type="button"
+            onClick={onRemove}
+            aria-label={removeLabel}
+            className="-mr-1 rounded p-0.5 hover:bg-background/60"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </Tooltip.Trigger>
+      </Tooltip>
+    </Badge>
+  );
+}
+
+// Chip icon per drag-in filter dimension; the URL param and validation live in
+// filterParams.ts (shared with the header search box's arrow-key add/remove).
+const DROP_FILTER_ICONS: Record<FilterDragKind, typeof Users> = {
+  person: Users,
+  place: MapPin,
+  tag: Tag,
+};
+
+/**
+ * The drag-and-drop filter area. Person, place, and tag rows in the header
+ * search box's live results are draggable (see SearchBox/results/*Result);
+ * dropping one here adds it to the matching filter (`people` / `places` /
+ * `tags` URL param, unchanged). Selections render as removable chips inside
+ * the area, joined by the What picker's type selection, the How picker's
+ * source and activity selections, the When picker's date range, the Has a
+ * location / Semantic toggles, and the map's "Search events in this area"
+ * viewport so every applied filter reads from one place. `Clear all` in the
+ * top-right corner resets the full filter set but leaves the search query
+ * alone — the query lives in the header search box, whose X clears it.
+ */
+function isNativeFilterDrag(event: DragEvent): boolean {
+  return event.dataTransfer?.types.includes(FILTER_DRAG_TYPE) ?? false;
+}
+
+function readNativeFilterDrag(event: DragEvent): ReturnType<typeof readFilterDrag> {
+  const raw = event.dataTransfer?.getData(FILTER_DRAG_TYPE);
+
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      'kind' in parsed &&
+      (parsed.kind === 'person' || parsed.kind === 'place' || parsed.kind === 'tag') &&
+      'name' in parsed &&
+      typeof parsed.name === 'string'
+    ) {
+      return { kind: parsed.kind, name: parsed.name };
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+/**
+ * Drag-and-drop filter target — hidden until a filter drag is in flight or
+ * applied filters need chips. Document-level listeners catch drags from the
+ * header search box even when this area isn't visible yet.
+ */
+function FilterDropArea() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const dateTimeFormat = useDateTimeFormat();
+  // On a phone the chips, Clear all and the save controls share ONE
+  // horizontally scrolling line; see the drop area's class note below.
+  const { isMobile } = useDeviceLayout();
+  const phone = isMobile === true;
+  const selections = useMemo(
+    () => ({
+      person: readListParam(searchParams, 'people'),
+      place: readListParam(searchParams, 'places'),
+      tag: readListParam(searchParams, 'tags'),
+    }),
+    [searchParams],
+  );
+  // The type / source / activity selections, date range, located-only flag,
+  // semantic flag, and map viewport also render here as chips — the drop area
+  // is the single home for the applied filters — even though they're set via
+  // the What / How / When / Has a location / Semantic controls or the map's
+  // "Search events in this area" button rather than dragged in. Removing a
+  // chip clears its URL params, which unselects the matching control since
+  // both read the same params.
+  const selectedTypes = narrowedEntityTypes(searchParams);
+  const sources = readCsvParam(searchParams, 'connectors');
+  const activities = readCsvParam(searchParams, 'eventTypes');
+  const fileKinds = readCsvParam(searchParams, 'fileKinds');
+  const dateFrom = searchParams.get('from') ?? '';
+  const dateTo = searchParams.get('to') ?? '';
+  const whenPreset = searchParams.get('when');
+  const hasDateRange = Boolean(dateFrom || dateTo || isRollingDatePreset(whenPreset));
+  const hasLocation = searchParams.get('hasLocation') === '1';
+  const semantic = searchParams.get('semantic') === '1';
+  const mapAreaCount = readAreasParam(searchParams)?.length ?? 0;
+  const direction = readMessageDirection(searchParams.get('direction'));
+  // Which view the chips are being read against: a filter this view cannot
+  // apply is shown struck through rather than quietly ignored.
+  const view = readMemoryView(searchParams.get('view'));
+  const reasonFor = (dimension: FilterDimension) => unsupportedReason(view, dimension);
+  const hasSelections =
+    selectedTypes !== null ||
+    sources.length > 0 ||
+    activities.length > 0 ||
+    hasDateRange ||
+    hasLocation ||
+    semantic ||
+    mapAreaCount > 0 ||
+    direction != null ||
+    Object.values(selections).some((values) => values.length > 0);
+  const [error, setError] = useState<string | null>(null);
+  // Counts nested dragenter/dragleave pairs so the highlight doesn't flicker
+  // off while an entity is dragged across the chips inside the drop area.
+  const [dragDepth, setDragDepth] = useState(0);
+  const isDropTarget = dragDepth > 0;
+
+  const clearAll = () => {
+    setSearchParams((params) => {
+      for (const param of FILTER_PARAMS) {
+        params.delete(param);
+      }
+
+      return params;
+    });
+    setError(null);
+  };
+
+  const remove = (kind: FilterDragKind, name: string) => {
+    setSearchParams((params) => {
+      removeEntityFilter(params, kind, name);
+
+      return params;
+    });
+    setError(null);
+  };
+
+  // Removal for the How picker's CSV params (`connectors` / `eventTypes`),
+  // which aren't drag-in kinds but chip here all the same.
+  const removeCsvValue = (param: string, name: string) => {
+    const key = filterValueKey(name);
+
+    setSearchParams((params) => {
+      writeCsvFilterParam(
+        params,
+        param,
+        readCsvParam(params, param).filter((value) => filterValueKey(value) !== key),
+      );
+
+      return params;
+    });
+  };
+
+  const add = useCallback(
+    (kind: FilterDragKind, rawName: string) => {
+      const next = new URLSearchParams(searchParams);
+      const validation = addEntityFilter(next, kind, rawName);
+
+      setError(validation);
+
+      if (validation === null) {
+        setSearchParams(next);
+      }
+    },
+    [searchParams, setSearchParams],
+  );
+
+  useEffect(() => {
+    const handleDragEnter = (event: DragEvent) => {
+      if (isNativeFilterDrag(event)) {
+        event.preventDefault();
+        setDragDepth((depth) => depth + 1);
+      }
+    };
+
+    const handleDragLeave = (event: DragEvent) => {
+      if (isNativeFilterDrag(event)) {
+        setDragDepth((depth) => Math.max(0, depth - 1));
+      }
+    };
+
+    const handleDragOver = (event: DragEvent) => {
+      if (isNativeFilterDrag(event)) {
+        event.preventDefault();
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect = 'copy';
+        }
+      }
+    };
+
+    const handleDrop = (event: DragEvent) => {
+      if (!isNativeFilterDrag(event)) {
+        return;
+      }
+
+      event.preventDefault();
+      setDragDepth(0);
+
+      const payload = readNativeFilterDrag(event);
+
+      if (payload) {
+        add(payload.kind, payload.name);
+      }
+    };
+
+    document.addEventListener('dragenter', handleDragEnter);
+    document.addEventListener('dragleave', handleDragLeave);
+    document.addEventListener('dragover', handleDragOver);
+    document.addEventListener('drop', handleDrop);
+
+    return () => {
+      document.removeEventListener('dragenter', handleDragEnter);
+      document.removeEventListener('dragleave', handleDragLeave);
+      document.removeEventListener('dragover', handleDragOver);
+      document.removeEventListener('drop', handleDrop);
+    };
+  }, [add]);
+
+  if (!hasSelections && !isDropTarget) {
+    return null;
+  }
+
+  const DropIcon = isDropTarget ? Scan : Filter;
+  const dropText = isDropTarget
+    ? 'Drop to add'
+    : 'Drag a person, place, or tag from the search results here to filter';
+
+  const clearButton = hasSelections && (
+    <Button
+      // Explicit: the drop area can render inside the header SearchBox's
+      // <form>, where a default (submit) button would commit the search
+      // right after clearing. On desktop it sits outside the chip scroller so
+      // a wide window cannot clip it behind the save controls; on a phone it
+      // ends the scrolling line instead (see the drop area's class note).
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-7 shrink-0 px-2 text-xs text-muted-foreground"
+      onClick={clearAll}
+    >
+      Clear all
+    </Button>
+  );
+
+  // Save leads: on a phone this group rides at the head of a line that
+  // scrolls sideways with nothing to say so, and "searches can be saved" is
+  // the one thing in it that must be seen without scrolling.
+  const saveControls = (
+    <div className="flex shrink-0 items-center gap-2">
+      <SaveSearchButton />
+      <SavedSearchPicker />
+      <FilterCountLabel />
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div
+          aria-label="Filter drop area"
+          onDragEnter={(event) => {
+            if (isFilterDrag(event)) {
+              event.preventDefault();
+              setDragDepth((depth) => depth + 1);
+            }
+          }}
+          onDragOver={(event) => {
+            if (isFilterDrag(event)) {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'copy';
+            }
+          }}
+          onDragLeave={(event) => {
+            if (isFilterDrag(event)) {
+              setDragDepth((depth) => Math.max(0, depth - 1));
+            }
+          }}
+          onDrop={(event) => {
+            if (!isFilterDrag(event)) {
+              return;
+            }
+
+            event.preventDefault();
+            setDragDepth(0);
+
+            const payload = readFilterDrag(event);
+
+            if (payload) {
+              add(payload.kind, payload.name);
+            }
+          }}
+          className={cn(
+            // w-full on a phone: this area IS the whole line there, and the
+            // save controls (ahead of the chips, so Save is always in view)
+            // plus Clear all (after them) ride inside its scroller, so one
+            // filter costs one line, not two. On desktop they
+            // sit beside it instead (`device:flex-1`); overflow-hidden here
+            // used to clip Clear all once the save controls took the
+            // remaining width, so the area never clips.
+            'relative flex h-9 min-h-9 min-w-0 w-full select-none items-center gap-1.5 transition-colors device:w-auto device:flex-1',
+            isDropTarget && 'rounded-md bg-accent/40',
+          )}
+        >
+          {hasSelections ? (
+            <div className="scrollbar-none flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overscroll-x-contain">
+              {phone && saveControls}
+              {selectedTypes !== null && (
+                <FilterChip
+                  icon={Shapes}
+                  label={
+                    selectedTypes.length === 1
+                      ? selectedTypes[0]
+                      : `${selectedTypes.length} of ${AVAILABLE_ENTITY_TYPES.length} types`
+                  }
+                  removeLabel="Remove entity types"
+                  inactiveReason={reasonFor('entityTypes')}
+                  onRemove={() =>
+                    setSearchParams((params) => {
+                      params.delete('includedEntityTypes');
+                      params.delete('excludedEntityTypes');
+
+                      return params;
+                    })
+                  }
+                />
+              )}
+              {(Object.keys(DROP_FILTER_ICONS) as FilterDragKind[]).flatMap((kind) =>
+                selections[kind].map((name) => (
+                  <FilterChip
+                    key={`${kind}:${name}`}
+                    icon={DROP_FILTER_ICONS[kind]}
+                    label={kind === 'tag' ? `#${name}` : name}
+                    removeLabel={`Remove ${name}`}
+                    inactiveReason={reasonFor(
+                      kind === 'person' ? 'people' : kind === 'place' ? 'places' : 'tags',
+                    )}
+                    onRemove={() => remove(kind, name)}
+                  />
+                )),
+              )}
+              {sources.map((name) => (
+                <FilterChip
+                  key={`source:${name}`}
+                  icon={Database}
+                  label={sourceFilterLabel(name)}
+                  removeLabel={`Remove source ${sourceFilterLabel(name)}`}
+                  inactiveReason={reasonFor('connectors')}
+                  onRemove={() => removeCsvValue('connectors', name)}
+                />
+              ))}
+              {activities.map((name) => (
+                <FilterChip
+                  key={`activity:${name}`}
+                  icon={Activity}
+                  label={filterValueLabel(name)}
+                  removeLabel={`Remove activity ${filterValueLabel(name)}`}
+                  inactiveReason={reasonFor('eventTypes')}
+                  onRemove={() => removeCsvValue('eventTypes', name)}
+                />
+              ))}
+              {/* Which kind of file — set by a saved search (Recent Images) rather
+                  than a picker, but a chip all the same so it can be seen and removed. */}
+              {fileKinds.map((name) => (
+                <FilterChip
+                  key={`file-kind:${name}`}
+                  icon={ImageIcon}
+                  label={fileKindLabel(name)}
+                  removeLabel={`Remove file kind ${fileKindLabel(name)}`}
+                  inactiveReason={reasonFor('fileKinds')}
+                  onRemove={() => removeCsvValue('fileKinds', name)}
+                />
+              ))}
+              {direction != null && (
+                <FilterChip
+                  icon={MessageSquare}
+                  // Beside a Who person the direction fixes that person's role, so
+                  // "From only" reads. On its own it is the bare row direction —
+                  // messages you received, or sent, from or to anyone — and "From
+                  // only" with nothing next to it read as a leftover of a removed
+                  // person (QA MEM-16). Name what it still filters, as the phone
+                  // filter sheet's Who row already does ("To anyone").
+                  label={
+                    selections.person.length > 0
+                      ? `${MESSAGE_DIRECTION_LABELS[direction]} only`
+                      : `${MESSAGE_DIRECTION_LABELS[direction]} anyone`
+                  }
+                  removeLabel="Remove message direction"
+                  inactiveReason={reasonFor('direction')}
+                  onRemove={() =>
+                    setSearchParams((params) => {
+                      params.delete('direction');
+
+                      return params;
+                    })
+                  }
+                />
+              )}
+              {hasDateRange && (
+                <FilterChip
+                  icon={CalendarIcon}
+                  label={
+                    isRollingDatePreset(whenPreset)
+                      ? (datePresetLabel(whenPreset) ?? 'When')
+                      : formatDateLabel(dateFrom, dateTo, dateTimeFormat)
+                  }
+                  removeLabel="Remove date range"
+                  inactiveReason={reasonFor('date')}
+                  onRemove={() =>
+                    setSearchParams((params) => {
+                      params.delete('from');
+                      params.delete('to');
+                      params.delete('when');
+
+                      return params;
+                    })
+                  }
+                />
+              )}
+              {hasLocation && (
+                <FilterChip
+                  icon={MapPin}
+                  label="Has a location"
+                  removeLabel="Remove has a location"
+                  inactiveReason={reasonFor('hasLocation')}
+                  onRemove={() =>
+                    setSearchParams((params) => {
+                      params.delete('hasLocation');
+
+                      return params;
+                    })
+                  }
+                />
+              )}
+              {semantic && (
+                <FilterChip
+                  icon={Sparkles}
+                  label="Semantic"
+                  removeLabel="Remove semantic"
+                  inactiveReason={reasonFor('semantic')}
+                  onRemove={() =>
+                    setSearchParams((params) => {
+                      params.delete('semantic');
+
+                      return params;
+                    })
+                  }
+                />
+              )}
+              {mapAreaCount > 0 && (
+                <FilterChip
+                  icon={MapIcon}
+                  label={mapAreaCount === 1 ? 'Map area' : `Map areas (${mapAreaCount})`}
+                  removeLabel={mapAreaCount === 1 ? 'Remove map area' : 'Remove map areas'}
+                  inactiveReason={reasonFor('areas')}
+                  onRemove={() =>
+                    setSearchParams((params) => {
+                      params.delete(AREAS_PARAM);
+                      params.delete(LEGACY_BBOX_PARAM);
+
+                      return params;
+                    })
+                  }
+                />
+              )}
+              {phone && clearButton}
+            </div>
+          ) : (
+            // pointer-events-none keeps the icon swap from firing its own
+            // dragenter/dragleave and corrupting the depth counter mid-drag.
+            <div className="pointer-events-none flex min-w-0 flex-1 items-center justify-center gap-1.5 truncate px-1 text-xs text-muted-foreground">
+              <DropIcon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} />
+              <span className="truncate">{dropText}</span>
+            </div>
+          )}
+        </div>
+        {!phone && clearButton}
+        {!phone && saveControls}
+      </div>
+      {error && (
+        <p className="text-xs text-destructive" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A boolean URL flag (located-only / semantic): whether it is on, a toggle
+ * for it, and — via `dimension` — why the current view cannot apply it, if it
+ * can't. Shared by the toolbar's toggle chips and the phone filter sheet's
+ * switches, so both read and write the flag the same way.
+ */
+export function useFilterToggle(param: string, dimension: FilterDimension) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const active = searchParams.get(param) === '1';
+  const reason = unsupportedReason(readMemoryView(searchParams.get('view')), dimension);
+
+  const toggle = () =>
+    setSearchParams((params) => {
+      if (active) {
+        params.delete(param);
+      } else {
+        params.set(param, '1');
+      }
+
+      return params;
+    });
+
+  return { active, reason, toggle };
+}
+
+/**
+ * A boolean URL flag rendered as a toggle button (used for located-only /
+ * semantic). `dimension` lets the control say when the current view cannot
+ * apply the flag: it stays clickable — the flag is a property of the query, not
+ * of the view, and it still applies everywhere else — but reads as struck
+ * through with the reason in a tooltip.
+ */
+function ToggleChip({
+  param,
+  label,
+  icon,
+  dimension,
+}: {
+  param: string;
+  label: string;
+  icon: React.ReactNode;
+  dimension: FilterDimension;
+}) {
+  const { active, reason, toggle } = useFilterToggle(param, dimension);
+
+  const button = (
+    <Button
+      type="button"
+      variant={active ? 'secondary' : 'outline'}
+      className={cn(reason && 'opacity-70')}
+      aria-label={reason ? `${label} — not applied in this view. ${reason}` : undefined}
+      onClick={toggle}
+    >
+      {icon}
+      <span className={cn('ml-1', reason && 'line-through')}>{label}</span>
+      {reason && <EyeOff className="ml-1 h-3.5 w-3.5 text-muted-foreground" />}
+    </Button>
+  );
+
+  if (!reason) {
+    return button;
+  }
+
+  return (
+    <Tooltip delayDuration={200}>
+      <Tooltip.Content className="max-w-[260px]">Not applied in this view. {reason}</Tooltip.Content>
+      <Tooltip.Trigger asChild>{button}</Tooltip.Trigger>
+    </Tooltip>
+  );
+}
+
+/**
+ * Date-range picker bound to the `when` / `from` / `to` URL params.
+ * `renderTrigger` swaps the button for the caller's own element (the phone
+ * filter sheet's row), given the applied range's label, or null for none; it
+ * becomes the popover trigger, so it must pass its props and ref on to a button.
+ * `modal` is for a caller that is itself modal (that sheet): only a modal
+ * popover can scroll its own content under the sheet's scroll lock.
+ */
+export function DateControl({
+  renderTrigger,
+  modal = false,
+}: { renderTrigger?: (value: string | null) => ReactElement; modal?: boolean } = {}) {
+  const [{ dateFrom, dateTo, whenPreset }, { setDateRange, setDatePreset }] = useDropdown();
+  const dateTimeFormat = useDateTimeFormat();
+  const [open, setOpen] = useState(false);
+  const [customMode, setCustomMode] = useState(
+    () => whenPreset === 'custom' || (!isRollingDatePreset(whenPreset) && Boolean(dateFrom || dateTo)),
+  );
+  const [timeExpanded, setTimeExpanded] = useState(() => rangeHasDetailedTime(dateFrom, dateTo));
+
+  const selectedRange =
+    dateFrom || dateTo
+      ? { from: dateFrom ? new Date(dateFrom) : undefined, to: dateTo ? new Date(dateTo) : undefined }
+      : undefined;
+  const fromDateValue = dateInputValue(dateFrom);
+  const toDateValue = dateInputValue(dateTo);
+  const fromTimeValue = timeInputValue(dateFrom, START_OF_DAY_TIME);
+  const toTimeValue = timeInputValue(dateTo, END_OF_DAY_TIME);
+  const [draftFromTime, setDraftFromTime] = useState(fromTimeValue);
+  const [draftToTime, setDraftToTime] = useState(toTimeValue);
+  const [draftFromDate, setDraftFromDate] = useState(fromDateValue);
+  const [draftToDate, setDraftToDate] = useState(toDateValue);
+  // Held here rather than left to the calendar so a typed date can turn the
+  // grid to its month.
+  const [calendarMonth, setCalendarMonth] = useState(() => calendarMonthFor(dateFrom, dateTo));
+  const calendarEndMonth = useMemo(() => new Date(new Date().getFullYear() + CALENDAR_YEARS_AHEAD, 11), []);
+
+  useEffect(() => {
+    if (rangeHasDetailedTime(dateFrom, dateTo)) {
+      setTimeExpanded(true);
+    }
+  }, [dateFrom, dateTo]);
+
+  useEffect(() => {
+    setDraftFromTime(fromTimeValue);
+    setDraftToTime(toTimeValue);
+  }, [fromTimeValue, toTimeValue]);
+
+  useEffect(() => {
+    setDraftFromDate(fromDateValue);
+    setDraftToDate(toDateValue);
+  }, [fromDateValue, toDateValue]);
+
+  // "Specific time" adds its two inputs at the foot of a popover that, on a
+  // phone, already runs to the bottom edge of the screen. Bring them into view
+  // or the toggle looks like it did nothing (QA MEM-15: the inputs sat below the
+  // fold and the popover would not scroll).
+  const timeFieldsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (timeExpanded) {
+      timeFieldsRef.current?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [timeExpanded]);
+
+  const applyTime = (part: 'from' | 'to', value: string) => {
+    const normalizedValue = value || (part === 'from' ? START_OF_DAY_TIME : END_OF_DAY_TIME);
+    const nextFromTime = part === 'from' ? normalizedValue : draftFromTime;
+    const nextToTime = part === 'to' ? normalizedValue : draftToTime;
+    const nextFrom = fromDateValue ? dateTimeIso(fromDateValue, nextFromTime, 'start') : undefined;
+    const nextTo = toDateValue ? dateTimeIso(toDateValue, nextToTime, 'end') : undefined;
+
+    if ((fromDateValue && !nextFrom) || (toDateValue && !nextTo)) {
+      return;
+    }
+
+    setDateRange(nextFrom, nextTo);
+  };
+
+  const handleTimeChange = (part: 'from' | 'to', value: string) => {
+    if (part === 'from') {
+      setDraftFromTime(value);
+    } else {
+      setDraftToTime(value);
+    }
+
+    if (isCompleteTimeValue(value)) {
+      applyTime(part, value);
+    }
+  };
+
+  const commitTime = (part: 'from' | 'to', value: string) => {
+    const fallback = part === 'from' ? START_OF_DAY_TIME : END_OF_DAY_TIME;
+    const nextValue = isCompleteTimeValue(value) ? value : fallback;
+
+    if (part === 'from') {
+      setDraftFromTime(nextValue);
+    } else {
+      setDraftToTime(nextValue);
+    }
+
+    applyTime(part, nextValue);
+  };
+
+  // A start typed past the applied end, or an end typed before the applied start.
+  const crossesOtherEnd = (part: 'from' | 'to', value: string) => {
+    const other = part === 'from' ? toDateValue : fromDateValue;
+
+    return Boolean(value && other) && (part === 'from' ? value > other : value < other);
+  };
+
+  // One end of the range, typed. `value` is a complete yyyy-mm-dd, or '' to
+  // leave that end open.
+  const applyDate = (part: 'from' | 'to', value: string) => {
+    let nextFromDate = part === 'from' ? value : fromDateValue;
+    let nextToDate = part === 'to' ? value : toDateValue;
+
+    // A start typed past the end (or an end before the start) is a new range
+    // beginning there, not an empty one: the other end comes along to the same
+    // day and can then be typed in turn.
+    if (crossesOtherEnd(part, value)) {
+      if (part === 'from') {
+        nextToDate = value;
+      } else {
+        nextFromDate = value;
+      }
+    }
+
+    setDateRange(
+      nextFromDate
+        ? dateTimeIso(nextFromDate, timeExpanded ? fromTimeValue : START_OF_DAY_TIME, 'start')
+        : undefined,
+      nextToDate ? dateTimeIso(nextToDate, timeExpanded ? toTimeValue : END_OF_DAY_TIME, 'end') : undefined,
+    );
+
+    if (value) {
+      setCalendarMonth(localDateFromInputValue(value));
+    }
+  };
+
+  const handleDateChange = (part: 'from' | 'to', value: string) => {
+    if (part === 'from') {
+      setDraftFromDate(value);
+    } else {
+      setDraftToDate(value);
+    }
+
+    if (!isCompleteDateValue(value)) {
+      return;
+    }
+
+    // A date field reports a complete date after every keystroke, so typing
+    // 02/15 over an end of 03/08 passes through 02/08 and 02/01 on the way.
+    // Applied as they come, the ones before the start dragged the start along
+    // (see applyDate) and left it on a day nobody typed. A date that crosses
+    // the other end waits for the field to be committed (blur or Enter). The
+    // grid still turns to it, as it does for any typed date.
+    if (crossesOtherEnd(part, value)) {
+      setCalendarMonth(localDateFromInputValue(value));
+
+      return;
+    }
+
+    applyDate(part, value);
+  };
+
+  // Leaving the field (or Enter) settles it. Emptied on purpose, that end of
+  // the range opens; left half-typed or at a year still being typed, it goes
+  // back to the date in force — a date field reports '' for both, and
+  // `badInput` is what tells an unfinished entry from an empty one.
+  const commitDate = (part: 'from' | 'to', input: HTMLInputElement) => {
+    const applied = part === 'from' ? fromDateValue : toDateValue;
+    const { value } = input;
+
+    if (isCompleteDateValue(value)) {
+      if (value !== applied) {
+        applyDate(part, value);
+      }
+
+      return;
+    }
+
+    if (value === '' && !input.validity.badInput) {
+      if (applied) {
+        applyDate(part, '');
+      }
+
+      return;
+    }
+
+    input.value = applied;
+
+    if (part === 'from') {
+      setDraftFromDate(applied);
+    } else {
+      setDraftToDate(applied);
+    }
+  };
+
+  const clearDetailedTime = () => {
+    setTimeExpanded(false);
+    setDraftFromTime(START_OF_DAY_TIME);
+    setDraftToTime(END_OF_DAY_TIME);
+    setDateRange(
+      fromDateValue ? dateTimeIso(fromDateValue, START_OF_DAY_TIME, 'start') : undefined,
+      toDateValue ? dateTimeIso(toDateValue, END_OF_DAY_TIME, 'end') : undefined,
+    );
+  };
+
+  const activePreset: DatePresetSelection | null = isRollingDatePreset(whenPreset)
+    ? whenPreset
+    : dateFrom || dateTo
+      ? 'custom'
+      : null;
+
+  const appliedLabel = isRollingDatePreset(whenPreset)
+    ? datePresetLabel(whenPreset)
+    : dateFrom || dateTo
+      ? formatDateLabel(dateFrom, dateTo, dateTimeFormat)
+      : null;
+  const triggerLabel = appliedLabel ?? 'When';
+
+  const showCustomPicker = customMode || activePreset === 'custom';
+
+  return (
+    <Popover
+      open={open}
+      modal={modal}
+      onOpenChange={(next) => {
+        setOpen(next);
+
+        if (next) {
+          setCustomMode(
+            whenPreset === 'custom' || (!isRollingDatePreset(whenPreset) && Boolean(dateFrom || dateTo)),
+          );
+          setCalendarMonth(calendarMonthFor(dateFrom, dateTo));
+          // A date held back from the last visit (one that crossed the other
+          // end, then Escape) was never applied; show the range in force.
+          setDraftFromDate(fromDateValue);
+          setDraftToDate(toDateValue);
+        }
+      }}
+    >
+      <Popover.Trigger asChild>
+        {renderTrigger ? (
+          renderTrigger(appliedLabel)
+        ) : (
+          <Button variant="outline" className="group">
+            <CalendarIcon className="mr-2 h-4 w-4 text-muted-foreground" />
+            {triggerLabel}
+            <ChevronDown className="ml-2 h-4 w-4 opacity-50 transition-transform group-data-[state=open]:rotate-180" />
+          </Button>
+        )}
+      </Popover.Trigger>
+      <MenuShield open={open} />
+      <Popover.Content
+        // Never taller than the room the popover has, scrolling inside instead.
+        // The calendar, the time fields and Clear range outgrow the screen on a
+        // phone — beside a phone sheet row, and from the inline When button too,
+        // where an uncapped popover simply ran off the bottom edge and its time
+        // inputs could not be reached (QA MEM-15).
+        className="w-64 max-h-(--radix-popover-content-available-height) overflow-y-auto overscroll-contain p-0"
+        align="start"
+      >
+        <div className="grid grid-cols-2 gap-2 p-2">
+          {WHEN_PRESET_GRID.map(({ value, label }) => {
+            const selected = activePreset === value;
+
+            return (
+              <Button
+                key={value}
+                type="button"
+                variant="outline"
+                size="sm"
+                aria-pressed={selected}
+                className={cn(
+                  'h-10 justify-center rounded-md border bg-background px-2 text-sm font-medium shadow-sm transition-[box-shadow,border-color,background-color]',
+                  selected
+                    ? 'border-green-500 bg-green-50/90 shadow-md ring-1 ring-green-500/25 dark:bg-green-950/40'
+                    : 'border-green-500/35 hover:border-green-500/70 hover:bg-green-50/40 hover:shadow-md dark:hover:bg-green-950/20',
+                )}
+                onClick={() => {
+                  if (value === 'custom') {
+                    setDatePreset('custom');
+                    setCustomMode(true);
+                  } else {
+                    setDatePreset(value);
+                    setCustomMode(false);
+                    setOpen(false);
+                  }
+                }}
+              >
+                {label}
+              </Button>
+            );
+          })}
+        </div>
+
+        {showCustomPicker && (
+          <>
+            {/* The same range as the grid below, for typing: quicker than
+                paging to a date years back. */}
+            <div className="grid grid-cols-2 gap-2 border-t px-3 pt-3">
+              {(
+                [
+                  ['from', 'memory-filter-start-date', 'Start date', draftFromDate],
+                  ['to', 'memory-filter-end-date', 'End date', draftToDate],
+                ] as const
+              ).map(([part, id, label, draft]) => (
+                <div key={part} className="space-y-1.5">
+                  <Label htmlFor={id} className="text-xs text-muted-foreground">
+                    {label}
+                  </Label>
+                  <Input
+                    id={id}
+                    type="date"
+                    // Without it a date field takes a six-digit year.
+                    max="9999-12-31"
+                    value={draft}
+                    onChange={(event) => handleDateChange(part, event.target.value)}
+                    onBlur={(event) => commitDate(part, event.currentTarget)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        commitDate(part, event.currentTarget);
+                      }
+                    }}
+                    // The grid below is the picker; the field's own would be a
+                    // second calendar, and its button leaves no room for the date.
+                    className="h-8 px-2 [&::-webkit-calendar-picker-indicator]:hidden"
+                  />
+                </div>
+              ))}
+            </div>
+            {/* Only the grid itself is deferred, not the controls beside it:
+                "Clear range" and the time fields stay synchronous so opening the
+                popover still gives you something to act on immediately. */}
+            <Suspense fallback={null}>
+              <Calendar
+                mode="range"
+                // Month and year dropdowns in the caption, so a date years
+                // away is two picks rather than a click per month.
+                captionLayout="dropdown"
+                startMonth={CALENDAR_START_MONTH}
+                endMonth={calendarEndMonth}
+                month={calendarMonth}
+                onMonthChange={setCalendarMonth}
+                selected={selectedRange}
+                onSelect={(range) => {
+                  const fromDate = range?.from ? localDateInputValue(range.from) : '';
+                  const toDate = range?.to ? localDateInputValue(range.to) : '';
+                  const from = fromDate
+                    ? dateTimeIso(fromDate, timeExpanded ? fromTimeValue : START_OF_DAY_TIME, 'start')
+                    : undefined;
+                  let to: string | undefined;
+
+                  if (toDate) {
+                    to = dateTimeIso(toDate, timeExpanded ? toTimeValue : END_OF_DAY_TIME, 'end');
+                  }
+
+                  setDateRange(from, to);
+                }}
+                numberOfMonths={1}
+              />
+            </Suspense>
+            <div className="space-y-3 border-t p-3">
+              <div className="flex items-center justify-between gap-3">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2 text-xs"
+                  onClick={() => setTimeExpanded((expanded) => !expanded)}
+                >
+                  <Clock className="mr-2 h-3.5 w-3.5" />
+                  Specific time
+                  <ChevronDown
+                    className={`ml-2 h-3.5 w-3.5 opacity-60 transition-transform ${timeExpanded ? 'rotate-180' : ''}`}
+                  />
+                </Button>
+                {timeExpanded && (dateFrom || dateTo) && (
+                  <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={clearDetailedTime}>
+                    All day
+                  </Button>
+                )}
+              </div>
+
+              {timeExpanded && (
+                <div ref={timeFieldsRef} className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="memory-filter-start-time" className="text-xs text-muted-foreground">
+                      Start time
+                    </Label>
+                    <Input
+                      id="memory-filter-start-time"
+                      type="time"
+                      value={draftFromTime}
+                      disabled={!fromDateValue}
+                      onChange={(event) => handleTimeChange('from', event.target.value)}
+                      onBlur={(event) => commitTime('from', event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          commitTime('from', event.currentTarget.value);
+                          event.currentTarget.blur();
+                        }
+                      }}
+                      className="h-8"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="memory-filter-end-time" className="text-xs text-muted-foreground">
+                      End time
+                    </Label>
+                    <Input
+                      id="memory-filter-end-time"
+                      type="time"
+                      value={draftToTime}
+                      disabled={!toDateValue}
+                      onChange={(event) => handleTimeChange('to', event.target.value)}
+                      onBlur={(event) => commitTime('to', event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          commitTime('to', event.currentTarget.value);
+                          event.currentTarget.blur();
+                        }
+                      }}
+                      className="h-8"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {(dateFrom || dateTo) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-full text-xs text-muted-foreground"
+                  onClick={() => {
+                    setTimeExpanded(false);
+                    setDatePreset(null);
+                    setCustomMode(false);
+                  }}
+                >
+                  Clear range
+                </Button>
+              )}
+            </div>
+          </>
+        )}
+      </Popover.Content>
+    </Popover>
+  );
+}
+
+/** What the phone filter sheet's Sort row needs to draw itself. */
+interface SortTriggerState {
+  /** The selected preset's label. */
+  label: string;
+  /** Whether the selection is something other than the list's default. */
+  active: boolean;
+  /** Why the current view ignores the sort, or null when it applies. */
+  reason: string | null;
+}
+
+/**
+ * Sort preset selector bound to the `sortBy`/`sortOrder` URL params. Which
+ * presets it offers depends on where it is: the everything browse on `/memory`
+ * defaults to relevance and only offers Newest / Oldest inside a When filter
+ * (see sortOptions). The graph has no result order to sort, so there the
+ * control says so instead of accepting a choice that quietly does nothing.
+ *
+ * `renderTrigger` replaces the trigger (the phone filter sheet's row) and
+ * must return a `Select.Trigger`; the caller then shows `reason` itself.
+ */
+export function SortControl({
+  renderTrigger,
+}: { renderTrigger?: (state: SortTriggerState) => ReactElement } = {}) {
+  const [{ sortBy, sortOrder }, { setSort }] = useDropdown();
+  const [searchParams] = useSearchParams();
+  const { pathname } = useLocation();
+  const reason = unsupportedReason(readMemoryView(searchParams.get('view')), 'sort');
+
+  const options = explorerSortOptions(pathname, searchParams);
+  const currentSort = currentSortValue(options, sortBy, sortOrder);
+
+  const select = (
+    <Select
+      value={currentSort}
+      onValueChange={(value) => {
+        const option = options.find((item) => item.value === value);
+
+        setSort(option?.sortBy || undefined, option?.sortOrder || undefined);
+      }}
+    >
+      {renderTrigger ? (
+        renderTrigger({
+          label: options.find((option) => option.value === currentSort)?.label ?? currentSort,
+          // The first preset is the list's own default (Default, or Relevance on /memory).
+          active: currentSort !== options[0]?.value,
+          reason,
+        })
+      ) : (
+        // Hug the selected label. A fixed width either clipped it or left a
+        // gap that `justify-between` used to center the word between the icon
+        // and the caret.
+        <Select.Trigger className={cn('w-fit shrink-0 justify-start text-left', reason && 'opacity-70')}>
+          <ArrowUpDown className="mr-2 h-4 w-4 text-muted-foreground" />
+          <Select.Value placeholder="Sort" />
+        </Select.Trigger>
+      )}
+      <Select.Content>
+        {options.map((option) => (
+          <Select.Item key={option.value} value={option.value}>
+            {option.label}
+          </Select.Item>
+        ))}
+      </Select.Content>
+    </Select>
+  );
+
+  if (!reason || renderTrigger) {
+    return select;
+  }
+
+  // The marker sits beside the control rather than inside its trigger: the sort
+  // choice is still a property of the query — it applies the moment you switch
+  // back to a list-shaped view — so the control stays live and the marker
+  // carries the explanation.
+  return (
+    <span className="inline-flex items-center gap-1">
+      {select}
+      <Tooltip delayDuration={200}>
+        <Tooltip.Content className="max-w-[260px]">Not applied in this view. {reason}</Tooltip.Content>
+        <Tooltip.Trigger asChild>
+          <span
+            role="note"
+            tabIndex={0}
+            aria-label={`Sort — not applied in this view. ${reason}`}
+            className="rounded text-muted-foreground"
+          >
+            <EyeOff className="h-3.5 w-3.5" />
+          </span>
+        </Tooltip.Trigger>
+      </Tooltip>
+    </span>
+  );
+}
+
+/** When / How / Activity / Who / Where / toggles / sort — shared by the inline explorer toolbar and header panel. */
+function FilterControlsRow({
+  modal,
+  includeEntityTypeFilter = false,
+  showSave = true,
+  onOpenSavedSearch,
+}: {
+  modal: boolean;
+  /** Off on `/memory` — entity types live in MemoryEntityTypeNav instead. */
+  includeEntityTypeFilter?: boolean;
+  /** Save sits with the filter chip row on `/memory`; stays here in the header panel. */
+  showSave?: boolean;
+  /** Passed to Load search: open the picked search instead of applying it here (see SavedSearchPicker). */
+  onOpenSavedSearch?: (params: URLSearchParams) => void;
+}) {
+  const [searchParams] = useSearchParams();
+  const { pathname } = useLocation();
+  // Where / Activity (`places` / `eventTypes`) narrow events only, and Who
+  // (`people`) narrows events and communications, so each picker is offered
+  // just while a kind it can act on is in play — never on a browse the What
+  // bar (or a `/memory/<kind>` page) has pointed away from all of them.
+  const showEventDimensions = eventsInPlay(searchParams, pathname);
+  const showWho = peopleInPlay(searchParams, pathname);
+
+  return (
+    <div
+      // On a phone this is one line that scrolls sideways, like the What strip
+      // above it: wrapped, When / How / Who / Where / the toggles / sort ran
+      // two to a row and ate half the screen. From `device:` up it wraps as
+      // before. The vertical padding is cancelled by the negative margin, so
+      // the line costs no height; it only keeps the focus ring inside the
+      // scroller's clip.
+      className="scrollbar-none flex min-w-0 items-center gap-2 overscroll-x-contain max-device:-my-0.5 max-device:overflow-x-auto max-device:py-0.5 device:flex-wrap"
+    >
+      {includeEntityTypeFilter && <EntityTypeFilter modal={modal} label="What" />}
+      <DateControl modal={modal} />
+
+      <ConnectorFilter modal={modal} label="How" />
+      <FileKindFilter modal={modal} label="Kind" />
+      {showEventDimensions && <ActivityFilter modal={modal} label="Activity" />}
+      {showWho && <EntityNameFilter kind="person" modal={modal} />}
+      {showEventDimensions && <EntityNameFilter kind="place" modal={modal} />}
+
+      <ToggleChip
+        param="hasLocation"
+        label="Has a location"
+        icon={<MapPin className="h-4 w-4" />}
+        dimension="hasLocation"
+      />
+      <ToggleChip
+        param="semantic"
+        label="Semantic"
+        icon={<Sparkles className="h-4 w-4" />}
+        dimension="semantic"
+      />
+
+      <SortControl />
+
+      {showSave && (
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <SaveSearchButton />
+          <SavedSearchPicker onOpen={onOpenSavedSearch} />
+          <FilterCountLabel />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Advanced filters for the header search dropdown on non-`/memory` pages. Includes
+ * the What picker here; the main Memory explorer uses MemoryEntityTypeNav instead.
+ * `onOpenSavedSearch` is where Load search sends the picked search: these pages
+ * have nothing that reads `?search=`, so the header opens it in the explorer.
+ */
+export function SearchPanelFilters({
+  modal,
+  onOpenSavedSearch,
+}: {
+  modal: boolean;
+  onOpenSavedSearch?: (params: URLSearchParams) => void;
+}) {
+  return (
+    <div className="p-3">
+      <FilterControlsRow modal={modal} includeEntityTypeFilter onOpenSavedSearch={onOpenSavedSearch} />
+    </div>
+  );
+}
+
+/**
+ * When / How / Activity / Who / Where / toggles / sort for the Memory explorer
+ * — rendered inline after the What categories in MemoryEntityTypeNav.
+ */
+export function MemoryExplorerFilterControls() {
+  // Modal on a phone: a modal menu swallows the tap that closes it, so tapping
+  // away cannot also open whatever was under the finger (the first row of the
+  // list, usually). Desktop keeps the lighter non-modal menus, whose outside
+  // click goes through — no scroll lock, no scrollbar jump.
+  const { isMobile } = useDeviceLayout();
+
+  return <FilterControlsRow modal={isMobile === true} showSave={false} />;
+}
+
+/**
+ * Inline explorer filters: applied-filter chip drop area with Save on the same
+ * row. When / How / Activity / Who / Where / toggles / sort live in MemoryEntityTypeNav beside What.
+ */
+export function AdvancedFilters() {
+  return <FilterDropArea />;
+}
+
+/**
+ * "Save" — captures a name and persists the current query + selected
+ * entity types + tags as a SavedSearch (shown on the Saved Searches page).
+ */
+function FilterCountLabel() {
+  const [searchParams] = useSearchParams();
+  const activeFilterCount = countActiveFilters(searchParams);
+  const view = readMemoryView(searchParams.get('view'));
+  // Filters that are set but which the current view can't apply. They still
+  // count as active — they're in the URL and they bite in the other views — so
+  // the label reports them alongside the total rather than deducting them.
+  // Sort isn't part of `countActiveFilters` (it reorders rather than narrows),
+  // so a graph with only a sort set still has something to report here.
+  const dropped = droppedFilters(view, searchParams);
+
+  if (activeFilterCount === 0 && dropped.length === 0) {
+    return null;
+  }
+
+  return (
+    <span className="whitespace-nowrap text-xs text-muted-foreground">
+      {activeFilterCount > 0 && `${activeFilterCount} ${activeFilterCount === 1 ? 'filter' : 'filters'}`}
+      {dropped.length > 0 && (
+        <Tooltip delayDuration={200}>
+          <Tooltip.Content className="max-w-[260px]">
+            {dropped.map((dimension) => unsupportedReason(view, dimension)).join(' ')}
+          </Tooltip.Content>
+          <Tooltip.Trigger asChild>
+            <span
+              tabIndex={0}
+              className={cn(
+                'rounded underline decoration-dotted underline-offset-2',
+                activeFilterCount > 0 && 'ml-1',
+              )}
+            >
+              {activeFilterCount > 0 ? '· ' : ''}
+              {dropped.length} not applied here
+            </span>
+          </Tooltip.Trigger>
+        </Tooltip>
+      )}
+    </span>
+  );
+}
+
+/**
+ * "Save" — captures a name and persists the current query + selected
+ * entity types + tags as a SavedSearch (shown on the Saved Searches page).
+ * `trigger` replaces the Save button (the phone filter sheet's "Save search");
+ * it becomes the dialog trigger, so it must pass its props and ref on.
+ */
+export function SaveSearchButton({ trigger }: { trigger?: ReactElement } = {}) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [{ selectedEntityTypes }] = useDropdown();
+  const { toast } = useToast();
+
+  // The saved search these filters were loaded from, when there is one: Save
+  // then offers to update it in place as well as to save a new one. Online the
+  // resolver that loaded it put the same query in the cache, so this is a cache
+  // read, not a round trip; on a phone with a replica it is the phone's row.
+  const loadedId = searchParams.get(LOADED_SEARCH_PARAM);
+  const loaded = useSavedSearchById(loadedId);
+  // A phone with a replica saves into its own `saved_searches` table, online or
+  // off, and PowerSync carries the row up (localSavedSearches.ts); everywhere
+  // else the mutations below run.
+  const replica = useReplicaDatabase();
+  const answersFromDevice = useAnswersFromDevice();
+  // Sharing (the "make public" control) is gated while the access model is hardened,
+  // and needs the server to mint the link, so it is not offered while the phone is
+  // answering for itself.
+  const { isFeatureEnabled } = useFeatures();
+  const sharingEnabled = isFeatureEnabled('shared.search') && !answersFromDevice;
+
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  // The just-created saved search, handed to the share modal on "Save & share".
+  const [savedSearchToShare, setSavedSearchToShare] = useState<FragmentType<
+    typeof SavedSearchGridItemFragment
+  > | null>(null);
+
+  const [createSavedSearch, { loading: creating }] = useMutation(CREATE_SAVED_SEARCH, {
+    // Drop the cached list so the Saved Searches page refetches it with the new entry.
+    update(cache, { data }) {
+      if (data?.createSavedSearch?.success) {
+        cache.evict({ id: 'ROOT_QUERY', fieldName: 'savedSearches' });
+        cache.gc();
+      }
+    },
+  });
+  const [updateSavedSearch, { loading: updating }] = useMutation(UPDATE_SAVED_SEARCH, {
+    // The row itself updates by id; the list is dropped because it is ordered
+    // by last change and this search just moved to the top of it.
+    update(cache, { data }) {
+      if (data?.updateSavedSearch?.success) {
+        cache.evict({ id: 'ROOT_QUERY', fieldName: 'savedSearches' });
+        cache.gc();
+      }
+    },
+  });
+  const loading = creating || updating;
+
+  // What the explorer is showing right now, in the shape a saved search stores.
+  const currentDefinition = () => ({
+    query: searchParams.get('search')?.trim() || undefined,
+    tags: readListParam(searchParams, 'tags'),
+    entityTypes: savedEntityTypesFor(selectedEntityTypes),
+    filters: buildSavedSearchFilters(searchParams),
+  });
+
+  const handleSave = async (share: boolean) => {
+    const trimmed = name.trim();
+
+    if (!trimmed) {
+      return;
+    }
+
+    const { query, tags, entityTypes, filters } = currentDefinition();
+
+    if (replica) {
+      try {
+        const id = uuid7();
+
+        await createLocalSavedSearch(replica, { id, name: trimmed, query, entityTypes, tags, filters });
+        toast.success(`Saved search “${trimmed}”`);
+        setName('');
+        setOpen(false);
+        setSearchParams(
+          (params) => {
+            params.set(LOADED_SEARCH_PARAM, id);
+
+            return params;
+          },
+          { replace: true },
+        );
+
+        if (share) {
+          setSavedSearchToShare(
+            toResolvedSavedSearch({
+              id,
+              name: trimmed,
+              description: null,
+              query: query ?? null,
+              entityTypes: [...entityTypes],
+              tags: [...tags],
+              filters: filters ?? null,
+              isPublic: false,
+              shareToken: null,
+              isSeed: false,
+              createdAt: null,
+              updatedAt: null,
+            }) as unknown as FragmentType<typeof SavedSearchGridItemFragment>,
+          );
+        }
+      } catch (error) {
+        console.warn('[memory] Could not save the search on this phone', error);
+        toast.error('Failed to save search');
+      }
+
+      return;
+    }
+
+    try {
+      const result = await createSavedSearch({
+        variables: {
+          input: {
+            name: trimmed,
+            query,
+            entityTypes,
+            tags: tags.length > 0 ? tags : undefined,
+            filters,
+          },
+        },
+      });
+
+      const created = result.data?.createSavedSearch?.savedSearch;
+
+      if (created) {
+        toast.success(`Saved search “${trimmed}”`);
+        setName('');
+        setOpen(false);
+        // The explorer is now showing the search it just saved, so the next
+        // Save offers to update that one rather than the search it was
+        // loaded from before.
+        setSearchParams(
+          (params) => {
+            params.set(LOADED_SEARCH_PARAM, GlobalUID.parse('saved-search', created.id));
+
+            return params;
+          },
+          { replace: true },
+        );
+        // Hand the new search to the share modal so the user can grab a link
+        // without a trip to the Saved Searches page.
+        if (share) {
+          setSavedSearchToShare(created);
+        }
+      } else {
+        toast.error('Failed to save search');
+      }
+    } catch {
+      toast.error('Failed to save search');
+    }
+  };
+
+  // Write the current filters back over the loaded search, keeping its name
+  // and description. Every stored dimension is sent explicitly — `null` for an
+  // empty query or filter set, `[]` for no tags or types — because the update
+  // leaves out any field it is not given, and "I removed that filter" has to
+  // reach the row.
+  const handleUpdate = async () => {
+    if (!loaded) {
+      return;
+    }
+
+    const { query, tags, entityTypes, filters } = currentDefinition();
+
+    if (replica) {
+      try {
+        await updateLocalSavedSearch(replica, {
+          id: GlobalUID.parse('saved-search', loaded.id),
+          name: loaded.name ?? '',
+          description: loaded.description,
+          query: query ?? null,
+          entityTypes,
+          tags,
+          filters: filters ?? null,
+        });
+        toast.success(`Updated “${loaded.name}”`);
+        setName('');
+        setOpen(false);
+      } catch (error) {
+        console.warn('[memory] Could not update the search on this phone', error);
+        toast.error(`Failed to update “${loaded.name}”`);
+      }
+
+      return;
+    }
+
+    try {
+      const result = await updateSavedSearch({
+        variables: {
+          input: {
+            id: loaded.id,
+            name: loaded.name,
+            query: query ?? null,
+            entityTypes,
+            tags,
+            filters: filters ?? null,
+          },
+        },
+      });
+
+      if (result.data?.updateSavedSearch?.success) {
+        toast.success(`Updated “${loaded.name}”`);
+        setName('');
+        setOpen(false);
+      } else {
+        toast.error(`Failed to update “${loaded.name}”`);
+      }
+    } catch {
+      toast.error(`Failed to update “${loaded.name}”`);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog.Trigger asChild>
+        {trigger ?? (
+          <Button>
+            <Save className="mr-2 h-4 w-4" />
+            Save
+          </Button>
+        )}
+      </Dialog.Trigger>
+      {/* Part of the search panel it opens from, though portaled out of it: a
+          click inside must not read as a click outside the panel, which would
+          close the panel and unmount this dialog with it. */}
+      <Dialog.Content {...SEARCH_PANEL_LAYER_PROPS} className="sm:max-w-[420px]">
+        <Dialog.Header>
+          <Dialog.Title>Save this search</Dialog.Title>
+          <Dialog.Description>
+            Stores the current query, entity types, tags, and all active filters (who / where / when / how /
+            sort) so you can reuse them later.
+          </Dialog.Description>
+        </Dialog.Header>
+
+        {loaded && (
+          <div className="space-y-2 rounded-md border border-border bg-muted/40 p-3 text-sm">
+            <p className="text-muted-foreground">
+              These filters were loaded from{' '}
+              <span className="font-medium text-foreground">“{loaded.name}”</span>.
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full"
+              onClick={handleUpdate}
+              disabled={loading}
+            >
+              {updating ? 'Updating…' : `Update “${loaded.name}”`}
+            </Button>
+            <p className="text-xs text-muted-foreground">Or give it a new name below to keep both.</p>
+          </div>
+        )}
+
+        <div className="space-y-2 py-2">
+          <Label htmlFor="saved-search-name">Name</Label>
+          <Input
+            id="saved-search-name"
+            autoFocus
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                handleSave(false);
+              }
+            }}
+            placeholder="e.g. Work emails this month"
+          />
+        </div>
+
+        <Dialog.Footer>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={loading}>
+            Cancel
+          </Button>
+          {sharingEnabled && (
+            <Button variant="secondary" onClick={() => handleSave(true)} disabled={loading || !name.trim()}>
+              <Share2 className="mr-2 h-4 w-4" />
+              Save &amp; share
+            </Button>
+          )}
+          <Button onClick={() => handleSave(false)} disabled={loading || !name.trim()}>
+            {creating ? 'Saving…' : loaded ? 'Save as new' : 'Save'}
+          </Button>
+        </Dialog.Footer>
+      </Dialog.Content>
+
+      {savedSearchToShare && (
+        <ShareSavedSearchModal
+          savedSearch={savedSearchToShare}
+          onClose={() => setSavedSearchToShare(null)}
+          contentProps={SEARCH_PANEL_LAYER_PROPS}
+        />
+      )}
+    </Dialog>
+  );
+}
+
+/**
+ * The "Advanced" toggle. Lives in the global header (desktop) or above the mobile
+ * tabs; it controls the toolbar drawer via the page's lifted `open` state and
+ * flips an up/down chevron; the caller surfaces the active-filter count.
+ */
+export function AdvancedSearchToggle({
+  open,
+  onToggle,
+  className,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  className?: string;
+}) {
+  const label = open ? 'Close advanced search' : 'Open advanced search';
+
+  return (
+    <Tooltip.Provider>
+      <Tooltip delayDuration={400}>
+        <Tooltip.Trigger asChild>
+          <Button
+            type="button"
+            size="icon"
+            // Open state is signalled by the rotated chevron alone, and the
+            // active-filter count by the caller's adjacent text — a filled
+            // button here visually fuses with the clear-X beside it.
+            variant="outline"
+            onClick={onToggle}
+            // Keep focus in the search input (the toggle sits inset in it) so the
+            // suggestions panel doesn't blink out between mousedown and the toggle.
+            onMouseDown={(e) => e.preventDefault()}
+            aria-label={label}
+            aria-expanded={open}
+            className={cn('h-10 w-10 flex-shrink-0', open && 'rounded-b-none', className)}
+          >
+            <ChevronDown className={cn('h-4 w-4 transition-transform duration-100', open && 'rotate-180')} />
+          </Button>
+        </Tooltip.Trigger>
+        <Tooltip.Content side="bottom">{label}</Tooltip.Content>
+      </Tooltip>
+    </Tooltip.Provider>
+  );
+}
+
+/**
+ * The explorer toolbar body that sits under the unified header search:
+ * the advanced-search drawer — the drag-and-drop filter area, then What /
+ * When / How + located-only, semantic, sort, and save. `open` is controlled
+ * by the page. Wrapped in DropdownProvider so the useDropdown URL-param
+ * setters work.
+ */
+export function ExplorerToolbar({ open }: { open: boolean }) {
+  if (!open) {
+    return null;
+  }
+
+  return <AdvancedFilters />;
+}

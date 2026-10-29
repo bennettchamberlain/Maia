@@ -1,0 +1,77 @@
+import { useState, useEffect, useCallback } from 'react';
+
+import { fetchJson } from '@ci/common';
+
+import { useSessionAuth } from '@/hooks/useSessionAuth';
+
+import type { Thread } from './types';
+
+type ReturnType = [
+  {
+    thread: Thread | null;
+    loading: boolean;
+    error: unknown;
+  },
+  {
+    refetch: (opts?: { silent?: boolean }) => void;
+  },
+];
+
+export function useThreadService(id: string | null): ReturnType {
+  const { ready, headers } = useSessionAuth();
+
+  const [thread, setThread] = useState<Thread | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<unknown | null>(null);
+
+  const fetchThread = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (id == null || !ready) {
+        setThread(null);
+        setError(null);
+        setLoading(false);
+
+        return;
+      }
+
+      if (!opts?.silent) {
+        setLoading(true);
+        // What failed last time describes THAT request. Left in place it outlives the page moving to another chat or
+        // the person tapping Try again, and then reads as this request's failure.
+        setError(null);
+      }
+
+      try {
+        const thread = await fetchJson<Thread>(`/api/threads/${id}?includeMessages=true`, {
+          headers: {
+            ...headers,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        setThread(thread ?? null);
+        setError(null);
+      } catch (err) {
+        setError(err);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [headers, id, ready],
+  );
+
+  useEffect(() => {
+    void fetchThread();
+  }, [fetchThread]);
+
+  return [
+    {
+      thread,
+      loading,
+      error,
+    },
+    {
+      refetch: fetchThread,
+    },
+  ];
+}

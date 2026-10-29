@@ -1,0 +1,11 @@
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    DROP SCHEMA IF EXISTS ci_etl CASCADE;
+    DROP SCHEMA IF EXISTS ci_search CASCADE;
+    DROP SCHEMA IF EXISTS ci CASCADE;
+    DROP SCHEMA IF EXISTS pgboss CASCADE;
+
+    DELETE FROM public.schema_migrations;
+END $$;

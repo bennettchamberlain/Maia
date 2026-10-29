@@ -1,0 +1,5 @@
+.env
+.aider*
+dev-dist
+dist
+todo.md
