@@ -2794,7 +2794,7 @@ __metadata:
     jwt-decode: "npm:^4.0.0"
     knip: "npm:^5.66.0"
     leaflet: "npm:^1.9.4"
-    lottie-react: "npm:^2.4.1"
+    lottie-react: "npm:^3.1.2"
     oxlint: "npm:^1.36.0"
     playwright: "npm:^1.53.0"
     postcss: "npm:^8.5.23"
@@ -20763,15 +20763,15 @@ __metadata:
   languageName: node
   linkType: hard
 
-"lottie-react@npm:^2.4.1":
-  version: 2.4.2
-  resolution: "lottie-react@npm:2.4.2"
+"lottie-react@npm:^3.1.2":
+  version: 3.1.2
+  resolution: "lottie-react@npm:3.1.2"
   dependencies:
     lottie-web: "npm:^5.13.0"
   peerDependencies:
-    react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-    react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-  checksum: 10c0/ef893073be335f8a1fc24fd49ab40db0a63722e6fd257c2d5f1e9b5853895cda708cd5293d8d6174fe0bf6057c09ca1762b21aacf193f71ef9b8a07fc02e41eb
+    react: ^18.2.0 || ^19.0.0
+    react-dom: ^18.2.0 || ^19.0.0
+  checksum: 10c0/6e89e7ec6a2c93f12d0f3049ebb78178ceab9ac00dce2509ca331caeabeb72af5d976488d1b43d7b1b6e99e19a6c60b57d2d4ebf3f840db0b3f0d0e1bc84a3b5
   languageName: node
   linkType: hard
 
