@@ -2539,7 +2539,7 @@ __metadata:
     mime-types: "npm:^3.0.2"
     multer: "npm:^2.5.0"
     nodemon: "npm:^3.1.10"
-    ollama: "npm:^0.5.17"
+    ollama: "npm:^0.6.4"
     openai: "npm:^7.3.0"
     oxlint: "npm:^1.36.0"
     p-limit: "npm:^7.1.1"
@@ -22340,12 +22340,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"ollama@npm:^0.5.17":
-  version: 0.5.17
-  resolution: "ollama@npm:0.5.17"
+"ollama@npm:^0.6.4":
+  version: 0.6.4
+  resolution: "ollama@npm:0.6.4"
   dependencies:
     whatwg-fetch: "npm:^3.6.20"
-  checksum: 10c0/24091d8ccb5caf5a6216a75a3ffa44802a37fb4443abcd583f5f7ff437fbbd2f1606bb335250c3ca9b6a334e685a592d78105552fa87b3830cd30dd7c825374f
+  checksum: 10c0/f734e60ac1ac1d83ce81587e626982695cd6f639c3729b9a300529ab1b67e65b475d81dbf0add6e94057a47edf4823fd7e7a8d9065d66470a1d88584ddea5bdd
   languageName: node
   linkType: hard
 
