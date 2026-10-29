@@ -59,7 +59,7 @@ jobs:
 
       - name: Cache node modules
         id: cache-modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             **/node_modules
@@ -188,7 +188,7 @@ jobs:
         run: corepack enable
 
       - name: Restore node modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             **/node_modules
@@ -411,7 +411,7 @@ jobs:
         run: corepack enable
 
       - name: Restore node modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             **/node_modules
@@ -513,7 +513,7 @@ jobs:
         run: corepack enable
 
       - name: Restore node modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             **/node_modules
@@ -566,7 +566,7 @@ jobs:
         run: corepack enable
 
       - name: Restore node modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             **/node_modules
@@ -634,7 +634,7 @@ jobs:
         run: corepack enable
 
       - name: Restore node modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             **/node_modules
@@ -665,7 +665,7 @@ jobs:
         run: corepack enable
 
       - name: Restore node modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             **/node_modules

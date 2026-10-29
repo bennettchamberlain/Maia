@@ -173,7 +173,7 @@ jobs:
         run: corepack enable
 
       - name: Cache Yarn artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           # PnP install: there is no node_modules tree to cache.
           path: |
