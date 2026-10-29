@@ -229,7 +229,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Gate on EVERY secret this lane consumes, not a sample of them. The old gate
       # checked three of the seven, so a run missing APPLE_TEAM_ID or APPSTORE_PRIVATE_KEY
@@ -529,7 +529,7 @@ jobs:
     timeout-minutes: 40
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Same rule as the iOS gate: check all five secrets this lane consumes, not just the
       # keystore. A keystore with no ANDROID_KEY_ALIAS used to pass here and then fail deep

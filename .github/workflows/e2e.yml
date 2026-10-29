@@ -113,7 +113,7 @@ jobs:
       CI_IMPORT_INBOX_DIR: ${{ github.workspace }}/.e2e-import/inbox
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node
         uses: actions/setup-node@v4
