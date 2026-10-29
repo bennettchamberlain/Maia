@@ -127,12 +127,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@capacitor/local-notifications@npm:^7.0.0":
-  version: 7.0.6
-  resolution: "@capacitor/local-notifications@npm:7.0.6"
+"@capacitor/local-notifications@npm:^8.3.1":
+  version: 8.3.1
+  resolution: "@capacitor/local-notifications@npm:8.3.1"
   peerDependencies:
-    "@capacitor/core": ">=7.0.0"
-  checksum: 10c0/8e9a8f123a0c7588ca95de797816c70fe8d5340b6aece1eb084d8616ccec2cb4da243e04a19e075b8a37c032ad54a3c487a6aeda6f49960aa8a30f26ed92bb65
+    "@capacitor/core": ">=8.0.0"
+  checksum: 10c0/75d6ebaa650131674b11ab7b038779e47ac33975d28a0a615a49d4b80ff01f1c972582b8037d048c07a2779df24b7785c362a0c5cc7d32ce0356159267c6b8b4
   languageName: node
   linkType: hard
 
@@ -216,7 +216,7 @@ __metadata:
     "@capacitor/cli": "npm:^7.6.9"
     "@capacitor/core": "npm:^7.6.9"
     "@capacitor/filesystem": "npm:7.1.9"
-    "@capacitor/local-notifications": "npm:^7.0.0"
+    "@capacitor/local-notifications": "npm:^8.3.1"
     "@capacitor/push-notifications": "npm:^7.0.0"
     "@capacitor/splash-screen": "npm:^7.0.0"
     "@capacitor/status-bar": "npm:^7.0.0"
