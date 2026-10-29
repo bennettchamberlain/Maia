@@ -34,12 +34,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@capacitor/app@npm:^7.0.0":
-  version: 7.1.2
-  resolution: "@capacitor/app@npm:7.1.2"
+"@capacitor/app@npm:^8.1.2":
+  version: 8.1.2
+  resolution: "@capacitor/app@npm:8.1.2"
   peerDependencies:
-    "@capacitor/core": ">=7.0.0"
-  checksum: 10c0/f021839167ff2ada3cf7e7ce1a2c3f9c6314648dd2635385bdb12e34bd7bdb177601eb66eaedf0a71ef7276567774640382bb65fa6da588293886ecaeb1ced0e
+    "@capacitor/core": ">=8.0.0"
+  checksum: 10c0/4c92a23b0ce0b4c7272d6c3cd0443ff3102309c07e7e494a86ca00984d14f9bed333f7908ae0bc184a536435b487d8e36850382ff8e60b46e29a614de4e075da
   languageName: node
   linkType: hard
 
@@ -182,7 +182,7 @@ __metadata:
     "@capacitor-community/background-geolocation": "npm:^1.2.26"
     "@capacitor-community/sqlite": "npm:^7.0.1"
     "@capacitor-mlkit/barcode-scanning": "npm:^7.5.0"
-    "@capacitor/app": "npm:^7.0.0"
+    "@capacitor/app": "npm:^8.1.2"
     "@capacitor/browser": "npm:^7.0.0"
     "@capacitor/camera": "npm:^7.0.0"
     "@capacitor/cli": "npm:^7.6.9"
