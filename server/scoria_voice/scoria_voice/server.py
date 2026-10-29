@@ -76,10 +76,23 @@ class App:
             log.info("scoria memory: %s", "signed in" if ok else "unavailable")
         if self.cfg.brain_enabled:
             self.brain = Brain(self.cfg, self.memory, self.persona, self.broadcast_brain, self._persona_changed)
-            await self.brain.start()
+            # Parasail returns immediately. A local Ollama warm-up can sit on a
+            # huge model and must not delay the port or the PersonaPlex load.
+            if self.cfg.brain_provider != "ollama" and self.cfg.parasail_api_key:
+                await self.brain.start()
+            else:
+                asyncio.create_task(self._start_brain())
         if self.cfg.autoload:
             self.hold()
             self._ensure_load()
+
+    async def _start_brain(self) -> None:
+        try:
+            await asyncio.wait_for(self.brain.start(), timeout=20)
+        except asyncio.TimeoutError:
+            log.warning("brain startup timed out; continuing without a warm model")
+        except Exception:
+            log.exception("brain startup failed")
 
     async def ensure_stt(self) -> None:
         """Load whisper on first use (it may need a ~1.5 GB download); never blocks the port."""
