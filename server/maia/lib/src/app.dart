@@ -16,6 +16,7 @@ import 'package:maia_api/src/config.dart';
 import 'package:maia_api/src/db.dart';
 import 'package:maia_api/src/embeddings.dart';
 import 'package:maia_api/src/one/catalog.dart';
+import 'package:maia_api/src/one/extract.dart';
 import 'package:maia_api/src/one/done_page.dart';
 import 'package:maia_api/src/faults.dart';
 import 'package:maia_api/src/geocoder.dart';
@@ -995,10 +996,81 @@ class MaiaApp {
             }),
           )
           .timeout(const Duration(seconds: 45));
-      return res.body;
+      return _connectorResult(personId, platform, res.statusCode, res.body);
     } on Object catch (e) {
       return jsonEncode({'type': 'text', 'text': 'connector unavailable: $e'});
     }
+  }
+
+  Future<String> _connectorResult(
+    String personId,
+    String platform,
+    int status,
+    String body,
+  ) async {
+    Object? decoded;
+    try {
+      decoded = jsonDecode(body);
+    } on FormatException {
+      decoded = null;
+    }
+    if (decoded is! Map) {
+      return jsonEncode({
+        'type': 'text',
+        'text': 'One could not read $platform.',
+      });
+    }
+    final map = Map<String, dynamic>.from(decoded);
+    if (status >= 400 || map['error'] != null) {
+      final error = '${map['error'] ?? 'failed'}';
+      final text = error == 'reconnect_required'
+          ? '$platform needs a reconnect in One.'
+          : 'One could not read $platform ($error).';
+      return jsonEncode({'type': 'text', 'text': text});
+    }
+    if (map['actions'] is List && map['data'] == null) {
+      return jsonEncode({
+        'type': 'text',
+        'text': connectorActionPrompt(platform, map['actions']),
+      });
+    }
+    if (map['ok'] != true || map['data'] == null) {
+      final refusal = '${map['refusal'] ?? ''}'.trim();
+      final text = refusal.isEmpty
+          ? 'One returned nothing from $platform.'
+          : 'One refused $platform ($refusal).';
+      return jsonEncode({'type': 'text', 'text': text});
+    }
+    final rows = connectorCopies(platform, map['data']);
+    if (rows.isEmpty) {
+      return jsonEncode({
+        'type': 'text',
+        'text': 'One returned nothing to copy from $platform.',
+      });
+    }
+    final caller = db.asPerson(personId);
+    var copied = 0;
+    for (final row in rows) {
+      try {
+        await _upsertMemory(
+          caller,
+          kind: row.kind,
+          title: row.title,
+          body: row.body,
+          occurredAt: row.at,
+          source: 'one:$platform',
+          sourceId: row.sourceId,
+        );
+        copied++;
+      } on Object catch (e) {
+        stderr.writeln('connector: $e');
+      }
+    }
+    final lines = [for (final row in rows) '- ${row.title}'];
+    return jsonEncode({
+      'type': 'text',
+      'text': 'Copied $copied $platform rows into memory.\n${lines.join('\n')}',
+    });
   }
 
   Future<List<String>> _connectedPlatforms(gel.Client c) async {

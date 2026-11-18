@@ -111,6 +111,7 @@ void main() {
       greaterThan(prompt.indexOf('Current local time')),
     );
     expect(prompt, contains('gmail'));
+    expect(prompt, contains('copied into memory'));
   });
 
   test('a printed tool call is not a sentence', () {

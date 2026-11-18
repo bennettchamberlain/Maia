@@ -168,9 +168,9 @@ class ChatToolbox {
     if (connectorsAvailable && isOn('connector'))
       _fn(
         'connector',
-        'Use one connected app to complete work. Call with platform and '
-            'intent first. The result names an action_id and the fields it '
-            'needs. Call again with action_id plus path_params, query, or body.',
+        'Read a connected app through One. First call: platform and intent. '
+            'The result lists action_id values. Second call: action_id and '
+            'the fields it names. That call copies the rows into memory.',
         {
           'platform': {
             'type': 'string',

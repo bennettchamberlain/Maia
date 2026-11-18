@@ -89,6 +89,8 @@ String stableVoice({required String name, required String handle}) =>
     'a connected app, the clock, or a public fact that changes, such as '
     'news, a price, a winner, or a population. Arithmetic, spelling, '
     'translation, lists, definitions, and small talk need no tool. '
+    'When the turn lists a connected app, call connector before you say '
+    'you cannot see it. The rows from that call are copied into memory. '
     'Use remember only when they ask you to save something. '
     'A checklist they asked for is every item, not the first. '
     'After a tool, write the answer yourself. If the result does not '
@@ -113,10 +115,12 @@ String turnContext({
             'library_read, web_search, now, connector';
   final apps = connectors.isEmpty
       ? ''
-      : ' Connected apps: ${connectors.join(', ')}. Use the connector '
-            'tool to read or change them. Call it with platform and '
-            'intent, then again with action_id and the fields it lists. '
-            'Every name in that list is available.';
+      : ' Connected apps: ${connectors.join(', ')}. If this message is '
+            'about one of them, call connector before you answer. The first '
+            'call sends platform and intent. It returns action_id values. '
+            'Call again with action_id and the fields that action asks for. '
+            'That second call copies the rows into memory. Answer from the '
+            'copy. Do not say you cannot see an app on this list.';
   final shown = (screen ?? '').trim();
   final onScreen = shown.isEmpty
       ? ''
