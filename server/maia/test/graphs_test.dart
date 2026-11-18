@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:maia_api/src/chat/graphs.dart';
 import 'package:test/test.dart';
 
@@ -43,15 +45,32 @@ void main() {
     expect(checkpoint.waves, hasLength(2));
   });
 
-  test('memory that already names the account skips the connector', () async {
-    final book = playbookFor('What is in my GitHub account?');
+  test('earlier notes that mention github still read the account', () async {
+    const notes = '''
+{"type":"timeline","title":"Memory","children":[{"type":"memory","kind":"session","title":"Checks","body":"You asked about GitHub access. You asked for your repositories."},{"type":"memory","kind":"note","title":"Checks","body":"Assistant confirmed no Gmail access."}]}
+''';
+    final book = playbookFor(
+      'What is my GitHub login, and who sent my latest Gmail?',
+    );
+    final platforms = <String>[];
     final checkpoint = await runGraph(
       book: book!,
-      ask: 'What is in my GitHub account?',
-      call: (tool, arguments) async =>
-          '{"type":"text","text":"github repo maia"}',
+      ask: 'What is my GitHub login, and who sent my latest Gmail?',
+      call: (tool, arguments) async {
+        if (tool == 'memory_search') return notes;
+        final decoded = jsonDecode(arguments) as Map<String, dynamic>;
+        final platform = '${decoded['platform']}';
+        platforms.add(platform);
+        return '{"type":"text","text":"One could not read $platform (failed)."}';
+      },
     );
-    expect(checkpoint.calls.single.tool, 'memory_search');
-    expect(checkpoint.calls.single.failed, isFalse);
+    expect(platforms, ['github', 'gmail']);
+    expect(checkpoint.calls.map((call) => call.tool), [
+      'memory_search',
+      'connector',
+      'connector',
+    ]);
+    expect(checkpoint.note, contains('earlier notes'));
+    expect(checkpoint.note, contains('did not return'));
   });
 }

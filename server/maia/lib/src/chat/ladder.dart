@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// Which shelf a tool sits on. The model is told this order, and the
 /// turn refuses to leave memory until memory has been asked once.
 enum ToolPlane { memory, special, connector, web, computer }
@@ -32,19 +34,49 @@ bool consultMemoryFirst(String name) {
   return plane.index >= ToolPlane.connector.index;
 }
 
-/// A connected app with nothing in memory runs in this same step.
-/// The web and the desktop still wait for a second call.
+/// A connected app runs in this same step when memory has no live record.
+/// Earlier notes that mention the app are not that record. The web and
+/// the desktop still wait for a second call.
 bool runAlongsideEmptyMemory(String name, String memoryResult) {
-  if (!memoryResult.contains('no memories')) return false;
-  return name == 'connector' || name == 'sync';
+  if (name != 'connector' && name != 'sync') return false;
+  return memoryIsChatter(memoryResult);
+}
+
+/// True when memory has nothing, or only prior notes and session summaries.
+bool memoryIsChatter(String result) {
+  if (result.toLowerCase().contains('no memories')) return true;
+  try {
+    final decoded = jsonDecode(result);
+    final children = _memoryChildren(decoded);
+    if (children.isEmpty) return true;
+    for (final child in children) {
+      final kind = '${child['kind'] ?? ''}'.toLowerCase();
+      if (kind != 'note' && kind != 'session') return false;
+    }
+    return true;
+  } on FormatException {
+    return false;
+  }
+}
+
+List<Map<String, dynamic>> _memoryChildren(Object? node) {
+  if (node is! Map) return const [];
+  if (node['type'] == 'memory') {
+    return [Map<String, dynamic>.from(node)];
+  }
+  final raw = node['children'];
+  if (raw is! List) return const [];
+  return [for (final child in raw) ..._memoryChildren(child)];
 }
 
 /// What the model sees instead of a premature connector, web, or desktop call.
 String memoryFirstNote(String query, String memoryResult) {
-  final empty = memoryResult.contains('no memories');
-  final next = empty
-      ? 'Memory has nothing on this. Call this tool again if you still need it.'
-      : 'If this answers the person, stop. Call this tool again only if it does not.';
+  final chatter = memoryIsChatter(memoryResult);
+  final next = chatter
+      ? 'These are earlier notes, not the live account. '
+            'Call this tool again if you still need it.'
+      : 'If this answers the person, stop. '
+            'Call this tool again only if it does not.';
   return 'Checked memory first for "$query". $memoryResult $next';
 }
 

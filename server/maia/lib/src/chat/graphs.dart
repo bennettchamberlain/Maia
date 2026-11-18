@@ -1,12 +1,15 @@
 import 'dart:convert';
 
+import 'package:maia_api/src/chat/ladder.dart';
+
 /// Told to the model after a known-problem graph has run. The checkpoint
 /// is already in the thread. This is not a message from the person.
 const graphAnswerCue =
     "Answer the person's latest message from the checkpoint above. "
     'The graph has finished, so do not call a tool. '
     'A call that did not return is finished: say what it is able to '
-    'return, and say you do not have the fact. Do not invent it. '
+    'return, and say you do not have the fact. Earlier notes are not '
+    'the account. Do not invent it. '
     'Do not mention the graph, the checkpoint, or the tools.';
 
 /// One node. [after] are the node ids that must finish first.
@@ -72,11 +75,16 @@ class GraphCheckpoint {
       'Checkpoint for $playbookId. This graph is finished.',
     ];
     for (final call in calls) {
+      final notes =
+          call.tool == 'memory_search' && memoryIsChatter(call.result);
       bits.add(
         call.failed
             ? '${call.tool} on ${call.label} did not return. '
                   'It is able to ${call.able}. You do not have that fact. '
                   'Do not call it again.'
+            : notes
+            ? 'memory_search returned earlier notes, not the live account. '
+                  'Do not treat them as the login or the mailbox.'
             : '${call.tool} on ${call.label} returned. '
                   'Use that result and do not call it again.',
       );
@@ -147,7 +155,6 @@ Playbook? playbookFor(String text) {
         label: platform,
         able: 'read one page of the connected $platform account',
         after: const ['memory'],
-        when: (state) => _memoryMisses(state.results['memory'] ?? '', platform),
         args: (state) => {'platform': platform, 'intent': state.ask},
       ),
   ]);
@@ -182,12 +189,6 @@ bool _isRead(String lower) {
     if (lower.contains(cue)) return true;
   }
   return false;
-}
-
-bool _memoryMisses(String memory, String platform) {
-  final text = memory.toLowerCase();
-  if (text.contains('no memories')) return true;
-  return !text.contains(platform);
 }
 
 /// Runs [book] in supersteps. Independent nodes share a wave.

@@ -224,6 +224,57 @@ void main() {
     expect(turn.text, 'You have the maia repo.');
   });
 
+  test('session notes about github still read the live account', () async {
+    var reads = 0;
+    final box = ChatToolbox(
+      searchMemory: (c, query, limit) async => [
+        {
+          'id': 'n1',
+          'kind': 'session',
+          'title': 'Checks',
+          'body':
+              'You asked about GitHub access. You asked for your repositories.',
+        },
+        {
+          'id': 'n2',
+          'kind': 'note',
+          'title': 'Checks',
+          'body': 'Assistant confirmed no Gmail access.',
+        },
+      ],
+      recentMemory: (c, limit) async => [],
+      getMemory: (c, id) async => null,
+      remember: (c, title, body) async => '',
+      lifeGraph: (c) async => null,
+      connector: (args) async {
+        reads++;
+        return jsonEncode({
+          'type': 'text',
+          'text': 'One could not read ${args['platform']} (failed).',
+        });
+      },
+    );
+    final script = _Script(
+      (_) =>
+          _say('GitHub is able to return a login. I do not have the account.'),
+    );
+    final turn = await runChatTurn(
+      harness: _harness(script),
+      frame: [
+        {'role': 'user', 'content': 'What is my GitHub login?'},
+      ],
+      toolbox: box,
+      db: _Db(),
+      emit: (_, _) {},
+    );
+    expect(reads, 1);
+    expect(turn.tools.map((call) => call['name']), [
+      'memory_search',
+      'connector',
+    ]);
+    expect(turn.text, contains('do not have'));
+  });
+
   test('a sync that is not pulling still reads the account', () async {
     var reads = 0;
     final box = ChatToolbox(
