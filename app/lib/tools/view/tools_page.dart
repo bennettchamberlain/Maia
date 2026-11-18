@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:maia_api_client/maia_api_client.dart';
 import 'package:maia_app/chat/voice_cubit.dart';
 import 'package:maia_app/config/chat_settings_cubit.dart';
+import 'package:maia_app/one/callback_forwarder.dart';
 import 'package:maia_app/ui/chrome.dart';
 import 'package:maia_app/ui/fault.dart';
 import 'package:maia_models/maia_models.dart';
@@ -111,7 +112,11 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
 
   Future<void> _openOauth(String? url) async {
     if (url == null) return;
-    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    final opened = await OneCallbackForwarder.instance.browserUrl(
+      _api.baseUrl,
+      Uri.parse(url),
+    );
+    await launchUrl(opened, mode: LaunchMode.externalApplication);
   }
 
   Future<void> _connect(String platform) async {

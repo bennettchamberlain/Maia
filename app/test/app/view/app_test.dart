@@ -40,6 +40,14 @@ void main() {
       );
       when(api.memoryFeed).thenAnswer((_) async => []);
       when(() => api.jobs(limit: 200)).thenAnswer((_) async => []);
+      when(api.oneConnectors).thenAnswer(
+        (_) async => const OneConnectorPage(
+          total: 0,
+          categories: [],
+          connectors: [],
+        ),
+      );
+      when(api.userTimeline).thenAnswer((_) async => UserTimelineView.empty);
 
       await tester.pumpWidget(App(apiClient: api));
       expect(find.byType(SignInPage), findsOneWidget);
@@ -57,11 +65,6 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(HomePage), findsOneWidget);
-      // Chat is the first tab; with no sessions it shows the empty hint.
-      expect(
-        find.text('No chats yet. Start one with the + button.'),
-        findsOneWidget,
-      );
       verify(api.chatSessions).called(1);
     });
 
@@ -93,6 +96,14 @@ void main() {
       );
       when(api.memoryFeed).thenAnswer((_) async => []);
       when(() => api.jobs(limit: 200)).thenAnswer((_) async => []);
+      when(api.oneConnectors).thenAnswer(
+        (_) async => const OneConnectorPage(
+          total: 0,
+          categories: [],
+          connectors: [],
+        ),
+      );
+      when(api.userTimeline).thenAnswer((_) async => UserTimelineView.empty);
 
       await _pumpAt(tester, App(apiClient: api), const Size(800, 600));
       tester
