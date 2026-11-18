@@ -13,6 +13,7 @@ import 'package:maia_app/chat/view/file_chip.dart';
 import 'package:maia_app/chat/view/timeline_column.dart';
 import 'package:maia_app/config/chat_settings_cubit.dart';
 import 'package:maia_app/ui/chrome.dart';
+import 'package:maia_app/ui/maia_cloud.dart';
 import 'package:maia_app/ui/fault.dart';
 import 'package:maia_app/ui/selection_menu.dart';
 import 'package:maia_models/maia_models.dart';
@@ -436,90 +437,11 @@ class _TalkingBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final talking = context.select<VoiceCubit, bool>(
-      (v) => v.state.enabled && v.state.speaking,
-    );
-    if (!talking) return const SizedBox.shrink();
-    return const Padding(
-      padding: EdgeInsets.only(bottom: 8),
-      child: Center(child: _TalkingOrb()),
-    );
-  }
-}
-
-class _TalkingOrb extends StatefulWidget {
-  const new();
-
-  @override
-  State<_TalkingOrb> createState() => _TalkingOrbState();
-}
-
-class _TalkingOrbState extends State<_TalkingOrb>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _pulse;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulse = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _pulse.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
-    final ink = theme.colorScheme.foreground;
-    final paper = theme.colorScheme.background;
-    return AnimatedBuilder(
-      animation: _pulse,
-      builder: (context, _) {
-        final t = _pulse.value;
-        final glow = 0.12 + 0.16 * math.sin(t * math.pi * 2);
-        return Container(
-          width: 64,
-          height: 36,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: ink,
-            borderRadius: const BorderRadius.all(Radius.circular(18)),
-            boxShadow: [
-              BoxShadow(
-                color: ink.withValues(alpha: glow),
-                blurRadius: 16,
-                spreadRadius: 1,
-              ),
-            ],
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [for (var i = 0; i < 4; i++) _bar(paper, t, i)],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _bar(Color color, double t, int index) {
-    final wave = math.sin((t + index * 0.18) * math.pi * 2);
-    final height = 8 + 14 * (0.5 + 0.5 * wave);
+    final voice = context.watch<VoiceCubit>().state;
+    if (!voice.enabled) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2),
-      child: Container(
-        width: 3,
-        height: height,
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: const BorderRadius.all(Radius.circular(2)),
-        ),
-      ),
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Center(child: MaiaCloud(speaking: voice.speaking)),
     );
   }
 }
