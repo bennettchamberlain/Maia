@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:gel/gel.dart' as gel;
 import 'package:http/http.dart' as http;
+import 'package:maia_api/src/agent.dart';
 
 /// Host tools the chat model can call. OpenClaw keeps its own; Parasail
 /// and Ollama run these here so memory and the web stay on the server.
@@ -13,6 +14,9 @@ class ChatToolbox {
     required this.remember,
     required this.lifeGraph,
     this.youApiKey,
+    this.openRouterApiKey,
+    this.openRouterBaseUrl = 'https://openrouter.ai/api/v1',
+    this.openRouterModel = 'google/gemini-2.5-flash-lite',
     this.disabled = const {},
     http.Client? httpClient,
   }) : _http = httpClient ?? http.Client();
@@ -31,10 +35,20 @@ class ChatToolbox {
   remember;
   final Future<Map<String, dynamic>?> Function(gel.Client c) lifeGraph;
   final String? youApiKey;
+
+  /// Used when You.com has no key. Search runs on OpenRouter's web plugin.
+  final String? openRouterApiKey;
+  final String openRouterBaseUrl;
+  final String openRouterModel;
   final Set<String> disabled;
   final http.Client _http;
 
-  bool get webAvailable => youApiKey != null && youApiKey!.isNotEmpty;
+  bool get youConfigured => youApiKey != null && youApiKey!.isNotEmpty;
+
+  bool get openRouterConfigured =>
+      openRouterApiKey != null && openRouterApiKey!.isNotEmpty;
+
+  bool get webAvailable => youConfigured || openRouterConfigured;
 
   bool isOn(String name) => !disabled.contains(name);
 
@@ -49,7 +63,7 @@ class ChatToolbox {
     _info('life_graph', 'Goals, projects, habits, people and relationships.'),
     _info(
       'web_search',
-      'Search the public web (You.com). Use for news, facts, places.',
+      'Search the public web. Use for news, facts, places.',
       available: webAvailable,
     ),
     _info('now', 'Current local date and time.'),
@@ -158,6 +172,7 @@ class ChatToolbox {
     if (q.isEmpty) {
       return jsonEncode({'type': 'text', 'text': 'query required'});
     }
+    if (!youConfigured) return _openRouterSearch(q);
     final r = await _http.get(
       Uri.https('api.you.com', '/v1/search', {'query': q, 'count': '5'}),
       headers: {'X-API-Key': youApiKey!},
@@ -186,6 +201,78 @@ class ChatToolbox {
             'url': h['url'] ?? '',
             'snippet': h['description'] ?? '',
           },
+      ],
+    });
+  }
+
+  Future<String> _openRouterSearch(String query) async {
+    final uri = AgentClient.completionsUri(Uri.parse(openRouterBaseUrl));
+    final headers = {
+      'content-type': 'application/json',
+      'authorization': 'Bearer $openRouterApiKey',
+      'HTTP-Referer': 'http://127.0.0.1:8090',
+      'X-Title': 'Maia',
+    };
+    final messages = [
+      {
+        'role': 'user',
+        'content': 'Search the public web and cite each source.\nQuery: $query',
+      },
+    ];
+    var response = await _http.post(
+      uri,
+      headers: headers,
+      body: jsonEncode({
+        'model': openRouterModel,
+        'messages': messages,
+        'plugins': [
+          {'id': 'web', 'max_results': 5},
+        ],
+        'max_tokens': 400,
+      }),
+    );
+    if (response.statusCode == 400) {
+      response = await _http.post(
+        uri,
+        headers: headers,
+        body: jsonEncode({
+          'model': openRouterModel,
+          'messages': messages,
+          'tools': [
+            {
+              'type': 'openrouter:web_search',
+              'parameters': {'max_results': 5},
+            },
+          ],
+          'max_tokens': 400,
+        }),
+      );
+    }
+    if (response.statusCode >= 400) {
+      return jsonEncode({
+        'type': 'text',
+        'text': 'web search failed (${response.statusCode})',
+      });
+    }
+    Object? decoded;
+    try {
+      decoded = jsonDecode(response.body);
+    } on FormatException {
+      return jsonEncode({'type': 'text', 'text': 'web search failed'});
+    }
+    final links = linksFromOpenRouter(decoded);
+    if (links.isEmpty) {
+      final text = answerFromOpenRouter(decoded);
+      return jsonEncode({
+        'type': 'text',
+        'text': text ?? 'no results',
+      });
+    }
+    return jsonEncode({
+      'type': 'column',
+      'children': [
+        {'type': 'heading', 'text': query},
+        ...links,
       ],
     });
   }
@@ -341,4 +428,51 @@ class ChatToolbox {
       },
     },
   };
+}
+
+/// Link cards from an OpenRouter chat completion that used web search.
+List<Map<String, dynamic>> linksFromOpenRouter(Object? decoded) {
+  final message = _openRouterMessage(decoded);
+  if (message == null) return const [];
+  final annotations = message['annotations'];
+  if (annotations is! List) return const [];
+  final links = <Map<String, dynamic>>[];
+  final seen = <String>{};
+  for (final item in annotations) {
+    if (item is! Map) continue;
+    final cite = item['url_citation'];
+    if (cite is! Map) continue;
+    final url = cite['url'];
+    if (url is! String || url.isEmpty || !seen.add(url)) continue;
+    final title = cite['title'];
+    final content = cite['content'];
+    links.add({
+      'type': 'link',
+      'title': title is String && title.trim().isNotEmpty ? title.trim() : url,
+      'url': url,
+      'snippet': content is String ? content : '',
+    });
+    if (links.length == 5) break;
+  }
+  return links;
+}
+
+/// Assistant text from an OpenRouter completion, when there are no citations.
+String? answerFromOpenRouter(Object? decoded) {
+  final message = _openRouterMessage(decoded);
+  final content = message?['content'];
+  if (content is! String) return null;
+  final text = content.trim();
+  return text.isEmpty ? null : text;
+}
+
+Map<String, dynamic>? _openRouterMessage(Object? decoded) {
+  if (decoded is! Map) return null;
+  final choices = decoded['choices'];
+  if (choices is! List || choices.isEmpty) return null;
+  final first = choices.first;
+  if (first is! Map) return null;
+  final message = first['message'];
+  if (message is! Map) return null;
+  return Map<String, dynamic>.from(message);
 }

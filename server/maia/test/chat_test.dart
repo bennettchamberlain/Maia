@@ -201,6 +201,51 @@ data: [DONE]
       expect(auth, 'Bearer test-key');
     });
   });
+
+  test('OpenRouter citations become link cards without a You.com key', () {
+    final links = linksFromOpenRouter({
+      'choices': [
+        {
+          'message': {
+            'content': 'Lisbon is sunny.',
+            'annotations': [
+              {
+                'type': 'url_citation',
+                'url_citation': {
+                  'url': 'https://example.com/lisbon',
+                  'title': 'Lisbon weather',
+                  'content': 'Sunny and 22 C.',
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    expect(links, [
+      {
+        'type': 'link',
+        'title': 'Lisbon weather',
+        'url': 'https://example.com/lisbon',
+        'snippet': 'Sunny and 22 C.',
+      },
+    ]);
+    final box = ChatToolbox(
+      searchMemory: (c, query, limit) async => [],
+      recentMemory: (c, limit) async => [],
+      getMemory: (c, id) async => null,
+      remember: (c, title, body) async => '',
+      lifeGraph: (c) async => null,
+      openRouterApiKey: 'sk-or-test',
+    );
+    expect(box.webAvailable, isTrue);
+    expect(
+      box.definitions.any(
+        (tool) => tool['function']['name'] == 'web_search',
+      ),
+      isTrue,
+    );
+  });
 }
 
 class _SseClient extends http.BaseClient {

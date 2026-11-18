@@ -875,6 +875,9 @@ class MaiaApp {
       return jsonDecode(row) as Map<String, dynamic>;
     },
     youApiKey: prefs.youKey ?? config.youApiKey,
+    openRouterApiKey: config.openrouterApiKey,
+    openRouterBaseUrl: config.openrouterBaseUrl,
+    openRouterModel: config.openrouterChatModel,
     disabled: prefs.disabled,
   );
 
