@@ -25,6 +25,7 @@ import 'package:maia_api/src/graph/graph_block.dart';
 import 'package:maia_api/src/harness/harness.dart';
 import 'package:maia_api/src/library/store.dart';
 import 'package:maia_api/src/jobs/dream_job.dart';
+import 'package:maia_api/src/jobs/job_mirror.dart';
 import 'package:maia_api/src/queries.dart';
 import 'package:maia_api/src/timeline/summary.dart';
 import 'package:maia_api/src/timeline/writer.dart';
@@ -2671,11 +2672,55 @@ class MaiaApp {
   ) async {
     final token = _jobToken(personId);
     for (final platform in platforms) {
-      await _enqueue(c, 'etl', {
-        'person_id': personId,
-        'platform': platform,
-        'token': token,
-      }, options: SendOptions(singletonKey: '$personId:$platform'));
+      await _enqueue(
+        c,
+        'etl',
+        {
+          'person_id': personId,
+          'platform': platform,
+          'token': token,
+        },
+        recordName: 'etl:$platform',
+        options: SendOptions(singletonKey: '$personId:$platform'),
+      );
+    }
+  }
+
+  /// Queues a sync for every connected account. An open mirror less than
+  /// 15 minutes old is left alone, so a restart does not pile up rows.
+  Future<void> syncConnected() async {
+    if (jobs == null) return;
+    final raw = jsonDecode(
+      await db.bypass.queryJSON(
+        r'''
+        select OneGrant {
+          platforms,
+          one_user_id,
+          owner: { id },
+        }
+        filter not exists .revoked_at
+        ''',
+      ),
+    );
+    if (raw is! List) return;
+    for (final row in raw) {
+      if (row is! Map) continue;
+      final oneUser = '${row['one_user_id']}';
+      if (oneUser.isEmpty || oneUser.startsWith('local:')) continue;
+      final owner = row['owner'];
+      if (owner is! Map) continue;
+      final personId = '${owner['id']}';
+      if (personId.isEmpty) continue;
+      final platforms = (row['platforms'] as List<dynamic>? ?? const [])
+          .map((e) => e.toString())
+          .where((p) => p.isNotEmpty)
+          .toList();
+      if (platforms.isEmpty) continue;
+      try {
+        await _enqueueEtl(db.asPerson(personId), personId, platforms);
+      } on Object {
+        // One person's grant should not stop the others.
+      }
     }
   }
 
@@ -3349,11 +3394,28 @@ class MaiaApp {
     gel.Client c,
     String name,
     Map<String, dynamic> data, {
+    String? recordName,
     String? subjectId,
     SendOptions options = const SendOptions(),
   }) async {
     final q = jobs;
     if (q == null) return;
+    final shown = recordName ?? name;
+    if (options.singletonKey != null) {
+      final open = await c.queryJSON(
+        r'''
+        select JobRecord { created_at }
+        filter .name = <str>$name
+          and .state in {JobState.created, JobState.active, JobState.retry}
+        order by .created_at desc
+        limit 1
+        ''',
+        {'name': shown},
+      );
+      if (openMirrorBlocks(newestOpenCreatedAt(open), DateTime.now())) {
+        return;
+      }
+    }
     final id = await q.send(name, data, options);
     if (id == null) return;
     await c.execute(
@@ -3366,7 +3428,7 @@ class MaiaApp {
         subject := (select Owned filter .id = <optional uuid>$subject limit 1),
       }
       ''',
-      {'name': name, 'pgboss_id': id, 'subject': subjectId},
+      {'name': shown, 'pgboss_id': id, 'subject': subjectId},
     );
   }
 

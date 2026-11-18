@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:postgres/postgres.dart';
 import 'package:maia_api/maia_api.dart';
+import 'package:maia_api/src/jobs/job_mirror.dart';
 import 'package:maia_jobs/maia_jobs.dart';
 import 'package:shelf/shelf_io.dart' as io;
 
@@ -25,9 +26,10 @@ Future<void> main() async {
         );
 
   PgBossQueue? jobs;
+  Pool<void>? pool;
   if (config.pgUrl case final url?) {
     final u = Uri.parse(url);
-    final pool = Pool.withEndpoints([
+    final opened = Pool<void>.withEndpoints([
       Endpoint(
         host: u.host,
         port: u.port == 0 ? 5432 : u.port,
@@ -36,8 +38,9 @@ Future<void> main() async {
         password: u.userInfo.split(':').last,
       ),
     ], settings: const PoolSettings(sslMode: SslMode.disable));
-    await pool.run((s) => const PgBossSchema().install(s));
-    jobs = PgBossQueue(pool);
+    pool = opened;
+    await opened.run((s) => const PgBossSchema().install(s));
+    jobs = PgBossQueue(opened);
     await jobs.createQueue('embed');
     await jobs.createQueue(
       'derive-presence',
@@ -84,28 +87,41 @@ Future<void> main() async {
     if (Directory('$root/etl').existsSync()) {
       final fixture = File('$root/etl/fixtures/sample.json');
       final oneSecret = Platform.environment['ONE_SECRET'];
-      await runner.work(
-        'etl',
-        PythonJob(
-          python: python,
-          module: 'etl.worker',
-          workdir: root,
-          environment: {
-            'PYTHONPATH': root,
-            'MAIA_API_URL': 'http://127.0.0.1:${config.port}',
-            'CONNECT_URL': config.connectSidecarUrl,
-            if ((oneSecret == null || oneSecret.isEmpty) &&
-                fixture.existsSync())
-              'MAIA_ETL_FIXTURE': fixture.path,
-          },
-        ).run,
+      final etl = PythonJob(
+        python: python,
+        module: 'etl.worker',
+        workdir: root,
+        environment: {
+          'PYTHONPATH': root,
+          'MAIA_API_URL': 'http://127.0.0.1:${config.port}',
+          'CONNECT_URL': config.connectSidecarUrl,
+          if ((oneSecret == null || oneSecret.isEmpty) && fixture.existsSync())
+            'MAIA_ETL_FIXTURE': fixture.path,
+        },
       );
+      await runner.work('etl', (job) {
+        return mirrorPythonJob(
+          db,
+          data: job.data,
+          pgbossId: job.id,
+          inner: () => etl.run(job),
+        );
+      });
     }
     if (Directory('$root/swarm').existsSync()) {
-      await runner.work(
-        'weave',
-        PythonJob(python: python, module: 'swarm.weave', workdir: root).run,
+      final weave = PythonJob(
+        python: python,
+        module: 'swarm.weave',
+        workdir: root,
       );
+      await runner.work('weave', (job) {
+        return mirrorPythonJob(
+          db,
+          data: job.data,
+          pgbossId: job.id,
+          inner: () => weave.run(job),
+        );
+      });
     }
     await runner.work(
       'dream',
@@ -119,11 +135,14 @@ Future<void> main() async {
         expireIn: Duration(minutes: 30),
       ),
     );
+    final boss = pool;
+    if (boss != null) await reconcileJobMirrors(db, boss);
     await runner.start();
   }
 
-  // The only nightly job. Promotion and interest research share this hour.
+  // Nightly research, and a sync pass so connected accounts keep cloning.
   DreamClock? dreams;
+  SyncClock? sync;
   if (jobs != null) {
     dreams = DreamClock(jobs);
     dreams.start();
@@ -184,6 +203,9 @@ Future<void> main() async {
     agent: gateway,
   );
   await app.ensureBootstrap();
+  if (jobs != null) {
+    sync = SyncClock(app.syncConnected)..start();
+  }
 
   final server = await io.serve(
     app.handler,
@@ -200,6 +222,7 @@ Future<void> main() async {
 
   ProcessSignal.sigint.watch().listen((_) async {
     dreams?.stop();
+    sync?.stop();
     await runner?.stop();
     await server.close(force: true);
     await db.close();
