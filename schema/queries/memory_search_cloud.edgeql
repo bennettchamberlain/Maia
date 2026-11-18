@@ -14,5 +14,7 @@ select MemoryItem {
   distance := ext::pgvector::cosine_distance(.embedding_cloud, q),
 }
 filter exists .embedding_cloud
+  and .tier != MemoryTier.review
+  and .status = RecordStatus.active
 order by ext::pgvector::cosine_distance(.embedding_cloud, q) asc
 limit <int64>$limit;

@@ -13,6 +13,8 @@ select MemoryItem {
   place: { id, name, city, region, country, lat, lng },
   distance := <float64>0.5,
 }
-filter (.title ilike pattern) or (.body ilike pattern)
+filter ((.title ilike pattern) or (.body ilike pattern))
+  and .tier != MemoryTier.review
+  and .status = RecordStatus.active
 order by .occurred_at desc
 limit <int64>$limit;
