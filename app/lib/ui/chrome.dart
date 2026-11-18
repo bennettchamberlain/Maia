@@ -456,3 +456,23 @@ class _PulseState extends State<_Pulse> with SingleTickerProviderStateMixin {
     );
   }
 }
+
+/// Grows and shrinks [child] on a cubic curve.
+class MaiaExpand extends StatelessWidget {
+  const new({required this.expanded, required this.child, super.key});
+
+  final bool expanded;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 240),
+      curve: Curves.easeInOutCubic,
+      alignment: Alignment.topCenter,
+      child: expanded
+          ? child
+          : const SizedBox(width: double.infinity, height: 0),
+    );
+  }
+}

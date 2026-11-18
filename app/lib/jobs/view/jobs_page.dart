@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:maia_api_client/maia_api_client.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:maia_app/jobs/job_groups.dart';
 import 'package:maia_app/jobs/jobs.dart';
 import 'package:maia_app/ui/chrome.dart';
 import 'package:maia_models/maia_models.dart';
@@ -31,6 +32,7 @@ class JobsView extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             MaiaHeader(title: 'Jobs', actions: [_RefreshButton()]),
+            _SyncNote(),
             _StateFilter(),
           ],
         ),
@@ -53,6 +55,23 @@ class _RefreshButton extends StatelessWidget {
       busy: refreshing,
       icon: const Icon(LucideIcons.refreshCw, size: 16),
       onPressed: () => context.read<JobsBloc>().add(const JobsRefreshed()),
+    );
+  }
+}
+
+class _SyncNote extends StatelessWidget {
+  const new();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      child: Text(
+        'The cloud holds the record. This device keeps a cache, and sync '
+        'keeps running.',
+        style: theme.textTheme.muted,
+      ),
     );
   }
 }
@@ -131,19 +150,99 @@ class _JobsBody extends StatelessWidget {
           onRetry: () => context.read<JobsBloc>().add(const JobsRefreshed()),
         );
       case JobsStatus.success:
-        if (state.jobs.isEmpty) {
-          return const MaiaEmpty('No jobs.');
+        final groups = groupJobs(state.jobs);
+        if (groups.isEmpty) {
+          return const MaiaEmpty(
+            'Nothing is syncing yet. Connect an account and Maia starts '
+            'keeping a copy.',
+          );
         }
         return ListView.separated(
-          itemCount: state.jobs.length,
+          itemCount: groups.length,
           separatorBuilder: (_, _) => const MaiaDivider.horizontal(),
-          itemBuilder: (context, i) => _JobTile(job: state.jobs[i]),
+          itemBuilder: (context, i) => _JobGroupTile(group: groups[i]),
         );
     }
   }
 }
 
-class _JobTile extends StatelessWidget {
+class _JobGroupTile extends StatefulWidget {
+  const new({required this.group});
+
+  final JobGroup group;
+
+  @override
+  State<_JobGroupTile> createState() => _JobGroupTileState();
+}
+
+class _JobGroupTileState extends State<_JobGroupTile> {
+  var _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    final group = widget.group;
+    final latest = group.latest;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          onTap: () => setState(() => _open = !_open),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Icon(
+                  _iconFor(latest.state),
+                  size: 16,
+                  color: _colorFor(latest.state, theme.colorScheme),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(jobTitle(group.name), style: theme.textTheme.p),
+                      Text(
+                        group.jobs.length == 1
+                            ? group.summary
+                            : '${group.summary} · ${group.jobs.length} runs',
+                        style: theme.textTheme.muted,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  _ago(
+                    latest.completedAt ?? latest.startedAt ?? latest.createdAt,
+                  ),
+                  style: theme.textTheme.muted,
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  _open ? LucideIcons.chevronUp : LucideIcons.chevronDown,
+                  size: 16,
+                  color: theme.colorScheme.mutedForeground,
+                ),
+              ],
+            ),
+          ),
+        ),
+        MaiaExpand(
+          expanded: _open,
+          child: Column(
+            children: [
+              for (final job in group.jobs) _JobRun(job: job),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _JobRun extends StatelessWidget {
   const new({required this.job});
 
   final JobRecord job;
@@ -157,20 +256,13 @@ class _JobTile extends StatelessWidget {
       ?job.error,
     ].join(' · ');
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.fromLTRB(44, 0, 16, 12),
       child: Row(
         children: [
-          Icon(
-            _iconFor(job.state),
-            size: 16,
-            color: _colorFor(job.state, theme.colorScheme),
-          ),
-          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(job.name, style: theme.textTheme.p),
                 if (subtitle.isNotEmpty)
                   Text(
                     subtitle,
@@ -182,53 +274,47 @@ class _JobTile extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              _badge(job.state),
-              const SizedBox(height: 4),
-              Text(
-                _ago(job.completedAt ?? job.startedAt ?? job.createdAt),
-                style: theme.textTheme.muted,
-              ),
-            ],
+          _badge(job.state),
+          const SizedBox(width: 8),
+          Text(
+            _ago(job.completedAt ?? job.startedAt ?? job.createdAt),
+            style: theme.textTheme.muted,
           ),
         ],
       ),
     );
   }
+}
 
-  static IconData _iconFor(JobState state) => switch (state) {
-    JobState.created => LucideIcons.clock,
-    JobState.retry => LucideIcons.rotateCcw,
-    JobState.active => LucideIcons.play,
-    JobState.completed => LucideIcons.circleCheck,
-    JobState.cancelled => LucideIcons.ban,
-    JobState.failed => LucideIcons.circleAlert,
+IconData _iconFor(JobState state) => switch (state) {
+  JobState.created => LucideIcons.clock,
+  JobState.retry => LucideIcons.rotateCcw,
+  JobState.active => LucideIcons.play,
+  JobState.completed => LucideIcons.circleCheck,
+  JobState.cancelled => LucideIcons.ban,
+  JobState.failed => LucideIcons.circleAlert,
+};
+
+Color _colorFor(JobState state, ShadColorScheme scheme) => switch (state) {
+  JobState.failed => scheme.destructive,
+  JobState.active || JobState.completed => scheme.foreground,
+  _ => scheme.mutedForeground,
+};
+
+Widget _badge(JobState state) {
+  final child = Text(state.name);
+  return switch (state) {
+    JobState.failed => ShadBadge.destructive(child: child),
+    JobState.completed => ShadBadge.secondary(child: child),
+    JobState.active => ShadBadge(child: child),
+    _ => ShadBadge.outline(child: child),
   };
+}
 
-  static Color _colorFor(JobState state, ShadColorScheme scheme) =>
-      switch (state) {
-        JobState.failed => scheme.destructive,
-        JobState.active || JobState.completed => scheme.foreground,
-        _ => scheme.mutedForeground,
-      };
-
-  static Widget _badge(JobState state) {
-    final child = Text(state.name);
-    return switch (state) {
-      JobState.failed => ShadBadge.destructive(child: child),
-      JobState.completed => ShadBadge.secondary(child: child),
-      JobState.active => ShadBadge(child: child),
-      _ => ShadBadge.outline(child: child),
-    };
-  }
-
-  static String _ago(DateTime t) {
-    final d = DateTime.now().toUtc().difference(t.toUtc());
-    if (d.inMinutes < 1) return 'just now';
-    if (d.inHours < 1) return '${d.inMinutes}m ago';
-    if (d.inDays < 1) return '${d.inHours}h ago';
-    return '${d.inDays}d ago';
-  }
+String _ago(DateTime t) {
+  final d = DateTime.now().toUtc().difference(t.toUtc());
+  if (d.inMinutes < 1) return 'just now';
+  if (d.inHours < 1) return '${d.inMinutes}m ago';
+  if (d.inDays < 1) return '${d.inHours}h ago';
+  return '${d.inDays}d ago';
 }
