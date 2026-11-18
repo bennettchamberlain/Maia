@@ -225,22 +225,14 @@ class _SubmitButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.watch<SignInBloc>().state;
     final submitting = state.status == SignInStatus.submitting;
-    return ShadButton(
+    return MaiaBusyButton(
       key: const Key('signIn_submit_button'),
       width: double.infinity,
+      label: 'Sign in',
+      busyLabel: 'Signing in',
+      busy: submitting,
       enabled: state.canSubmit,
-      onPressed: state.canSubmit
-          ? () => context.read<SignInBloc>().add(const SignInSubmitted())
-          : null,
-      child: submitting
-          ? SizedBox.square(
-              dimension: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: ShadTheme.of(context).colorScheme.primaryForeground,
-              ),
-            )
-          : const Text('Sign in'),
+      onPressed: () => context.read<SignInBloc>().add(const SignInSubmitted()),
     );
   }
 }

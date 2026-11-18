@@ -26,10 +26,9 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
 
   MaiaApiClient get _api => context.read<MaiaApiClient>();
 
-  ChatConnection? get _one => _catalog?.connections.cast<ChatConnection?>().firstWhere(
-        (c) => c?.id == 'one',
-        orElse: () => null,
-      );
+  ChatConnection? get _one => _catalog?.connections
+      .cast<ChatConnection?>()
+      .firstWhere((c) => c?.id == 'one', orElse: () => null);
 
   @override
   void initState() {
@@ -77,13 +76,15 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
     final resolved = _api.baseUrl.resolve(
       parsed.path.startsWith('/') ? parsed.path.substring(1) : parsed.path,
     );
-    return resolved.replace(
-      queryParameters: {
-        ...resolved.queryParameters,
-        ...parsed.queryParameters,
-      },
-      fragment: parsed.hasFragment ? parsed.fragment : null,
-    ).toString();
+    return resolved
+        .replace(
+          queryParameters: {
+            ...resolved.queryParameters,
+            ...parsed.queryParameters,
+          },
+          fragment: parsed.hasFragment ? parsed.fragment : null,
+        )
+        .toString();
   }
 
   Future<void> _openOauth(String? url) async {
@@ -189,7 +190,10 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
       if (!mounted) return;
       setState(() => _busy = false);
       ShadToaster.of(context).show(
-        ShadToast.destructive(title: const Text('You.com'), description: Text('$e')),
+        ShadToast.destructive(
+          title: const Text('You.com'),
+          description: Text('$e'),
+        ),
       );
     }
   }
@@ -274,127 +278,132 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            ShadIconButton.ghost(
+            MaiaBusyIcon(
               key: const Key('tools_refresh_button'),
+              busy: _busy,
               icon: const Icon(LucideIcons.refreshCw, size: 16),
-              onPressed: _busy ? null : _load,
+              onPressed: _load,
             ),
           ],
         ),
         body: _loading && _catalog == null
             ? const MaiaSkeleton()
             : ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-                    children: [
-                      if (_error != null) ...[
-                        ShadAlert.destructive(
-                          title: const Text('Could not load connectors'),
-                          description: Text(_error!),
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-                      ShadInput(
-                        placeholder: const Text('Search apps'),
-                        leading: const Icon(LucideIcons.search, size: 16),
-                        onChanged: (v) => setState(() => _query = v),
-                      ),
-                      const SizedBox(height: 12),
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          children: [
-                            for (final chip in _categories) ...[
-                              _CategoryChip(
-                                label: chip.$2,
-                                selected: _category == chip.$1,
-                                onPressed: () =>
-                                    setState(() => _category = chip.$1),
-                              ),
-                              const SizedBox(width: 8),
-                            ],
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      Text(_connectedLabel, style: theme.textTheme.h4),
-                      const SizedBox(height: 4),
-                      Text(
-                        'One keeps the login. Maia stores the grant and '
-                        'pulls each account into memory.',
-                        style: theme.textTheme.muted,
-                      ),
-                      const SizedBox(height: 20),
-                      if (_query.isEmpty &&
-                          _category == 'all' &&
-                          _connectedCount > 0) ...[
-                        _SectionLabel('Connected'),
-                        const SizedBox(height: 8),
-                        for (final account in _one!.accounts)
-                          _ConnectorRow(
-                            item: _connectorFor(account),
-                            connected: true,
-                            busy: _busy,
-                            onConnect: () => _connect(account.platform),
-                            onOpen: () => _openDetail(_connectorFor(account)),
-                          ),
-                        const SizedBox(height: 16),
-                      ],
-                      if (_query.isEmpty && _category == 'all') ...[
-                        _SectionLabel('Recommended'),
-                        const SizedBox(height: 8),
-                        for (final item in _visible.take(6))
-                          _ConnectorRow(
-                            item: item,
-                            connected: _connected(item),
-                            busy: _busy,
-                            onConnect: () => _connect(item.slug),
-                            onOpen: () => _openDetail(item),
-                          ),
-                        const SizedBox(height: 16),
-                      ],
-                      for (final cat in _categoryGroups(_visible, _query, _category)) ...[
-                        _SectionLabel(cat.$1),
-                        const SizedBox(height: 8),
-                        for (final item in cat.$2)
-                          _ConnectorRow(
-                            item: item,
-                            connected: _connected(item),
-                            busy: _busy,
-                            onConnect: () => _connect(item.slug),
-                            onOpen: () => _openDetail(item),
-                          ),
-                        const SizedBox(height: 16),
-                      ],
-                      const SizedBox(height: 8),
-                      _MachineSection(
-                        catalog: _catalog,
-                        busy: _busy,
-                        onYouKey: _setYouKey,
-                        onClearYou: () async {
-                          setState(() => _busy = true);
-                          try {
-                            final catalog = await _api.deleteConnection('you');
-                            if (!mounted) return;
-                            setState(() {
-                              _catalog = catalog;
-                              _busy = false;
-                            });
-                          } on Exception catch (e) {
-                            if (!mounted) return;
-                            setState(() => _busy = false);
-                            ShadToaster.of(context).show(
-                              ShadToast.destructive(
-                                title: const Text('You.com'),
-                                description: Text('$e'),
-                              ),
-                            );
-                          }
-                        },
-                        onStartVoice: () =>
-                            context.read<VoiceCubit>().startSidecar(),
-                      ),
-                    ],
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+                children: [
+                  if (_error != null) ...[
+                    ShadAlert.destructive(
+                      title: const Text('Could not load connectors'),
+                      description: Text(_error!),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  ShadInput(
+                    placeholder: const Text('Search apps'),
+                    leading: const Icon(LucideIcons.search, size: 16),
+                    onChanged: (v) => setState(() => _query = v),
                   ),
+                  const SizedBox(height: 12),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final chip in _categories) ...[
+                          _CategoryChip(
+                            label: chip.$2,
+                            selected: _category == chip.$1,
+                            onPressed: () =>
+                                setState(() => _category = chip.$1),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(_connectedLabel, style: theme.textTheme.h4),
+                  const SizedBox(height: 4),
+                  Text(
+                    'One keeps the login. Maia stores the grant and '
+                    'pulls each account into memory.',
+                    style: theme.textTheme.muted,
+                  ),
+                  const SizedBox(height: 20),
+                  if (_query.isEmpty &&
+                      _category == 'all' &&
+                      _connectedCount > 0) ...[
+                    _SectionLabel('Connected'),
+                    const SizedBox(height: 8),
+                    for (final account in _one!.accounts)
+                      _ConnectorRow(
+                        item: _connectorFor(account),
+                        connected: true,
+                        busy: _busy,
+                        onConnect: () => _connect(account.platform),
+                        onOpen: () => _openDetail(_connectorFor(account)),
+                      ),
+                    const SizedBox(height: 16),
+                  ],
+                  if (_query.isEmpty && _category == 'all') ...[
+                    _SectionLabel('Recommended'),
+                    const SizedBox(height: 8),
+                    for (final item in _visible.take(6))
+                      _ConnectorRow(
+                        item: item,
+                        connected: _connected(item),
+                        busy: _busy,
+                        onConnect: () => _connect(item.slug),
+                        onOpen: () => _openDetail(item),
+                      ),
+                    const SizedBox(height: 16),
+                  ],
+                  for (final cat in _categoryGroups(
+                    _visible,
+                    _query,
+                    _category,
+                  )) ...[
+                    _SectionLabel(cat.$1),
+                    const SizedBox(height: 8),
+                    for (final item in cat.$2)
+                      _ConnectorRow(
+                        item: item,
+                        connected: _connected(item),
+                        busy: _busy,
+                        onConnect: () => _connect(item.slug),
+                        onOpen: () => _openDetail(item),
+                      ),
+                    const SizedBox(height: 16),
+                  ],
+                  const SizedBox(height: 8),
+                  _MachineSection(
+                    catalog: _catalog,
+                    busy: _busy,
+                    onYouKey: _setYouKey,
+                    onClearYou: () async {
+                      setState(() => _busy = true);
+                      try {
+                        final catalog = await _api.deleteConnection('you');
+                        if (!mounted) return;
+                        setState(() {
+                          _catalog = catalog;
+                          _busy = false;
+                        });
+                      } on Exception catch (e) {
+                        if (!mounted) return;
+                        setState(() => _busy = false);
+                        ShadToaster.of(context).show(
+                          ShadToast.destructive(
+                            title: const Text('You.com'),
+                            description: Text('$e'),
+                          ),
+                        );
+                      }
+                    },
+                    onStartVoice: () =>
+                        context.read<VoiceCubit>().startSidecar(),
+                  ),
+                ],
+              ),
       ),
     );
   }
@@ -511,7 +520,10 @@ List<(String, List<_Connector>)> _categoryGroups(
     return items.isEmpty ? const [] : [(_titleFor(category), items)];
   }
   final skip = items.take(6).map((e) => e.slug).toSet();
-  final rest = [for (final item in items) if (!skip.contains(item.slug)) item];
+  final rest = [
+    for (final item in items)
+      if (!skip.contains(item.slug)) item,
+  ];
   final by = <String, List<_Connector>>{};
   for (final item in rest) {
     (by[item.category] ??= []).add(item);
@@ -572,7 +584,11 @@ class _CategoryChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (selected) {
-      return ShadButton(size: ShadButtonSize.sm, onPressed: onPressed, child: Text(label));
+      return ShadButton(
+        size: ShadButtonSize.sm,
+        onPressed: onPressed,
+        child: Text(label),
+      );
     }
     return ShadButton.outline(
       size: ShadButtonSize.sm,
@@ -642,10 +658,13 @@ class _ConnectorRow extends StatelessWidget {
                   ),
                 )
               else
-                ShadButton.outline(
+                MaiaBusyButton(
+                  label: 'Connect',
+                  busyLabel: 'Connecting',
+                  busy: busy,
+                  outline: true,
                   size: ShadButtonSize.sm,
-                  onPressed: busy ? null : onConnect,
-                  child: const Text('Connect'),
+                  onPressed: onConnect,
                 ),
             ],
           ),
@@ -733,13 +752,18 @@ class _ConnectorDetail extends StatelessWidget {
             Align(
               alignment: Alignment.centerLeft,
               child: connected
-                  ? ShadButton.outline(
-                      onPressed: busy ? null : onDisconnect,
-                      child: const Text('Disconnect'),
+                  ? MaiaBusyButton(
+                      label: 'Disconnect',
+                      busyLabel: 'Disconnecting',
+                      busy: busy,
+                      outline: true,
+                      onPressed: onDisconnect,
                     )
-                  : ShadButton(
-                      onPressed: busy ? null : onConnect,
-                      child: const Text('Connect'),
+                  : MaiaBusyButton(
+                      label: 'Connect',
+                      busyLabel: 'Connecting',
+                      busy: busy,
+                      onPressed: onConnect,
                     ),
             ),
             const SizedBox(height: 10),
@@ -772,9 +796,12 @@ class _ConnectorDetail extends StatelessWidget {
             ),
             if (connected) ...[
               const SizedBox(height: 16),
-              ShadButton.outline(
-                onPressed: busy ? null : onSync,
-                child: const Text('Sync now'),
+              MaiaBusyButton(
+                label: 'Sync now',
+                busyLabel: 'Syncing',
+                busy: busy,
+                outline: true,
+                onPressed: onSync,
               ),
             ],
             const SizedBox(height: 24),
@@ -808,13 +835,13 @@ class _MachineSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
     final you = catalog?.connections.cast<ChatConnection?>().firstWhere(
-          (c) => c?.id == 'you',
-          orElse: () => null,
-        );
+      (c) => c?.id == 'you',
+      orElse: () => null,
+    );
     final voice = catalog?.connections.cast<ChatConnection?>().firstWhere(
-          (c) => c?.id == 'voice',
-          orElse: () => null,
-        );
+      (c) => c?.id == 'voice',
+      orElse: () => null,
+    );
     final provider = context.watch<ChatSettingsCubit>().state;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -827,10 +854,7 @@ class _MachineSection extends StatelessWidget {
             children: [
               Text('You.com', style: theme.textTheme.small),
               const SizedBox(height: 4),
-              Text(
-                'Web search for the agent.',
-                style: theme.textTheme.muted,
-              ),
+              Text('Web search for the agent.', style: theme.textTheme.muted),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
@@ -838,7 +862,9 @@ class _MachineSection extends StatelessWidget {
                   ShadButton.outline(
                     size: ShadButtonSize.sm,
                     onPressed: busy ? null : onYouKey,
-                    child: Text(you?.connected == true ? 'Replace key' : 'Add key'),
+                    child: Text(
+                      you?.connected == true ? 'Replace key' : 'Add key',
+                    ),
                   ),
                   if (you?.hasSecret == true)
                     ShadButton.ghost(
@@ -866,14 +892,14 @@ class _MachineSection extends StatelessWidget {
               ),
               if (voice != null) ...[
                 const SizedBox(height: 16),
-                ShadButton(
+                MaiaBusyButton(
                   size: ShadButtonSize.sm,
-                  onPressed: busy ? null : onStartVoice,
-                  child: Text(
-                    voice.connected
-                        ? (voice.ready ? 'Keep voice warm' : 'Load voice')
-                        : 'Start voice',
-                  ),
+                  label: voice.connected
+                      ? (voice.ready ? 'Keep voice warm' : 'Load voice')
+                      : 'Start voice',
+                  busyLabel: 'Starting',
+                  busy: busy,
+                  onPressed: onStartVoice,
                 ),
               ],
             ],

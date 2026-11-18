@@ -67,9 +67,7 @@ class MaiaScrollFill extends StatelessWidget {
             child: Align(
               alignment: alignment,
               child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: maxWidth ?? innerWidth,
-                ),
+                constraints: BoxConstraints(maxWidth: maxWidth ?? innerWidth),
                 child: child,
               ),
             ),
@@ -85,12 +83,7 @@ class MaiaScrollFill extends StatelessWidget {
 /// Header and footer scroll inside a capped slice when the window is too
 /// short for them, so a small desktop window cannot overflow the column.
 class MaiaPane extends StatelessWidget {
-  const new({
-    required this.body,
-    super.key,
-    this.header,
-    this.footer,
-  });
+  const new({required this.body, super.key, this.header, this.footer});
 
   final Widget? header;
   final Widget body;
@@ -107,9 +100,7 @@ class MaiaPane extends StatelessWidget {
         Widget chrome(Widget child) {
           return ConstrainedBox(
             constraints: BoxConstraints(maxHeight: cap),
-            child: SingleChildScrollView(
-              child: child,
-            ),
+            child: SingleChildScrollView(child: child),
           );
         }
 
@@ -268,12 +259,133 @@ class MaiaFailure extends StatelessWidget {
             description: Text(message),
           ),
           const SizedBox(height: 12),
-          ShadButton.outline(
-            onPressed: onRetry,
-            child: const Text('Retry'),
-          ),
+          ShadButton.outline(onPressed: onRetry, child: const Text('Retry')),
         ],
       ),
+    );
+  }
+}
+
+/// A button that keeps its label and shows a spinner while [busy].
+class MaiaBusyButton extends StatelessWidget {
+  const new({
+    required this.label,
+    required this.onPressed,
+    this.busy = false,
+    this.busyLabel,
+    this.outline = false,
+    this.enabled = true,
+    this.size,
+    this.width,
+    super.key,
+  });
+
+  final String label;
+  final String? busyLabel;
+  final bool busy;
+  final bool enabled;
+  final bool outline;
+  final VoidCallback onPressed;
+  final ShadButtonSize? size;
+  final double? width;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    final spinner = theme.colorScheme.primaryForeground;
+    final child = AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      child: busy
+          ? Row(
+              key: const ValueKey('busy'),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox.square(
+                  dimension: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: outline ? theme.colorScheme.foreground : spinner,
+                  ),
+                ),
+                if (busyLabel != null) ...[
+                  const SizedBox(width: 8),
+                  Text(busyLabel!),
+                ],
+              ],
+            )
+          : Text(label, key: const ValueKey('idle')),
+    );
+    if (outline) {
+      return ShadButton.outline(
+        size: size,
+        width: width,
+        onPressed: busy || !enabled ? null : onPressed,
+        child: child,
+      );
+    }
+    return ShadButton(
+      size: size,
+      width: width,
+      onPressed: busy || !enabled ? null : onPressed,
+      child: child,
+    );
+  }
+}
+
+/// An icon button whose glyph turns while [busy].
+class MaiaBusyIcon extends StatefulWidget {
+  const new({
+    required this.icon,
+    required this.onPressed,
+    this.busy = false,
+    super.key,
+  });
+
+  final Widget icon;
+  final VoidCallback onPressed;
+  final bool busy;
+
+  @override
+  State<MaiaBusyIcon> createState() => _MaiaBusyIconState();
+}
+
+class _MaiaBusyIconState extends State<MaiaBusyIcon>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _spin = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 700),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.busy) _spin.repeat();
+  }
+
+  @override
+  void didUpdateWidget(MaiaBusyIcon old) {
+    super.didUpdateWidget(old);
+    if (widget.busy && !_spin.isAnimating) _spin.repeat();
+    if (!widget.busy && _spin.isAnimating) {
+      _spin
+        ..stop()
+        ..value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _spin.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ShadIconButton.ghost(
+      onPressed: widget.busy ? null : widget.onPressed,
+      icon: RotationTransition(turns: _spin, child: widget.icon),
     );
   }
 }

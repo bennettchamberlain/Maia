@@ -30,10 +30,7 @@ class JobsView extends StatelessWidget {
         header: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            MaiaHeader(
-              title: 'Jobs',
-              actions: [_RefreshButton()],
-            ),
+            MaiaHeader(title: 'Jobs', actions: [_RefreshButton()]),
             _StateFilter(),
           ],
         ),
@@ -48,8 +45,12 @@ class _RefreshButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ShadIconButton.ghost(
+    final refreshing = context.select<JobsBloc, bool>(
+      (b) => b.state.refreshing,
+    );
+    return MaiaBusyIcon(
       key: const Key('jobs_refresh_button'),
+      busy: refreshing,
       icon: const Icon(LucideIcons.refreshCw, size: 16),
       onPressed: () => context.read<JobsBloc>().add(const JobsRefreshed()),
     );

@@ -94,6 +94,7 @@ class _Conversation extends StatefulWidget {
 class _ConversationState extends State<_Conversation> {
   final _composer = GlobalKey<ChatComposerState>();
   final _scroll = ScrollController();
+  var _picking = false;
 
   @override
   void dispose() {
@@ -108,9 +109,15 @@ class _ConversationState extends State<_Conversation> {
   }
 
   Future<void> _pickFile() async {
-    final file = await openFile();
-    if (file == null || !mounted) return;
-    await _composer.currentState?.addPicked(file);
+    if (_picking) return;
+    setState(() => _picking = true);
+    try {
+      final file = await openFile();
+      if (file == null || !mounted) return;
+      await _composer.currentState?.addPicked(file);
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
   }
 
   void _scrollToEnd() {
@@ -228,8 +235,9 @@ class _ConversationState extends State<_Conversation> {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          ShadIconButton.ghost(
+                          MaiaBusyIcon(
                             key: const Key('chat_file_button'),
+                            busy: _picking,
                             icon: const Icon(LucideIcons.file, size: 16),
                             onPressed: () => unawaited(_pickFile()),
                           ),
@@ -257,16 +265,24 @@ class _ConversationState extends State<_Conversation> {
                             key: const Key('chat_send_button'),
                             enabled: !state.sending,
                             onPressed: state.sending ? null : _send,
-                            icon: state.sending
-                                ? SizedBox.square(
-                                    dimension: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color:
-                                          theme.colorScheme.primaryForeground,
+                            icon: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 180),
+                              child: state.sending
+                                  ? SizedBox.square(
+                                      key: const ValueKey('sending'),
+                                      dimension: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color:
+                                            theme.colorScheme.primaryForeground,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      LucideIcons.arrowUp,
+                                      key: ValueKey('idle'),
+                                      size: 16,
                                     ),
-                                  )
-                                : const Icon(LucideIcons.arrowUp, size: 16),
+                            ),
                           ),
                         ],
                       ),

@@ -22,8 +22,10 @@ class JobsBloc extends Bloc<JobsEvent, JobsState> {
     await _load(emit);
   }
 
-  Future<void> _onRefreshed(JobsRefreshed e, Emitter<JobsState> emit) =>
-      _load(emit);
+  Future<void> _onRefreshed(JobsRefreshed e, Emitter<JobsState> emit) async {
+    emit(state.copyWith(refreshing: true));
+    await _load(emit);
+  }
 
   Future<void> _onFilterChanged(
     JobsFilterChanged e,
@@ -43,13 +45,26 @@ class JobsBloc extends Bloc<JobsEvent, JobsState> {
         state.copyWith(
           status: JobsStatus.success,
           jobs: jobs,
+          refreshing: false,
           clearError: true,
         ),
       );
     } on MaiaApiException catch (err) {
-      emit(state.copyWith(status: JobsStatus.failure, error: err.message));
+      emit(
+        state.copyWith(
+          status: JobsStatus.failure,
+          refreshing: false,
+          error: err.message,
+        ),
+      );
     } on Exception catch (err) {
-      emit(state.copyWith(status: JobsStatus.failure, error: '$err'));
+      emit(
+        state.copyWith(
+          status: JobsStatus.failure,
+          refreshing: false,
+          error: '$err',
+        ),
+      );
     }
   }
 }
