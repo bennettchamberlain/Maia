@@ -65,7 +65,10 @@ Future<void> main() async {
         stdout.writeln(error == null ? message : '$message $error');
       },
     );
-    await runner.work('embed', EmbedJob(db: db, local: local, cloud: cloud).run);
+    await runner.work(
+      'embed',
+      EmbedJob(db: db, local: local, cloud: cloud).run,
+    );
     if (config.ollamaUrl != null) {
       await runner.work(
         'conclude',
@@ -91,7 +94,8 @@ Future<void> main() async {
             'PYTHONPATH': root,
             'MAIA_API_URL': 'http://127.0.0.1:${config.port}',
             'CONNECT_URL': config.connectSidecarUrl,
-            if ((oneSecret == null || oneSecret.isEmpty) && fixture.existsSync())
+            if ((oneSecret == null || oneSecret.isEmpty) &&
+                fixture.existsSync())
               'MAIA_ETL_FIXTURE': fixture.path,
           },
         ).run,
@@ -103,7 +107,26 @@ Future<void> main() async {
         PythonJob(python: python, module: 'swarm.weave', workdir: root).run,
       );
     }
+    await runner.work(
+      'dream',
+      DreamJob(
+        db: db,
+        youApiKey: config.youApiKey,
+        library: PersonLibrary(Directory('${config.dataDir}/library')),
+      ).run,
+      const QueueOptions(
+        policy: QueuePolicy.singleton,
+        expireIn: Duration(minutes: 30),
+      ),
+    );
     await runner.start();
+  }
+
+  // The only nightly job. Promotion and interest research share this hour.
+  DreamClock? dreams;
+  if (jobs != null) {
+    dreams = DreamClock(jobs);
+    dreams.start();
   }
 
   final openrouterChat = config.openrouterApiKey == null
@@ -175,6 +198,7 @@ Future<void> main() async {
   );
 
   ProcessSignal.sigint.watch().listen((_) async {
+    dreams?.stop();
     await runner?.stop();
     await server.close(force: true);
     await db.close();
@@ -184,12 +208,7 @@ Future<void> main() async {
 
 String _guessHackathonRoot() {
   final here = Directory.current.path;
-  for (final root in [
-    here,
-    '$here/..',
-    '$here/../..',
-    '$here/../../..',
-  ]) {
+  for (final root in [here, '$here/..', '$here/../..', '$here/../../..']) {
     if (Directory('$root/etl').existsSync() &&
         Directory('$root/swarm').existsSync()) {
       return root;

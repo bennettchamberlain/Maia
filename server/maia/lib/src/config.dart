@@ -46,6 +46,7 @@ class Config {
     this.polargridRegion = 'yto-01',
     this.polargridVoice = 'NATF0',
     this.polargridPersona,
+    this.dataDir = '.data',
   });
 
   factory Config.fromEnv([Map<String, String>? env]) {
@@ -129,6 +130,9 @@ class Config {
       polargridRegion: _blankToNull(e['POLARGRID_REGION']) ?? 'yto-01',
       polargridVoice: _blankToNull(e['POLARGRID_VOICE']) ?? 'NATF0',
       polargridPersona: _blankToNull(e['POLARGRID_PERSONA']),
+      dataDir:
+          _blankToNull(e['MAIA_DATA']) ??
+          (root == null ? '.data' : '$root/.data'),
     );
   }
 
@@ -216,6 +220,9 @@ class Config {
   final String polargridRegion;
   final String polargridVoice;
   final String? polargridPersona;
+
+  /// Per-person skills, files, and turns. `MAIA_DATA`, or `{repo}/.data`.
+  final String dataDir;
 
   static String? _defaultVoiceBin(String? root) {
     if (root == null) return null;
