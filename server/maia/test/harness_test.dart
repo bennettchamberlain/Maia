@@ -173,4 +173,23 @@ void main() {
     expect(text, contains('Skills:'));
     expect(text, isNot(contains('Confirmed procedures')));
   });
+
+  test('a proposal score counts memory hits and skips a miss', () {
+    expect(
+      proposalScore([
+        {'name': 'memory_search', 'result': 'Lisbon'},
+        {'name': 'library_read', 'result': 'not in the library'},
+        {'name': 'web_search', 'result': 'a page'},
+        {'name': 'life_graph', 'result': 'one goal'},
+      ]),
+      2,
+    );
+  });
+
+  test('a harness line is the title and the topics', () {
+    expect(
+      harnessWording('Shipped the build', ['rollback', '']),
+      'Shipped the build. rollback',
+    );
+  });
 }

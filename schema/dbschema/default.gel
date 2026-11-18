@@ -533,6 +533,10 @@ module default {
     required name: str;
     required body: str;
     required status: RecordStatus { default := RecordStatus.proposed };
+    # The chat line that proposed this procedure.
+    source: ChatMessage {
+      on target delete allow;
+    };
 
     constraint exclusive on ((.owner, .name));
   }
@@ -551,6 +555,23 @@ module default {
     index on ((.owner, .created_at));
   }
 
+  # A candidate line from a closed chat. Stays proposed until the person
+  # keeps it. The next session writes [score]. This row does not change
+  # the live prompt. The conclude job turns the wording into the ontology.
+  type HarnessProposal extending Owned {
+    overloaded required data_class: str { default := 'harness' };
+    overloaded required sensitive: bool { default := true };
+
+    required wording: str;
+    session: ChatSession {
+      on target delete allow;
+    };
+    score: int32;
+    required status: RecordStatus { default := RecordStatus.proposed };
+
+    index on ((.owner, .status));
+  }
+
   # A text the person kept. Lives in Napalm, next to the chat it came from.
   type Document extending Owned {
     overloaded required data_class: str { default := 'file' };
@@ -558,6 +579,9 @@ module default {
 
     required title: str;
     body: str { default := '' };
+    # Opens and writes. The directory index is a copy of this number.
+    required use_count: int32 { default := 0 };
+    last_opened_at: datetime;
   }
 
   # ---------------------------------------------------------------------------

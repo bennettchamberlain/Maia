@@ -10,6 +10,33 @@ const nativeToolCorrection =
 /// Result for a tool that had not started when the person spoke again.
 const skippedToolResult = 'Skipped to process an incoming message.';
 
+/// Memory and library hits in the session that followed a proposal.
+/// The number does not install the proposal.
+int proposalScore(Iterable<Map<String, dynamic>> toolCalls) {
+  const names = {'memory_search', 'memory_get', 'library_read', 'life_graph'};
+  var hits = 0;
+  for (final call in toolCalls) {
+    if (!names.contains(call['name'])) continue;
+    final result = '${call['result'] ?? ''}'.trim().toLowerCase();
+    if (result.isEmpty) continue;
+    if (result.contains('not in the library')) continue;
+    if (result.contains('unavailable')) continue;
+    hits++;
+  }
+  return hits;
+}
+
+/// Title and topics from a closed chat, clipped to the proposal line.
+String harnessWording(String? title, List<String> topics) {
+  final parts = [
+    if (title != null && title.trim().isNotEmpty) title.trim(),
+    for (final topic in topics)
+      if (topic.trim().isNotEmpty) topic.trim(),
+  ];
+  final text = parts.join('. ');
+  return text.length <= 500 ? text : text.substring(0, 500);
+}
+
 /// Stable voice. No clock, no screen, no live tool list, so a prefix
 /// cache can keep it.
 String stableVoice({required String name, required String handle}) =>
@@ -404,6 +431,7 @@ Future<String> proposeSkill(
   gel.Client c, {
   required String name,
   required String body,
+  String? messageId,
 }) async {
   final row = jsonDecode(
     await c.querySingleJSON(
@@ -413,12 +441,77 @@ Future<String> proposeSkill(
         name := <str>$name,
         body := <str>$body,
         status := RecordStatus.proposed,
+        source := (
+          select ChatMessage
+          filter .id = <optional uuid>$message
+          limit 1
+        ),
       }) { id }
       ''',
-      {'name': name, 'body': body},
+      {'name': name, 'body': body, 'message': messageId},
     ),
   ) as Map<String, dynamic>;
   return row['id'] as String;
+}
+
+/// Stores the closed chat's line. [score] stays empty until a later session.
+Future<String> recordHarnessProposal(
+  gel.Client c, {
+  required String sessionId,
+  required String wording,
+}) async {
+  final row = jsonDecode(
+    await c.querySingleJSON(
+      r'''
+      select (insert HarnessProposal {
+        owner := assert_exists(global current_person),
+        wording := <str>$wording,
+        session := assert_single((
+          select ChatSession filter .id = <uuid>$session
+        )),
+        status := RecordStatus.proposed,
+      }) { id }
+      ''',
+      {'wording': wording, 'session': sessionId},
+    ),
+  ) as Map<String, dynamic>;
+  return row['id'] as String;
+}
+
+/// Writes [score] on the newest unscored proposal from another session.
+Future<void> scorePreviousProposal(
+  gel.Client c, {
+  required String sessionId,
+  required int score,
+}) async {
+  await c.execute(
+    r'''
+    with prior := (
+      select HarnessProposal
+      filter .status = RecordStatus.proposed
+        and not exists .score
+        and .session.id != <uuid>$session
+      order by .created_at desc
+      limit 1
+    )
+    update prior set { score := <int32>$score }
+    ''',
+    {'session': sessionId, 'score': score},
+  );
+}
+
+/// Marks a proposal kept. The live prompt is unchanged.
+Future<bool> confirmHarnessProposal(gel.Client c, String id) async {
+  final row = await c.querySingleJSON(
+    r'''
+    select (update HarnessProposal
+      filter .id = <uuid>$id and .status = RecordStatus.proposed
+      set { status := RecordStatus.active }
+    ) { id }
+    ''',
+    {'id': id},
+  );
+  return row != 'null';
 }
 
 Future<bool> confirmSkill(gel.Client c, String id) async {

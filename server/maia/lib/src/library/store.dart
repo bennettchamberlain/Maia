@@ -181,6 +181,29 @@ class PersonLibrary {
     return LibrarySnapshot(skills: skills, files: files, turns: turns);
   }
 
+  /// Copies the database open count onto the file index.
+  void setUses({
+    required String personId,
+    required String id,
+    required int uses,
+  }) {
+    final who = _safe(personId);
+    final key = _safe(id);
+    if (who.isEmpty || key.isEmpty) return;
+    final index = _read(who);
+    final prior = index['files']?[key];
+    if (prior == null) return;
+    index['files']![key] = LibraryEntry(
+      id: prior.id,
+      kind: prior.kind,
+      name: prior.name,
+      line: prior.line,
+      uses: uses,
+      updatedAt: prior.updatedAt,
+    );
+    _save(who, index);
+  }
+
   /// Returns the file. Opening a file counts as a use. Skills and turns do not.
   Future<String?> read({
     required String personId,

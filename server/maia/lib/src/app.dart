@@ -193,6 +193,7 @@ class MaiaApp {
     ..post('/intents', _authed(_intentCreate))
     ..post('/skills', _authed(_skillCreate))
     ..post('/skills/<id>/confirm', _authed(_skillConfirm))
+    ..post('/harness/proposals/<id>/confirm', _authed(_proposalConfirm))
     ..post('/memory/<id>/promote', _authed(_memoryPromote))
     ..post('/work', _authed(_workStart))
     ..get('/voice/status', _authed(_voiceStatus))
@@ -887,6 +888,7 @@ class MaiaApp {
   ChatToolbox _toolboxFor(
     ToolPrefs prefs, {
     String? personId,
+    String? sourceMessageId,
     bool connectors = false,
     String toolset = 'memory',
   }) => ChatToolbox(
@@ -932,12 +934,39 @@ class MaiaApp {
         ? (args) => _useConnector(personId, args)
         : null,
     sessionSearch: (c, query, limit) => searchSessions(c, query, limit: limit),
-    proposeSkill: (c, name, body) => proposeSkill(c, name: name, body: body),
+    proposeSkill: (c, name, body) async {
+      final id = await proposeSkill(
+        c,
+        name: name,
+        body: body,
+        messageId: sourceMessageId,
+      );
+      await _upsertMemory(
+        c,
+        kind: 'skill',
+        title: name,
+        body: body,
+        occurredAt: DateTime.now().toUtc(),
+        source: 'skill',
+        sourceId: id,
+      );
+      return id;
+    },
     createIntent: (c, phrase, instruction) =>
         createIntent(c, phrase: phrase, instruction: instruction),
     readLibrary: personId == null
         ? null
-        : (kind, id) => _library.read(personId: personId, kind: kind, id: id),
+        : (kind, id) async {
+            final body = await _library.read(
+              personId: personId,
+              kind: kind,
+              id: id,
+            );
+            if (body != null && kind == 'files') {
+              await _noteDocumentUse(db.asPerson(personId), id);
+            }
+            return body;
+          },
   );
 
   Future<String> _useConnector(
@@ -1318,6 +1347,36 @@ class MaiaApp {
         source: 'chat-session',
         sourceId: id,
       );
+      final wording = harnessWording(title, plan.topics);
+      if (wording.isNotEmpty) {
+        try {
+          final proposal = await recordHarnessProposal(
+            c,
+            sessionId: id,
+            wording: wording,
+          );
+          await _upsertMemory(
+            c,
+            kind: 'note',
+            title: title ?? 'Harness line',
+            body: wording,
+            occurredAt: spanEnd,
+            source: 'harness-proposal',
+            sourceId: proposal,
+          );
+        } on Object catch (e) {
+          stderr.writeln('harness: $e');
+        }
+      }
+    }
+    try {
+      await scorePreviousProposal(
+        c,
+        sessionId: id,
+        score: proposalScore(calls),
+      );
+    } on Object catch (e) {
+      stderr.writeln('harness: $e');
     }
     return _sessionResponse(c, id);
   }
@@ -1456,6 +1515,27 @@ class MaiaApp {
         name: '${doc['title'] ?? 'Untitled'}',
         body: '${doc['body'] ?? ''}',
       );
+      final uses = (doc['use_count'] as num?)?.toInt();
+      if (uses != null) {
+        _library.setUses(personId: personId, id: id, uses: uses);
+      }
+    }
+  }
+
+  Future<void> _noteDocumentUse(gel.Client c, String id) async {
+    if (!_uuid.hasMatch(id)) return;
+    try {
+      await c.execute(
+        r'''
+        update Document filter .id = <uuid>$id set {
+          use_count := .use_count + 1,
+          last_opened_at := datetime_of_statement(),
+        }
+        ''',
+        {'id': id},
+      );
+    } on Object catch (e) {
+      stderr.writeln('library: $e');
     }
   }
 
@@ -1487,6 +1567,8 @@ class MaiaApp {
             owner := assert_exists(global current_person),
             title := <str>$title,
             body := <str>$body,
+            use_count := 1,
+            last_opened_at := datetime_of_statement(),
           }
         ) { id, title, body, created_at }
         ''',
@@ -1567,6 +1649,8 @@ class MaiaApp {
         select (
           update Document filter .id = <uuid>$id set {
             body := <str>$body,
+            use_count := .use_count + 1,
+            last_opened_at := datetime_of_statement(),
             updated_at := datetime_of_statement(),
           }
         ) { id, title, body, created_at }
@@ -1678,6 +1762,10 @@ class MaiaApp {
       stderr.writeln('timeline: $e');
     }
   }
+
+  static final _uuid = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  );
 
   static List<Map<String, dynamic>> _toolCallMaps(Object? raw) {
     var value = raw;
@@ -1808,6 +1896,7 @@ class MaiaApp {
               ? _toolboxFor(
                   await _prefsStore.read(personId ?? ''),
                   personId: personId,
+                  sourceMessageId: userMsg['id'] as String?,
                   connectors: platforms.isNotEmpty,
                   toolset: toolset,
                 )
@@ -2006,6 +2095,12 @@ class MaiaApp {
         );
       }
     }
+    return _json({'ok': true});
+  }
+
+  Future<Response> _proposalConfirm(Request r, gel.Client c) async {
+    final ok = await confirmHarnessProposal(c, r.params['id']!);
+    if (!ok) return _error(404, 'not_found', 'no proposed harness line');
     return _json({'ok': true});
   }
 

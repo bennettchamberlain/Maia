@@ -115,4 +115,16 @@ void main() {
     expect(snap.files.single.uses, 2);
     expect(snap.skills.single.uses, 1);
   });
+
+  test('a database open count replaces the index count', () async {
+    await library.write(
+      personId: 'p1',
+      kind: 'files',
+      id: 'notes',
+      name: 'Notes',
+      body: 'Lisbon.',
+    );
+    library.setUses(personId: 'p1', id: 'notes', uses: 7);
+    expect(library.snapshot('p1').files.single.uses, 7);
+  });
 }
