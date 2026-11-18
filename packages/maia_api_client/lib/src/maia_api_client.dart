@@ -372,6 +372,16 @@ class MaiaApiClient {
     ChatMessage.fromJson,
   );
 
+  /// A message sent while a reply is still running. The open stream keeps
+  /// going and picks this up between tools.
+  Future<ChatMessage> chatSteer(String sessionId, String content) async {
+    final json = await _post('/chat/sessions/$sessionId/steer', {
+      'content': content,
+    });
+    final map = json as Map<String, dynamic>;
+    return ChatMessage.fromJson(map['message'] as Map<String, dynamic>);
+  }
+
   /// Sends one turn and streams the reply. The stream is the server's SSE
   /// feed decoded into [ChatStreamEvent]s; it completes after [ChatDone] or
   /// [ChatFailed].
@@ -431,6 +441,8 @@ class MaiaApiClient {
         return ChatUserStored(ChatMessage.fromJson(map));
       case 'delta':
         return ChatDelta(map['text'] as String? ?? '');
+      case 'replace':
+        return ChatDraftReplaced(map['text'] as String? ?? '');
       case 'tool':
         return ChatToolUsed(
           ChatToolCall(

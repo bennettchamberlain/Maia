@@ -23,6 +23,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     on<ChatForkRequested>(_onFork);
     on<ChatFileSaved>(_onFile);
     on<ChatMessageSent>(_onSent, transformer: _sequential());
+    on<ChatSteered>(_onSteer);
     on<ChatAsideAdded>(_onAside);
     on<ChatBackToList>(_onBack);
     on<ChatLeft>(_onLeft);
@@ -238,6 +239,27 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     }
   }
 
+  Future<void> _onSteer(ChatSteered e, Emitter<ChatState> emit) async {
+    final open = state.open;
+    final text = e.content.trim();
+    if (text.isEmpty) return;
+    if (open == null || !state.sending) {
+      add(ChatMessageSent(text));
+      return;
+    }
+    try {
+      await _api.chatSteer(open.id, text);
+    } on MaiaApiException catch (err) {
+      if (err.statusCode == 409) {
+        add(ChatMessageSent(text));
+        return;
+      }
+      emit(state.copyWith(error: err.shown));
+    } on Exception catch (err) {
+      emit(state.copyWith(error: _msg('chat', err)));
+    }
+  }
+
   Future<void> _onSent(ChatMessageSent e, Emitter<ChatState> emit) async {
     var open = state.open;
     final text = e.content.trim();
@@ -272,6 +294,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
             emit(state.copyWith(messages: [...state.messages, message]));
           case ChatDelta(:final text):
             emit(state.copyWith(draftReply: '${state.draftReply}$text'));
+          case ChatDraftReplaced(:final text):
+            emit(state.copyWith(draftReply: text));
           case ChatToolUsed(:final call):
             emit(state.copyWith(draftTools: [...state.draftTools, call]));
           case ChatDone(:final message):

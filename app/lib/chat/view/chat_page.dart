@@ -107,7 +107,10 @@ class _ConversationState extends State<_Conversation> {
   void _send() {
     final text = _composer.currentState?.take();
     if (text == null) return;
-    context.read<ChatBloc>().add(ChatMessageSent(text));
+    final bloc = context.read<ChatBloc>();
+    bloc.add(
+      bloc.state.sending ? ChatSteered(text) : ChatMessageSent(text),
+    );
   }
 
   Future<void> _pickFile() async {
@@ -142,7 +145,11 @@ class _ConversationState extends State<_Conversation> {
           listenWhen: (p, c) =>
               p.heardSeq != c.heardSeq && (c.lastHeard ?? '').isNotEmpty,
           listener: (context, voice) {
-            context.read<ChatBloc>().add(ChatMessageSent(voice.lastHeard!));
+            final bloc = context.read<ChatBloc>();
+            final heard = voice.lastHeard!;
+            bloc.add(
+              bloc.state.sending ? ChatSteered(heard) : ChatMessageSent(heard),
+            );
           },
         ),
         BlocListener<VoiceCubit, VoiceState>(
@@ -250,8 +257,8 @@ class _ConversationState extends State<_Conversation> {
                 children: [
                   if (state.error != null || _notice != null)
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Text(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: SelectableText(
                         state.error ?? _notice!,
                         style: theme.textTheme.small.copyWith(
                           color: theme.colorScheme.destructive,
@@ -281,7 +288,7 @@ class _ConversationState extends State<_Conversation> {
                           Expanded(
                             child: ChatComposer(
                               key: _composer,
-                              enabled: !state.sending,
+                              enabled: true,
                               onSubmit: _send,
                               placeholder: context.select<VoiceCubit, String>((
                                 v,
@@ -298,8 +305,7 @@ class _ConversationState extends State<_Conversation> {
                           const SizedBox(width: 8),
                           ShadIconButton(
                             key: const Key('chat_send_button'),
-                            enabled: !state.sending,
-                            onPressed: state.sending ? null : _send,
+                            onPressed: _send,
                             icon: AnimatedSwitcher(
                               duration: const Duration(milliseconds: 180),
                               child: state.sending

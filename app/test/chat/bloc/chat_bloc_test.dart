@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -91,6 +93,69 @@ void main() {
       verify: (b) {
         expect(b.state.messages.single.role, 'quote');
         expect(b.state.messages.single.content, '"hello"');
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      'a line during a reply steers and the open stream shows it',
+      build: () {
+        final replies = StreamController<ChatStreamEvent>();
+        when(
+          () => api.chatSend(
+            's1',
+            'hi',
+            provider: any(named: 'provider'),
+            screen: any(named: 'screen'),
+          ),
+        ).thenAnswer((_) => replies.stream);
+        when(() => api.chatSteer('s1', 'wait')).thenAnswer((_) async {
+          replies.add(ChatUserStored(msg('u2', 'user', 'wait', 2)));
+          replies.add(ChatDone(msg('a1', 'assistant', 'ok', 3)));
+          await replies.close();
+          return msg('u2', 'user', 'wait', 2);
+        });
+        return ChatBloc(api: api);
+      },
+      seed: () => ChatState(status: ChatStatus.ready, open: session),
+      act: (b) async {
+        b.add(const ChatMessageSent('hi'));
+        await Future<void>.delayed(Duration.zero);
+        b.add(const ChatSteered('wait'));
+        await Future<void>.delayed(Duration.zero);
+      },
+      verify: (b) {
+        expect(b.state.sending, isFalse);
+        expect(b.state.messages.map((m) => m.content), ['wait', 'ok']);
+        verify(() => api.chatSteer('s1', 'wait')).called(1);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      'a printed tool call is wiped from the draft',
+      build: () {
+        when(
+          () => api.chatSend(
+            's1',
+            'hi',
+            provider: any(named: 'provider'),
+            screen: any(named: 'screen'),
+          ),
+        ).thenAnswer(
+          (_) => Stream.fromIterable([
+            ChatUserStored(msg('u1', 'user', 'hi', 1)),
+            const ChatDelta('{"name":"web_search"}'),
+            const ChatDraftReplaced(''),
+            const ChatDelta('Lisbon.'),
+            ChatDone(msg('a1', 'assistant', 'Lisbon.', 2)),
+          ]),
+        );
+        return ChatBloc(api: api);
+      },
+      seed: () => ChatState(status: ChatStatus.ready, open: session),
+      act: (b) => b.add(const ChatMessageSent('hi')),
+      verify: (b) {
+        expect(b.state.messages.last.content, 'Lisbon.');
+        expect(b.state.draftReply, isEmpty);
       },
     );
 

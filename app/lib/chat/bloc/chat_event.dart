@@ -32,6 +32,15 @@ final class ChatSessionDeleted extends ChatEvent {
   List<Object?> get props => [session.id];
 }
 
+/// A line sent while a reply is still running. It does not open a second turn.
+final class ChatSteered extends ChatEvent {
+  const new(this.content);
+  final String content;
+
+  @override
+  List<Object?> get props => [content];
+}
+
 /// Send a turn in the open session (a session is created if none is open).
 final class ChatMessageSent extends ChatEvent {
   const new(this.content);
