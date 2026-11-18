@@ -88,7 +88,9 @@ class Config {
           e['OPENROUTER_MODEL'] ?? 'google/gemini-2.5-flash-lite',
       openrouterMaxTokens:
           int.tryParse(e['OPENROUTER_MAX_TOKENS'] ?? '') ?? 2048,
-      youApiKey: _blankToNull(e['YDC_API_KEY'] ?? e['YOU_WEB_SEARCH_TOKEN']),
+      youApiKey: _blankToNull(
+        e['YDC_API_KEY'] ?? e['YOU_API_KEY'] ?? e['YOU_WEB_SEARCH_TOKEN'],
+      ),
       connectPublicUrl:
           e['CONNECT_PUBLIC_URL'] ??
           'http://127.0.0.1:${e['CONNECT_PORT'] ?? '8788'}',

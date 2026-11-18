@@ -134,6 +134,11 @@ void main() {
       });
       expect(c.parasailChatModel, 'parasail-glm-53-flash');
       expect(c.youApiKey, 'you');
+      final alias = Config.fromEnv({
+        'MAIA_SESSION_SECRET': 'a-very-long-secret-at-least-32-chars!!',
+        'YOU_API_KEY': 'you-alias',
+      });
+      expect(alias.youApiKey, 'you-alias');
       expect(c.chatProvider, 'auto');
       expect(c.ollamaChatModel, 'llama3.2');
     });
@@ -230,6 +235,27 @@ data: [DONE]
         'snippet': 'Sunny and 22 C.',
       },
     ]);
+    expect(
+      youWebHits({
+        'results': {
+          'web': [
+            {
+              'url': 'https://example.com/a',
+              'title': 'A',
+              'snippets': ['from the page'],
+            },
+          ],
+        },
+      }),
+      [
+        {
+          'type': 'link',
+          'title': 'A',
+          'url': 'https://example.com/a',
+          'snippet': 'from the page',
+        },
+      ],
+    );
     final box = ChatToolbox(
       searchMemory: (c, query, limit) async => [],
       recentMemory: (c, limit) async => [],

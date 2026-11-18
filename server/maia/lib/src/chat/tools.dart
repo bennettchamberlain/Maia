@@ -173,9 +173,13 @@ class ChatToolbox {
       return jsonEncode({'type': 'text', 'text': 'query required'});
     }
     if (!youConfigured) return _openRouterSearch(q);
-    final r = await _http.get(
-      Uri.https('api.you.com', '/v1/search', {'query': q, 'count': '5'}),
-      headers: {'X-API-Key': youApiKey!},
+    final r = await _http.post(
+      Uri.parse('https://ydc-index.io/v1/search'),
+      headers: {
+        'X-API-Key': youApiKey!,
+        'content-type': 'application/json',
+      },
+      body: jsonEncode({'query': q, 'count': 5}),
     );
     if (r.statusCode >= 400) {
       return jsonEncode({
@@ -183,10 +187,13 @@ class ChatToolbox {
         'text': 'web search failed (${r.statusCode})',
       });
     }
-    final json = jsonDecode(r.body) as Map<String, dynamic>;
-    final hits =
-        ((json['results'] as Map<String, dynamic>?)?['web'] as List<dynamic>?) ??
-        const [];
+    Object? decoded;
+    try {
+      decoded = jsonDecode(r.body);
+    } on FormatException {
+      return jsonEncode({'type': 'text', 'text': 'web search failed'});
+    }
+    final hits = youWebHits(decoded);
     if (hits.isEmpty) {
       return jsonEncode({'type': 'text', 'text': 'no results'});
     }
@@ -194,13 +201,7 @@ class ChatToolbox {
       'type': 'column',
       'children': [
         {'type': 'heading', 'text': q},
-        for (final h in hits.take(5))
-          {
-            'type': 'link',
-            'title': (h as Map<String, dynamic>)['title'] ?? '',
-            'url': h['url'] ?? '',
-            'snippet': h['description'] ?? '',
-          },
+        ...hits,
       ],
     });
   }
@@ -428,6 +429,50 @@ class ChatToolbox {
       },
     },
   };
+}
+
+/// Link cards from a You.com `/v1/search` body (`results.web` and news).
+List<Map<String, dynamic>> youWebHits(Object? decoded) {
+  if (decoded is! Map) return const [];
+  final results = decoded['results'];
+  if (results is! Map) return const [];
+  final links = <Map<String, dynamic>>[];
+  for (final section in ['web', 'news']) {
+    final rows = results[section];
+    if (rows is! List) continue;
+    for (final row in rows) {
+      if (row is! Map) continue;
+      final url = row['url'];
+      if (url is! String || url.isEmpty) continue;
+      final title = row['title'];
+      links.add({
+        'type': 'link',
+        'title': title is String && title.trim().isNotEmpty
+            ? title.trim()
+            : url,
+        'url': url,
+        'snippet': _youSnippet(row),
+      });
+      if (links.length == 5) return links;
+    }
+  }
+  return links;
+}
+
+String _youSnippet(Map<dynamic, dynamic> row) {
+  final description = row['description'];
+  if (description is String && description.trim().isNotEmpty) {
+    return description.trim();
+  }
+  final snippets = row['snippets'];
+  if (snippets is List) {
+    for (final snippet in snippets) {
+      if (snippet is String && snippet.trim().isNotEmpty) {
+        return snippet.trim();
+      }
+    }
+  }
+  return '';
 }
 
 /// Link cards from an OpenRouter chat completion that used web search.
