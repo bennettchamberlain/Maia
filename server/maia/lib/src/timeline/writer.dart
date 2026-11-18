@@ -403,7 +403,7 @@ class TimelineWriter {
           title := <optional str>\$title,
           topics := <array<str>>\$topics,
           source := 'chat',
-          source_id := <str>\$session,
+          source_id := <str>\$source_id,
           started_at := <datetime>\$started,
           ended_at := <datetime>\$ended,
         }
@@ -422,6 +422,7 @@ class TimelineWriter {
       {
         'timeline': timelineId,
         'session': sessionId,
+        'source_id': sessionId,
         'title': title,
         'topics': topics,
         'started': started.toUtc(),

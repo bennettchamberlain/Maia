@@ -210,8 +210,8 @@ class Config {
   final String? voiceWorkdir;
   final Duration voiceKeepAlive;
 
-  /// PolarGrid key. When set, voice uses their hosted PersonaPlex socket
-  /// instead of spawning the local sidecar.
+  /// PolarGrid key. Used when the edge answers; otherwise the local
+  /// sidecar starts. Chat still types if neither is up.
   final String? polargridApiKey;
   final String polargridRegion;
   final String polargridVoice;

@@ -1877,15 +1877,19 @@ class MaiaApp {
     final loading = engine['loading'] == true;
     final model = brain['model'] as String?;
     final keep = remote?['keep_until'] as String?;
+    final polarDown = config.polargridApiKey != null && remote == null;
     return {
       'connected': remote != null,
       'ready': loaded,
       'model': model,
       'connected_at': keep,
       'description': remote == null
-          ? 'Local mouth and ears. Press Start — this machine loads '
-                'PersonaPlex and keeps it warm for six hours. Chat still '
-                'speaks on the phone without it.'
+          ? polarDown
+                ? 'PolarGrid is down. Press Talk to start PersonaPlex on '
+                      'this machine, or keep chatting without it.'
+                : 'Local mouth and ears. Press Start — this machine loads '
+                      'PersonaPlex and keeps it warm for six hours. Chat still '
+                      'speaks on the phone without it.'
           : loading
           ? 'Loading weights. First start is the long one; after that it '
                 'stays resident for six hours.'
@@ -1907,10 +1911,16 @@ class MaiaApp {
   }
 
   Future<Response> _voiceLive(Request r, gel.Client _) async {
-    if (!voice.polar.enabled) {
-      return _error(503, 'voice_unavailable', 'POLARGRID_API_KEY is not set');
+    if (await voice.polarReachable()) {
+      return voice.polar.handle(r);
     }
-    return voice.polar.handle(r);
+    return _error(
+      503,
+      'voice_unavailable',
+      voice.polar.enabled
+          ? 'PolarGrid is down. Start local PersonaPlex or keep chatting.'
+          : 'Voice is not live.',
+    );
   }
 
   Future<Response> _voiceStart(Request r, gel.Client c) async {
@@ -1929,7 +1939,7 @@ class MaiaApp {
     final b = await _body(r);
     final text = (b['text'] as String?)?.trim() ?? '';
     if (text.isEmpty) return _error(400, 'bad_request', 'text required');
-    if (voice.polar.enabled) return _polarSay(text);
+    if (await voice.polarReachable()) return _polarSay(text);
     return _voicePost('/api/ask', {'text': text});
   }
 
@@ -1937,7 +1947,7 @@ class MaiaApp {
     final b = await _body(r);
     final text = (b['text'] as String?)?.trim() ?? '';
     if (text.isEmpty) return _error(400, 'bad_request', 'text required');
-    if (voice.polar.enabled) return _polarSay(text);
+    if (await voice.polarReachable()) return _polarSay(text);
     return _voicePost('/api/say', {
       'text': text,
       'interrupt': b['interrupt'] == true,
