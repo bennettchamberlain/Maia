@@ -1031,7 +1031,7 @@ class MaiaApp {
     }
     if (map['actions'] is List && map['data'] == null) {
       return jsonEncode({
-        'type': 'text',
+        'type': 'model',
         'text': connectorActionPrompt(platform, map['actions']),
       });
     }

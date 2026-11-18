@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:maia_app/chat/bloc/chat_bloc.dart';
 import 'package:maia_app/chat/parts/chat_part.dart';
+import 'package:maia_app/graph/ontology_view.dart';
 import 'package:maia_app/chat/parts/you_search.dart';
 import 'package:maia_app/chat/voice_cubit.dart';
 import 'package:maia_app/ui/chrome.dart';
@@ -523,41 +524,7 @@ class _GraphView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (graph.nodes.isNotEmpty)
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final node in graph.nodes)
-                ShadBadge.outline(
-                  child: Text(
-                    [
-                      if (node.kind.isNotEmpty) node.kind,
-                      node.name,
-                      if (node.status.isNotEmpty) node.status,
-                    ].join(' · '),
-                  ),
-                ),
-            ],
-          ),
-        if (graph.edges.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          for (final edge in graph.edges)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text(
-                '${edge.source} ${edge.kind} ${edge.target}'
-                '${edge.status.isEmpty ? '' : ' (${edge.status})'}',
-                style: theme.textTheme.muted,
-              ),
-            ),
-        ],
-      ],
-    );
+    return OntologyCanvas(graph: graph);
   }
 }
 

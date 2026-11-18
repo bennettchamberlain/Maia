@@ -6,6 +6,7 @@ import 'package:maia_api_client/maia_api_client.dart';
 import 'package:maia_app/chat/voice_cubit.dart';
 import 'package:maia_app/config/chat_settings_cubit.dart';
 import 'package:maia_app/config/server_cubit.dart';
+import 'package:maia_app/ghost/ghost_layer.dart';
 import 'package:maia_app/home/home.dart';
 import 'package:maia_app/l10n/l10n.dart';
 import 'package:maia_app/one/callback_forwarder.dart';
@@ -44,10 +45,8 @@ class App extends StatelessWidget {
                   tokenProvider: () => session.token,
                 ),
             child: BlocProvider(
-              create: (context) => VoiceCubit(
-                api: context.read<MaiaApiClient>(),
-                prefs: prefs,
-              ),
+              create: (context) =>
+                  VoiceCubit(api: context.read<MaiaApiClient>(), prefs: prefs),
               child: const _ServerBridge(),
             ),
           );
@@ -108,7 +107,7 @@ class AppView extends StatelessWidget {
           supportedLocales: AppLocalizations.supportedLocales,
           builder: (context, child) => ShadAppBuilder(
             builder: maiaMaterialTheme,
-            child: child,
+            child: GhostLayer(child: child ?? const SizedBox.shrink()),
           ),
           home: status == SessionStatus.authenticated
               ? const HomePage()

@@ -146,6 +146,8 @@ Future<void> _send(_Flags flags, String text) async {
         events.add('tool ${call.name}');
       case ChatDone():
         events.add('done');
+      case ChatDraftReplaced(:final text):
+        stdout.write(text);
       case ChatFailed(:final message):
         events.add('error');
         failed = message;

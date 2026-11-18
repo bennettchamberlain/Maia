@@ -531,6 +531,9 @@ ChatPart? partFromJson(Object? raw) {
   };
 }
 
+/// The life graph from `GET /graph` or a ```maia graph fence.
+ChatGraph chatGraphFromJson(Map<String, dynamic> raw) => _graphFromJson(raw);
+
 ChatGraph _graphFromJson(Map<Object?, Object?> raw) {
   ChatGraphNode nodeOf(Object? row, String kind) {
     if (row is! Map) return ChatGraphNode(name: '', kind: kind);
@@ -568,9 +571,66 @@ ChatGraph _graphFromJson(Map<Object?, Object?> raw) {
           kind: row['kind'] is String ? row['kind']! as String : '',
           status: row['status'] is String ? row['status']! as String : '',
         ),
+    for (final row in _rows(raw)) ..._containment(row),
   ].where((e) => e.source.isNotEmpty && e.target.isNotEmpty).toList();
 
-  return ChatGraph(nodes: nodes, edges: edges);
+  return ChatGraph(nodes: nodes, edges: _uniqueEdges(edges));
+}
+
+Iterable<Map<Object?, Object?>> _rows(Map<Object?, Object?> raw) sync* {
+  for (final key in ['nodes', 'goals', 'projects', 'habits', 'entities']) {
+    final rows = raw[key];
+    if (rows is! List) continue;
+    for (final row in rows) {
+      if (row is Map) yield Map<Object?, Object?>.from(row);
+    }
+  }
+}
+
+/// Parent and parts are containment, the same fact either way around.
+List<ChatGraphLink> _containment(Map<Object?, Object?> row) {
+  final child = row['name'] is String ? row['name']! as String : '';
+  if (child.isEmpty) return const [];
+  final links = <ChatGraphLink>[];
+  final parent = row['parent'];
+  if (parent is Map) {
+    final name = _named(parent);
+    if (name.isNotEmpty) {
+      links.add(
+        ChatGraphLink(
+          source: child,
+          target: name,
+          kind: 'part of',
+          status: 'verified',
+        ),
+      );
+    }
+  }
+  final parts = row['parts'];
+  if (parts is List) {
+    for (final part in parts) {
+      final name = _named(part);
+      if (name.isEmpty) continue;
+      links.add(
+        ChatGraphLink(
+          source: name,
+          target: child,
+          kind: 'part of',
+          status: 'verified',
+        ),
+      );
+    }
+  }
+  return links;
+}
+
+List<ChatGraphLink> _uniqueEdges(List<ChatGraphLink> edges) {
+  final seen = <String>{};
+  return [
+    for (final edge in edges)
+      if (seen.add('${edge.source}|${edge.kind}|${edge.target}|${edge.status}'))
+        edge,
+  ];
 }
 
 double? _asDouble(Object? value) {
@@ -792,7 +852,9 @@ ChatPart? _partFromToolResult(ChatToolCall tool) {
   final body = tool.result?.trim() ?? '';
   if (body.isEmpty) return null;
   try {
-    return partFromJson(jsonDecode(body));
+    final decoded = jsonDecode(body);
+    if (decoded is Map && decoded['type'] == 'model') return null;
+    return partFromJson(decoded);
   } on FormatException {
     return null;
   }

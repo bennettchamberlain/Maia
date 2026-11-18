@@ -1,6 +1,8 @@
 .aider*
 todo.md
-.vscode
+**/.vscode/**
+!.vscode/launch.json
+!app/.vscode/launch.json
 .yarn/*
 !.yarn/patches
 !.yarn/plugins

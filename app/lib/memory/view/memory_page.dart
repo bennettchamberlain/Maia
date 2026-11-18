@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:maia_api_client/maia_api_client.dart';
 import 'package:maia_app/chat/day_groups.dart';
+import 'package:maia_app/graph/ontology_view.dart';
 import 'package:maia_app/memory/memory.dart';
 import 'package:maia_app/ui/chrome.dart';
 import 'package:maia_app/ui/company_logo.dart';
@@ -81,6 +82,7 @@ class _MemoryBody extends StatefulWidget {
 
 class _MemoryBodyState extends State<_MemoryBody> {
   final _search = TextEditingController();
+  var _ontology = false;
 
   @override
   void dispose() {
@@ -98,19 +100,43 @@ class _MemoryBodyState extends State<_MemoryBody> {
     ];
     return Column(
       children: [
-        if (!state.library.isEmpty) const _LibraryShelf(),
-        if (state.timelines.isNotEmpty) const _TimelineFilters(),
-        if (state.timelines.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-            child: ShadInput(
-              key: const Key('memory_search'),
-              controller: _search,
-              placeholder: const Text('Search this timeline…'),
-              onChanged: (_) => setState(() {}),
-            ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+          child: Row(
+            children: [
+              _Mode(
+                label: 'Timeline',
+                buttonKey: const Key('memory_timeline'),
+                selected: !_ontology,
+                onPressed: () => setState(() => _ontology = false),
+              ),
+              const SizedBox(width: 8),
+              _Mode(
+                label: 'Ontology',
+                buttonKey: const Key('memory_ontology'),
+                selected: _ontology,
+                onPressed: () => setState(() => _ontology = true),
+              ),
+            ],
           ),
-        Expanded(child: _list(context, state, entries, query.isNotEmpty)),
+        ),
+        if (_ontology)
+          const Expanded(child: OntologyPage())
+        else ...[
+          if (!state.library.isEmpty) const _LibraryShelf(),
+          if (state.timelines.isNotEmpty) const _TimelineFilters(),
+          if (state.timelines.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+              child: ShadInput(
+                key: const Key('memory_search'),
+                controller: _search,
+                placeholder: const Text('Search this timeline…'),
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+          Expanded(child: _list(context, state, entries, query.isNotEmpty)),
+        ],
       ],
     );
   }
@@ -196,6 +222,38 @@ class _MemoryBodyState extends State<_MemoryBody> {
       ...entry.topics,
     ].whereType<String>().join(' ').toLowerCase();
     return hay.contains(query);
+  }
+}
+
+class _Mode extends StatelessWidget {
+  const new({
+    required this.label,
+    required this.buttonKey,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final String label;
+  final Key buttonKey;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    return ShadButton.outline(
+      key: buttonKey,
+      size: ShadButtonSize.sm,
+      onPressed: onPressed,
+      child: Text(
+        label,
+        style: theme.textTheme.small.copyWith(
+          color: selected
+              ? theme.colorScheme.foreground
+              : theme.colorScheme.mutedForeground,
+        ),
+      ),
+    );
   }
 }
 
@@ -407,7 +465,6 @@ class _EventTile extends StatelessWidget {
       ),
     );
   }
-
 }
 
 class _EventMark extends StatelessWidget {

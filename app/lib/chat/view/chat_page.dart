@@ -8,6 +8,7 @@ import 'package:maia_app/chat/attach.dart';
 import 'package:maia_app/chat/chat.dart';
 import 'package:maia_app/chat/parts/chat_part_view.dart';
 import 'package:maia_app/chat/quote.dart';
+import 'package:maia_app/chat/view/chat_bench_strip.dart';
 import 'package:maia_app/chat/view/composer.dart';
 import 'package:maia_app/chat/view/file_chip.dart';
 import 'package:maia_app/chat/view/timeline_column.dart';
@@ -62,15 +63,29 @@ class ChatView extends StatelessWidget {
             children: [
               SizedBox(width: listWidth, child: const TimelineColumn()),
               const MaiaDivider.vertical(),
-              const Expanded(child: _WideConversation()),
+              const Expanded(
+                child: Column(
+                  children: [
+                    ChatBenchStrip(),
+                    Expanded(child: _WideConversation()),
+                  ],
+                ),
+              ),
             ],
           );
         },
       );
     }
-    return hasOpen
-        ? const _Conversation(showBack: true)
-        : const TimelineColumn();
+    return Column(
+      children: [
+        const ChatBenchStrip(),
+        Expanded(
+          child: hasOpen
+              ? const _Conversation(showBack: true)
+              : const TimelineColumn(),
+        ),
+      ],
+    );
   }
 }
 
@@ -185,7 +200,7 @@ class _ConversationState extends State<_Conversation> {
             }
             return;
           }
-          if (state.messages.isEmpty) return;
+          if (chatBenchRunning || state.messages.isEmpty) return;
           final last = state.messages.last;
           if (last.role != 'assistant') return;
           unawaited(voice.speakReply(last.id, last.content));
@@ -383,8 +398,7 @@ class _ComposerActions extends StatelessWidget {
         _Action(
           key: const Key('chat_transcribe_button'),
           label: 'Transcribe',
-          selected:
-              voice.listening && voice.capture == VoiceCapture.transcribe,
+          selected: voice.listening && voice.capture == VoiceCapture.transcribe,
           onPressed: () => unawaited(cubit.begin(VoiceCapture.transcribe)),
         ),
         _Action(
@@ -438,9 +452,7 @@ class _TalkingBubble extends StatelessWidget {
     if (!talking) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Center(
-        child: MaiaCloud(speaking: voice.speaking),
-      ),
+      child: Center(child: MaiaCloud(speaking: voice.speaking)),
     );
   }
 }

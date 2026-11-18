@@ -1,0 +1,50 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "development (macOS)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main_development.dart",
+      "deviceId": "macos",
+      "toolArgs": ["--flavor", "development"]
+    },
+    {
+      "name": "development (Bennett's iPhone)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main_development.dart",
+      "deviceId": "00008101-0019303034F1003A",
+      "toolArgs": ["--flavor", "development"]
+    },
+    {
+      "name": "development (Bennett's iPad)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main_development.dart",
+      "deviceId": "00008027-001605D421E3002E",
+      "toolArgs": ["--flavor", "development"]
+    },
+    {
+      "name": "development",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main_development.dart",
+      "toolArgs": ["--flavor", "development"]
+    },
+    {
+      "name": "staging",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main_staging.dart",
+      "toolArgs": ["--flavor", "staging"]
+    },
+    {
+      "name": "production",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main_production.dart",
+      "toolArgs": ["--flavor", "production"]
+    }
+  ]
+}

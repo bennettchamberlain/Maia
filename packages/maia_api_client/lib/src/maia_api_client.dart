@@ -83,6 +83,11 @@ class MaiaApiClient {
     return _list(json, MemoryItem.fromJson);
   }
 
+  /// The signed-in person's life graph: goals, projects, habits,
+  /// entities, and the edges between them.
+  Future<Map<String, dynamic>> graph() async =>
+      (await _get('/graph')) as Map<String, dynamic>;
+
   // ---- positions ----------------------------------------------------------
 
   Future<int> pushPositions(List<PositionPoint> points) async {
@@ -186,9 +191,8 @@ class MaiaApiClient {
     return _list(json, TimelineEntry.fromJson);
   }
 
-  Future<LibraryView> library() async => LibraryView.fromJson(
-    await _get('/library') as Map<String, dynamic>,
-  );
+  Future<LibraryView> library() async =>
+      LibraryView.fromJson(await _get('/library') as Map<String, dynamic>);
 
   Future<List<Document>> documents() async =>
       _list(await _get('/files'), Document.fromJson);
@@ -254,9 +258,7 @@ class MaiaApiClient {
         if (slug.isEmpty || row['active'] == false) continue;
         final category = (row['category'] as String?)?.trim();
         final description = (row['description'] as String? ?? '').trim();
-        final named = category == null || category.isEmpty
-            ? 'Other'
-            : category;
+        final named = category == null || category.isEmpty ? 'Other' : category;
         categories.add(named);
         connectors.add(
           OneConnector(
@@ -281,9 +283,8 @@ class MaiaApiClient {
     );
   }
 
-  Future<ChatCatalog> chatTools() async => ChatCatalog.fromJson(
-    await _get('/chat/tools') as Map<String, dynamic>,
-  );
+  Future<ChatCatalog> chatTools() async =>
+      ChatCatalog.fromJson(await _get('/chat/tools') as Map<String, dynamic>);
 
   Future<ChatCatalog> putConnection(
     String id, {
@@ -296,12 +297,12 @@ class MaiaApiClient {
     }) as Map<String, dynamic>,
   );
 
-  Future<ChatCatalog> deleteConnection(String id) async =>
-      ChatCatalog.fromJson(
-        await _deleteJson('/chat/connections/$id') as Map<String, dynamic>,
-      );
+  Future<ChatCatalog> deleteConnection(String id) async => ChatCatalog.fromJson(
+    await _deleteJson('/chat/connections/$id') as Map<String, dynamic>,
+  );
 
-  Future<VoiceStatus> voiceStatus() => _voiceOrDown(() => _get('/voice/status'));
+  Future<VoiceStatus> voiceStatus() =>
+      _voiceOrDown(() => _get('/voice/status'));
 
   /// Spawn the sidecar if it is down, then load weights in the background.
   Future<VoiceStatus> voiceStart() =>
@@ -337,14 +338,14 @@ class MaiaApiClient {
     String text, {
     bool interrupt = false,
   }) async =>
-      await _post('/voice/say', {
-        'text': text,
-        'interrupt': interrupt,
-      }) as Map<String, dynamic>;
+      await _post('/voice/say', {'text': text, 'interrupt': interrupt})
+          as Map<String, dynamic>;
 
   Future<OneGrant?> oneGrant() async {
     try {
-      return OneGrant.fromJson(await _get('/one/grant') as Map<String, dynamic>);
+      return OneGrant.fromJson(
+        await _get('/one/grant') as Map<String, dynamic>,
+      );
     } on MaiaApiException catch (e) {
       if (e.statusCode == 404) return null;
       rethrow;
@@ -367,10 +368,8 @@ class MaiaApiClient {
     String platform, {
     required bool syncing,
   }) async => OneConnectResult.fromJson(
-    await _post('/one/accounts', {
-      'platform': platform,
-      'syncing': syncing,
-    }) as Map<String, dynamic>,
+    await _post('/one/accounts', {'platform': platform, 'syncing': syncing})
+        as Map<String, dynamic>,
   );
 
   Future<List<String>> oneSync({List<String>? platforms}) async {
@@ -407,16 +406,18 @@ class MaiaApiClient {
     String? provider,
     String? screen,
   }) async* {
-    final req = http.Request(
-      'POST',
-      _baseUrl.resolve('chat/sessions/$sessionId/messages'),
-    )
-      ..headers.addAll({..._headers, 'accept': 'text/event-stream'})
-      ..body = jsonEncode({
-        'content': content,
-        if (provider != null && provider.isNotEmpty) 'provider': provider,
-        if (screen != null && screen.trim().isNotEmpty) 'screen': screen.trim(),
-      });
+    final req =
+        http.Request(
+            'POST',
+            _baseUrl.resolve('chat/sessions/$sessionId/messages'),
+          )
+          ..headers.addAll({..._headers, 'accept': 'text/event-stream'})
+          ..body = jsonEncode({
+            'content': content,
+            if (provider != null && provider.isNotEmpty) 'provider': provider,
+            if (screen != null && screen.trim().isNotEmpty)
+              'screen': screen.trim(),
+          });
     final res = await _http.send(req);
     if (res.statusCode != 200) {
       final body = await res.stream.bytesToString();
@@ -432,9 +433,8 @@ class MaiaApiClient {
     }
     String? event;
     final data = StringBuffer();
-    await for (final line in res.stream
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())) {
+    await for (final line
+        in res.stream.transform(utf8.decoder).transform(const LineSplitter())) {
       if (line.startsWith('event:')) {
         event = line.substring(6).trim();
       } else if (line.startsWith('data:')) {

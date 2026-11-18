@@ -42,4 +42,12 @@ void main() {
     expect(text, contains('action_id: search'));
     expect(text, contains('copied into memory'));
   });
+
+  test('harness text is stripped from a public reply', () {
+    const leak = 'Call connector again for github with one action_id below';
+    final raw =
+        'Yes, I can access GitHub. What would you like to do?\n$leak\nfoo';
+    expect(publicChatText(raw), 'Yes, I can access GitHub.');
+    expect(looksLikeConnectorHarnessText(leak), isTrue);
+  });
 }

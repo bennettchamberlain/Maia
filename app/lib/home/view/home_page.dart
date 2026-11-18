@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:maia_app/chat/chat.dart';
+import 'package:maia_app/chat/view/chat_bench_strip.dart';
 import 'package:maia_app/home/view/settings_page.dart';
 import 'package:maia_app/jobs/jobs.dart';
 import 'package:maia_app/memory/memory.dart';
@@ -24,6 +25,26 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   var _index = 0;
   var _settings = false;
+
+  @override
+  void initState() {
+    super.initState();
+    chatBenchShow.addListener(_showChat);
+  }
+
+  @override
+  void dispose() {
+    chatBenchShow.removeListener(_showChat);
+    super.dispose();
+  }
+
+  void _showChat() {
+    if (!mounted) return;
+    setState(() {
+      _index = 0;
+      _settings = false;
+    });
+  }
 
   static const _pages = <Widget>[
     ChatPage(),
@@ -48,9 +69,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final person = context.select<SessionCubit, Person?>(
-      (c) => c.state.person,
-    );
+    final person = context.select<SessionCubit, Person?>((c) => c.state.person);
     final wide = MediaQuery.sizeOf(context).width >= 700;
     final body = _settings
         ? SettingsPage(onClose: () => setState(() => _settings = false))
@@ -240,11 +259,7 @@ class _NavButton extends StatelessWidget {
           child: stacked
               ? Column(
                   mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    glyph,
-                    const SizedBox(height: 2),
-                    labelText,
-                  ],
+                  children: [glyph, const SizedBox(height: 2), labelText],
                 )
               : Row(
                   children: [

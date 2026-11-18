@@ -82,6 +82,37 @@ String connectorActionPrompt(String platform, Object? actions) {
       '${lines.join('\n')}';
 }
 
+const _harnessMarkers = [
+  'Call connector again',
+  'conn_mod_def',
+  'action_id:',
+  'conn_mod_def::',
+];
+
+/// True when [text] carries connector harness instructions, not human prose.
+bool looksLikeConnectorHarnessText(String text) {
+  final hay = text.toLowerCase();
+  for (final marker in _harnessMarkers) {
+    if (hay.contains(marker.toLowerCase())) return true;
+  }
+  return false;
+}
+
+/// Drops connector action prompts and other harness text before it reaches
+/// the person or the stored assistant message.
+String publicChatText(String text) {
+  var t = text;
+  for (final marker in _harnessMarkers) {
+    final i = t.indexOf(marker);
+    if (i >= 0) t = t.substring(0, i);
+  }
+  t = t.replaceAll(
+    RegExp(r'\s*What would you like to do\??', caseSensitive: false),
+    '',
+  );
+  return t.trimRight();
+}
+
 List<Map<String, dynamic>> _records(Object? payload) {
   const keys = [
     'items',

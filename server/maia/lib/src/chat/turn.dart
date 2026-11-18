@@ -2,6 +2,7 @@ import 'package:gel/gel.dart' as gel;
 import 'package:maia_api/src/agent.dart';
 import 'package:maia_api/src/chat/tools.dart';
 import 'package:maia_api/src/harness/harness.dart';
+import 'package:maia_api/src/one/extract.dart';
 
 /// One reply: a short loop of next steps. Each step reads the tools that
 /// are available right then, runs at most one of them, then looks again.
@@ -33,6 +34,8 @@ runChatTurn({
     }
     final calls = <AgentToolCall>[];
     final roundText = StringBuffer();
+    final spoken = StringBuffer();
+    var spokenEmitted = 0;
     await for (final ev in harness.stream(
       request,
       user: user,
@@ -41,8 +44,14 @@ runChatTurn({
       switch (ev) {
         case AgentText(text: final t):
           roundText.write(t);
-          text.write(t);
-          emit('delta', {'text': t});
+          spoken.write(t);
+          final safe = publicChatText(spoken.toString());
+          if (safe.length > spokenEmitted) {
+            final chunk = safe.substring(spokenEmitted);
+            text.write(chunk);
+            emit('delta', {'text': chunk});
+            spokenEmitted = safe.length;
+          }
         case AgentToolCall():
           calls.add(ev);
         case AgentDone(model: final usedModel, :final finishReason):
@@ -74,12 +83,12 @@ runChatTurn({
       'content': roundText.isEmpty ? null : roundText.toString(),
       'tool_calls': [for (final c in calls) c.toWire()],
     });
-    final spoken = steer?.call();
-    if (spoken != null) {
+    final steered = steer?.call();
+    if (steered != null) {
       for (final pending in calls) {
         _record(messages, used, emit, pending, skippedToolResult);
       }
-      messages.add({'role': 'user', 'content': spoken});
+      messages.add({'role': 'user', 'content': steered});
       continue;
     }
     final call = calls.first;
@@ -108,11 +117,19 @@ runChatTurn({
       for (final m in messages) Map<String, dynamic>.from(m),
       {'role': 'system', 'content': answerCue},
     ];
+    final answerSpoken = StringBuffer();
+    var answerEmitted = 0;
     await for (final ev in harness.stream(request, user: user)) {
       switch (ev) {
         case AgentText(text: final t):
-          text.write(t);
-          emit('delta', {'text': t});
+          answerSpoken.write(t);
+          final safe = publicChatText(answerSpoken.toString());
+          if (safe.length > answerEmitted) {
+            final chunk = safe.substring(answerEmitted);
+            text.write(chunk);
+            emit('delta', {'text': chunk});
+            answerEmitted = safe.length;
+          }
         case AgentToolCall():
           break;
         case AgentDone(model: final usedModel, :final finishReason):
