@@ -58,10 +58,16 @@ class FileChip extends StatelessWidget {
 
 /// Renders a stored message: file tokens become chips, the path stays hidden.
 class FileAwareText extends StatelessWidget {
-  const new({required this.text, required this.style, super.key});
+  const new({
+    required this.text,
+    required this.style,
+    this.contextMenuBuilder,
+    super.key,
+  });
 
   final String text;
   final TextStyle style;
+  final Widget Function(BuildContext, EditableTextState)? contextMenuBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -78,6 +84,9 @@ class FileAwareText extends StatelessWidget {
           ),
         },
     ];
-    return SelectableText.rich(TextSpan(style: style, children: spans));
+    return SelectableText.rich(
+      TextSpan(style: style, children: spans),
+      contextMenuBuilder: contextMenuBuilder,
+    );
   }
 }

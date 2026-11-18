@@ -46,6 +46,56 @@ final class ChatBackToList extends ChatEvent {
   const new();
 }
 
+/// The app paused. Close the open session without leaving it.
+final class ChatLeft extends ChatEvent {
+  const new();
+}
+
+/// The person named this chat. Later closes keep the name.
+final class ChatSessionRenamed extends ChatEvent {
+  const new(this.sessionId, this.title);
+
+  final String sessionId;
+  final String title;
+
+  @override
+  List<Object?> get props => [sessionId, title];
+}
+
+/// Branch a chat at [messageId]. [selection] is the highlighted passage.
+final class ChatForkRequested extends ChatEvent {
+  const new({
+    required this.sessionId,
+    required this.messageId,
+    this.selection,
+  });
+
+  final String sessionId;
+  final String messageId;
+  final String? selection;
+
+  @override
+  List<Object?> get props => [sessionId, messageId, selection];
+}
+
+/// Create a file from [text], or append it when [documentId] is set.
+final class ChatFileSaved extends ChatEvent {
+  const new({
+    required this.text,
+    this.documentId,
+    this.sessionId,
+    this.messageId,
+  });
+
+  final String text;
+  final String? documentId;
+  final String? sessionId;
+  final String? messageId;
+
+  @override
+  List<Object?> get props => [text, documentId, sessionId, messageId];
+}
+
 /// A transcript quote or a picked file. It sits in the thread and is not
 /// sent as a prompt.
 final class ChatAsideAdded extends ChatEvent {

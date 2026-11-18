@@ -14,3 +14,4 @@ export 'src/place.dart';
 export 'src/position_point.dart';
 export 'src/presence_overlap.dart';
 export 'src/session.dart';
+export 'src/timeline.dart';

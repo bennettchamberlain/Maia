@@ -453,9 +453,18 @@ module default {
     overloaded required sensitive: bool { default := true };
 
     title: str;
+    # Set when a person renames the chat. Close will not replace it.
+    required title_locked: bool { default := false };
+    # One-line topics for the whole session, rewritten on close.
+    topics: array<str> { default := <array<str>>[] };
+    # Last message seq included in the stored title and topics.
+    required summarized_through_seq: int32 { default := 0 };
     # Harness-side continuity key (OpenClaw session key). Stable per session.
     required agent_session_key: str { default := <str>uuid_generate_v4() };
     last_message_at: datetime;
+    forked_from: ChatMessage {
+      on target delete allow;
+    };
     multi messages := .<session[is ChatMessage];
 
     index on ((.owner, .last_message_at));
@@ -476,6 +485,117 @@ module default {
 
     constraint exclusive on ((.session, .seq));
     index on ((.session, .seq));
+  }
+
+  # A text the person kept. Lives in Napalm, next to the chat it came from.
+  type Document extending Owned {
+    overloaded required data_class: str { default := 'file' };
+    overloaded required sensitive: bool { default := true };
+
+    required title: str;
+    body: str { default := '' };
+  }
+
+  # ---------------------------------------------------------------------------
+  # Timelines. One abstract stream, then a concrete stream per kind of life.
+  # The memory column is the UserTimeline. Entity, person, and connection
+  # timelines are the parallel streams (family, another user, one Gmail).
+  # ---------------------------------------------------------------------------
+  abstract type Timeline extending Owned {
+    overloaded required data_class: str { default := 'timeline' };
+    overloaded required sensitive: bool { default := true };
+
+    required key: str;
+    required name: str;
+
+    constraint exclusive on ((.owner, .key));
+    index on ((.owner, .key));
+  }
+
+  # The column next to navigation. One per person.
+  type UserTimeline extending Timeline;
+
+  # A stream about someone or something in the life graph: a family member,
+  # a place, a project. `subject` is that thing.
+  type EntityTimeline extending Timeline {
+    required subject: Thing {
+      on target delete delete source;
+    };
+  }
+
+  # A stream about another Maia person.
+  type PersonTimeline extending Timeline {
+    required subject: Person {
+      on target delete delete source;
+    };
+  }
+
+  # One connected account. A second Gmail is a second timeline.
+  type ConnectionTimeline extending Timeline {
+    required platform: str;
+    required account: str;
+  }
+
+  # One span on a timeline. Concrete types add where the span came from.
+  abstract type TimelineEntry extending Owned {
+    overloaded required data_class: str { default := 'timeline' };
+    overloaded required sensitive: bool { default := true };
+
+    required timeline: Timeline {
+      on target delete delete source;
+    };
+    required started_at: datetime;
+    required ended_at: datetime;
+    # session | mail | calendar | connector | file | ontology
+    required kind: str;
+    title: str;
+    body: str;
+    topics: array<str> { default := <array<str>>[] };
+    source: str;
+    source_id: str;
+
+    index on ((.timeline, .ended_at));
+  }
+
+  # A chat, drawn as a card on the user timeline.
+  type SessionSpan extending TimelineEntry {
+    required session: ChatSession {
+      on target delete delete source;
+    };
+
+    constraint exclusive on ((.timeline, .session));
+  }
+
+  # Mail, calendar, or any other connector account.
+  type ConnectorEvent extending TimelineEntry {
+    required platform: str;
+    required account: str;
+
+    constraint exclusive on ((.timeline, .source, .source_id));
+  }
+
+  type MailEvent extending ConnectorEvent;
+  type CalendarEvent extending ConnectorEvent;
+
+  # A file made or extended from a selection.
+  type FileSpan extending TimelineEntry {
+    required document: Document {
+      on target delete delete source;
+    };
+
+    constraint exclusive on ((.timeline, .document));
+  }
+
+  # A short note on an entity timeline, written when the graph links a memory.
+  type OntologySpan extending TimelineEntry {
+    required subject: Thing {
+      on target delete delete source;
+    };
+    memory: MemoryItem {
+      on target delete allow;
+    };
+
+    constraint exclusive on ((.timeline, .source, .source_id));
   }
 
   # One Connect grant pointer. One holds the OAuth tokens; we store the

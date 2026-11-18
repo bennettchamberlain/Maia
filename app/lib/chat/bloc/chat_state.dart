@@ -6,6 +6,7 @@ final class ChatState extends Equatable {
   const new({
     this.status = ChatStatus.initial,
     this.sessions = const [],
+    this.entries = const [],
     this.open,
     this.messages = const [],
     this.sending = false,
@@ -16,6 +17,9 @@ final class ChatState extends Equatable {
 
   final ChatStatus status;
   final List<ChatSession> sessions;
+
+  /// Cards on the user timeline: chats, mail, calendars, files.
+  final List<TimelineEntry> entries;
 
   /// The session on screen; null shows the list.
   final ChatSession? open;
@@ -34,6 +38,7 @@ final class ChatState extends Equatable {
   ChatState copyWith({
     ChatStatus? status,
     List<ChatSession>? sessions,
+    List<TimelineEntry>? entries,
     ChatSession? open,
     bool clearOpen = false,
     List<ChatMessage>? messages,
@@ -46,6 +51,7 @@ final class ChatState extends Equatable {
     return ChatState(
       status: status ?? this.status,
       sessions: sessions ?? this.sessions,
+      entries: entries ?? this.entries,
       open: clearOpen ? null : (open ?? this.open),
       messages: clearOpen ? const [] : (messages ?? this.messages),
       sending: sending ?? this.sending,
@@ -58,7 +64,18 @@ final class ChatState extends Equatable {
   @override
   List<Object?> get props => [
     status,
-    sessions.map((s) => '${s.id}:${s.title}:${s.messageCount}').toList(),
+    sessions
+        .map(
+          (s) =>
+              '${s.id}:${s.title}:${s.titleLocked}:${s.topics.join('|')}:${s.messageCount}',
+        )
+        .toList(),
+    entries
+        .map(
+          (e) =>
+              '${e.id}:${e.title}:${e.kind}:${e.topics.join('|')}:${e.endedAt.millisecondsSinceEpoch}',
+        )
+        .toList(),
     open?.id,
     messages.map((m) => m.id).toList(),
     sending,

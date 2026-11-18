@@ -4,43 +4,68 @@ class ChatSession {
     required this.id,
     required this.createdAt,
     this.title,
+    this.titleLocked = false,
+    this.topics = const [],
     this.lastMessageAt,
+    this.firstMessageAt,
     this.messageCount = 0,
   });
 
   factory ChatSession.fromJson(Map<String, dynamic> json) => ChatSession(
     id: json['id'] as String,
     title: json['title'] as String?,
+    titleLocked: json['title_locked'] as bool? ?? false,
+    topics: [
+      for (final topic in json['topics'] as List<dynamic>? ?? const [])
+        if (topic is String) topic,
+    ],
     createdAt: DateTime.parse(json['created_at'] as String),
     lastMessageAt: json['last_message_at'] == null
         ? null
         : DateTime.parse(json['last_message_at'] as String),
+    firstMessageAt: json['first_message_at'] == null
+        ? null
+        : DateTime.parse(json['first_message_at'] as String),
     messageCount: (json['message_count'] as num?)?.toInt() ?? 0,
   );
 
   final String id;
   final String? title;
+
+  /// True once a person has renamed the chat. Close keeps this title.
+  final bool titleLocked;
+  final List<String> topics;
   final DateTime createdAt;
   final DateTime? lastMessageAt;
+  final DateTime? firstMessageAt;
   final int messageCount;
 
   ChatSession copyWith({
     String? title,
+    bool? titleLocked,
+    List<String>? topics,
     DateTime? lastMessageAt,
+    DateTime? firstMessageAt,
     int? messageCount,
   }) => ChatSession(
     id: id,
     createdAt: createdAt,
     title: title ?? this.title,
+    titleLocked: titleLocked ?? this.titleLocked,
+    topics: topics ?? this.topics,
     lastMessageAt: lastMessageAt ?? this.lastMessageAt,
+    firstMessageAt: firstMessageAt ?? this.firstMessageAt,
     messageCount: messageCount ?? this.messageCount,
   );
 
   Map<String, dynamic> toJson() => {
     'id': id,
     'title': title,
+    'title_locked': titleLocked,
+    'topics': topics,
     'created_at': createdAt.toIso8601String(),
     'last_message_at': lastMessageAt?.toIso8601String(),
+    'first_message_at': firstMessageAt?.toIso8601String(),
     'message_count': messageCount,
   };
 }

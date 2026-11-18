@@ -20,7 +20,10 @@ void main() {
   group('ChatBloc', () {
     late _MockApi api;
 
-    setUp(() => api = _MockApi());
+    setUp(() {
+      api = _MockApi();
+      when(api.userTimeline).thenAnswer((_) async => UserTimelineView.empty);
+    });
 
     blocTest<ChatBloc, ChatState>(
       'loads sessions on start',
@@ -31,7 +34,16 @@ void main() {
       act: (b) => b.add(const ChatStarted()),
       expect: () => [
         const ChatState(status: ChatStatus.loading),
-        ChatState(status: ChatStatus.ready, sessions: [session]),
+        ChatState(
+          status: ChatStatus.ready,
+          sessions: [session],
+          entries: [
+            TimelineEntry.fromSession(
+              sessionId: session.id,
+              createdAt: session.createdAt,
+            ),
+          ],
+        ),
       ],
     );
 
@@ -106,6 +118,88 @@ void main() {
         expect(b.state.sending, isFalse);
         expect(b.state.error, 'agent 503');
         expect(b.state.messages.length, 1);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      'rename locks the title on the open chat',
+      build: () {
+        when(() => api.chatRename('s1', 'Career')).thenAnswer(
+          (_) async => session.copyWith(title: 'Career', titleLocked: true),
+        );
+        return ChatBloc(api: api);
+      },
+      seed: () => ChatState(status: ChatStatus.ready, open: session),
+      act: (b) => b.add(const ChatSessionRenamed('s1', 'Career')),
+      verify: (b) {
+        expect(b.state.open?.title, 'Career');
+        expect(b.state.open?.titleLocked, isTrue);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      'switching chats closes the one you left',
+      build: () {
+        when(() => api.chatClose('s1')).thenAnswer((_) async => session);
+        when(() => api.chatMessages('s2')).thenAnswer((_) async => []);
+        when(api.userTimeline).thenAnswer(
+          (_) async => UserTimelineView(
+            entries: [
+              TimelineEntry.fromSession(
+                sessionId: 's1',
+                createdAt: session.createdAt,
+                title: 'You mapped careers',
+              ),
+            ],
+          ),
+        );
+        return ChatBloc(api: api);
+      },
+      seed: () => ChatState(
+        status: ChatStatus.ready,
+        sessions: [
+          session,
+          ChatSession(id: 's2', createdAt: DateTime.utc(2026, 2)),
+        ],
+        open: session,
+      ),
+      act: (b) => b.add(
+        ChatSessionOpened(ChatSession(id: 's2', createdAt: DateTime.utc(2026, 2))),
+      ),
+      verify: (b) {
+        verify(() => api.chatClose('s1')).called(1);
+        expect(b.state.open?.id, 's2');
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      'fork opens the new session',
+      build: () {
+        final fork = ChatSession(id: 's2', createdAt: DateTime.utc(2026, 3));
+        when(
+          () => api.chatFork(
+            's1',
+            messageId: 'a1',
+            selection: any(named: 'selection'),
+          ),
+        ).thenAnswer((_) async => fork);
+        when(() => api.chatMessages('s2')).thenAnswer(
+          (_) async => [msg('a1', 'assistant', 'hello', 1)],
+        );
+        when(api.userTimeline).thenAnswer((_) async => UserTimelineView.empty);
+        return ChatBloc(api: api);
+      },
+      seed: () => ChatState(status: ChatStatus.ready, open: session),
+      act: (b) => b.add(
+        const ChatForkRequested(
+          sessionId: 's1',
+          messageId: 'a1',
+          selection: 'hello',
+        ),
+      ),
+      verify: (b) {
+        expect(b.state.open?.id, 's2');
+        expect(b.state.messages.single.content, 'hello');
       },
     );
   });

@@ -19,6 +19,8 @@ import 'package:maia_api/src/geocoder.dart';
 import 'package:maia_api/src/parasail_embeddings.dart';
 import 'package:maia_api/src/graph/graph_block.dart';
 import 'package:maia_api/src/queries.dart';
+import 'package:maia_api/src/timeline/summary.dart';
+import 'package:maia_api/src/timeline/writer.dart';
 import 'package:maia_api/src/voice/supervisor.dart';
 import 'package:maia_jobs/maia_jobs.dart';
 import 'package:shelf/shelf.dart';
@@ -179,9 +181,18 @@ class MaiaApp {
     ..delete('/chat/connections/<id>', _authed(_chatConnectionDelete))
     ..get('/chat/sessions', _authed(_chatSessions))
     ..post('/chat/sessions', _authed(_chatCreate))
+    ..patch('/chat/sessions/<id>', _authed(_chatRename))
+    ..post('/chat/sessions/<id>/close', _authed(_chatClose))
+    ..post('/chat/sessions/<id>/fork', _authed(_chatFork))
     ..delete('/chat/sessions/<id>', _authed(_chatDelete))
     ..get('/chat/sessions/<id>/messages', _authed(_chatMessages))
     ..post('/chat/sessions/<id>/messages', _authed(_chatSend))
+    ..get('/files', _authed(_files))
+    ..post('/files', _authed(_fileCreate))
+    ..post('/files/<id>/append', _authed(_fileAppend))
+    ..get('/timeline', _authed(_userTimeline))
+    ..get('/timelines', _authed(_timelines))
+    ..get('/timelines/<id>/entries', _authed(_timelineEntries))
     ..get('/graph/candidates', _authed(_weaveCandidates))
     ..post('/graph/entities', _authed(_graphEntity))
     ..post('/graph/edges', _authed(_graphEdge))
@@ -429,6 +440,7 @@ class MaiaApp {
       source: b['source'] as String? ?? 'app',
       sourceId:
           b['source_id'] as String? ?? _digest('${b['title']}${b['body']}'),
+      account: b['account'] as String?,
     );
     final full = await c.querySingleJSON(queries['memory_get'], {'id': id});
     return Response.ok(full, headers: _jsonHeaders);
@@ -458,6 +470,7 @@ class MaiaApp {
     required DateTime occurredAt,
     required String source,
     required String sourceId,
+    String? account,
   }) async {
     final json = await c.querySingleJSON(queries['memory_upsert'], {
       'kind': kind,
@@ -514,6 +527,19 @@ class MaiaApp {
     }
     await _enqueueConclude(c, id);
     await _enqueueWeave(c, id);
+    try {
+      await TimelineWriter.recordConnector(
+        c,
+        source: source,
+        sourceId: sourceId,
+        title: title,
+        body: body,
+        at: occurredAt,
+        account: account,
+      );
+    } on Object catch (e) {
+      stderr.writeln('timeline: $e');
+    }
     return id;
   }
 
@@ -1023,8 +1049,11 @@ class MaiaApp {
       select (insert ChatSession {
         owner := assert_exists(global current_person),
         title := <optional str>$title,
-      }) { id, title, agent_session_key, created_at, last_message_at,
-           message_count := 0 }
+      }) {
+        id, title, title_locked, topics, agent_session_key, created_at,
+        last_message_at, first_message_at := min(.messages.created_at),
+        message_count := 0
+      }
       ''',
       {'title': (b['title'] as String?)?.trim()},
     );
@@ -1036,6 +1065,425 @@ class MaiaApp {
       'id': r.params['id'],
     });
     return Response(204);
+  }
+
+  Future<Response> _chatRename(Request r, gel.Client c) async {
+    final b = await _body(r);
+    final title = (b['title'] as String?)?.trim();
+    if (title == null || title.isEmpty) {
+      return _error(400, 'bad_request', 'title required');
+    }
+    final id = r.params['id']!;
+    await c.execute(
+      r'''
+      update ChatSession filter .id = <uuid>$id set {
+        title := <str>$title,
+        title_locked := true,
+      }
+      ''',
+      {'id': id, 'title': title},
+    );
+    try {
+      await TimelineWriter.renameSpans(c, sessionId: id, title: title);
+      await _touchChat(c, id);
+    } on Object catch (e) {
+      stderr.writeln('timeline: $e');
+    }
+    return _sessionResponse(c, id);
+  }
+
+  Future<Response> _chatClose(Request r, gel.Client c) async {
+    final id = r.params['id']!;
+    final raw = jsonDecode(
+      await c.querySingleJSON(
+        r'''
+        select ChatSession {
+          id,
+          title,
+          title_locked,
+          summarized_through_seq,
+          messages: {
+            id, role, content, seq, created_at, tool_calls,
+          } order by .seq,
+        }
+        filter .id = <uuid>$id
+        ''',
+        {'id': id},
+      ),
+    );
+    if (raw is! Map<String, dynamic>) {
+      return _error(404, 'not_found', 'no such chat');
+    }
+    final messages = (raw['messages'] as List<dynamic>? ?? const [])
+        .cast<Map<String, dynamic>>();
+    final latest = messages.isEmpty
+        ? 0
+        : (messages.last['seq'] as num).toInt();
+    final times = [
+      for (final message in messages)
+        if (DateTime.tryParse('${message['created_at']}') case final at?) at,
+    ];
+    final calls = <Map<String, dynamic>>[
+      for (final message in messages) ..._toolCallMaps(message['tool_calls']),
+    ];
+    String? modelText;
+    final summarized = (raw['summarized_through_seq'] as num?)?.toInt() ?? 0;
+    final harness = _resolveChat(null);
+    if (harness != null && latest > summarized) {
+      try {
+        final transcript = _transcript(messages);
+        modelText = await harness.complete([
+          {'role': 'system', 'content': sessionSummaryPrompt},
+          {'role': 'user', 'content': transcript},
+        ]);
+      } on Object {
+        modelText = null;
+      }
+    }
+    final plan = planSessionClose(
+      titleLocked: raw['title_locked'] == true,
+      summarizedThrough: summarized,
+      latestSeq: latest,
+      modelText: modelText,
+      times: times,
+      toolCalls: calls,
+    );
+    if (plan.apply) {
+      final title = plan.title ?? raw['title'] as String?;
+      await c.execute(
+        r'''
+        update ChatSession filter .id = <uuid>$id set {
+          title := <optional str>$title,
+          topics := <array<str>>$topics,
+          summarized_through_seq := <int32>$seq,
+        }
+        ''',
+        {'id': id, 'title': title, 'topics': plan.topics, 'seq': latest},
+      );
+      final spanStart = plan.startedAt ?? DateTime.now().toUtc();
+      final spanEnd = plan.endedAt ?? spanStart;
+      try {
+        await TimelineWriter.applySession(
+          c,
+          sessionId: id,
+          title: title,
+          topics: plan.topics,
+          started: spanStart,
+          ended: spanEnd,
+          connectors: plan.connectors,
+        );
+      } on Object catch (e) {
+        stderr.writeln('timeline: $e');
+      }
+      final summary = [
+        if (title != null) title,
+        ...plan.topics,
+        _transcript(messages),
+      ].join('\n');
+      await _upsertMemory(
+        c,
+        kind: 'session',
+        title: title,
+        body: summary.length > 6000 ? summary.substring(0, 6000) : summary,
+        occurredAt: spanEnd,
+        source: 'chat-session',
+        sourceId: id,
+      );
+    }
+    return _sessionResponse(c, id);
+  }
+
+  Future<Response> _chatFork(Request r, gel.Client c) async {
+    final b = await _body(r);
+    final messageId = (b['message_id'] as String?)?.trim();
+    if (messageId == null || messageId.isEmpty) {
+      return _error(400, 'bad_request', 'message_id required');
+    }
+    final sessionId = r.params['id']!;
+    final listed = jsonDecode(
+      await c.queryJSON(queries['chat_messages'], {
+        'session': sessionId,
+        'limit': 500,
+      }),
+    );
+    if (listed is! List) return _error(404, 'not_found', 'no such chat');
+    final messages = listed.cast<Map<String, dynamic>>();
+    final through = messagesThrough(messages, messageId);
+    if (through.isEmpty) {
+      return _error(404, 'not_found', 'no such message');
+    }
+    final selection = (b['selection'] as String?)?.trim() ?? '';
+    var seed = selection;
+    if (seed.isEmpty) {
+      Map<String, dynamic>? userLine;
+      for (final message in through) {
+        if (message['role'] == 'user') {
+          userLine = message;
+          break;
+        }
+      }
+      seed = (userLine ?? through.first)['content'] as String? ?? 'Fork';
+    }
+    final created = jsonDecode(
+      await c.querySingleJSON(
+        r'''
+        select (
+          insert ChatSession {
+            owner := assert_exists(global current_person),
+            title := <optional str>$title,
+            forked_from := assert_single((
+              select ChatMessage filter .id = <uuid>$message
+            )),
+          }
+        ) { id }
+        ''',
+        {'title': titleFromPassage(seed), 'message': messageId},
+      ),
+    );
+    if (created is! Map || created['id'] is! String) {
+      return _error(500, 'fork_failed', 'could not fork');
+    }
+    final id = created['id'] as String;
+    for (final message in through) {
+      await _appendMessage(
+        c,
+        id,
+        message['role'] as String? ?? 'user',
+        message['content'] as String? ?? '',
+        toolCalls: _toolCallMaps(message['tool_calls']),
+        model: message['model'] as String?,
+      );
+    }
+    final whole = (through.last['content'] as String?)?.trim() ?? '';
+    if (selection.isNotEmpty && selection != whole) {
+      await _appendMessage(c, id, 'quote', selection);
+    }
+    try {
+      await _touchChat(c, id);
+    } on Object catch (e) {
+      stderr.writeln('timeline: $e');
+    }
+    return _sessionResponse(c, id, status: 201);
+  }
+
+  Future<Response> _files(Request r, gel.Client c) =>
+      _many(c, 'documents', {'limit': 100});
+
+  Future<Response> _fileCreate(Request r, gel.Client c) async {
+    final b = await _body(r);
+    final body = (b['body'] as String?)?.trim();
+    if (body == null || body.isEmpty) {
+      return _error(400, 'bad_request', 'body required');
+    }
+    final requested = (b['title'] as String?)?.trim();
+    final title = requested == null || requested.isEmpty
+        ? titleFromPassage(body)
+        : requested;
+    final now = DateTime.now().toUtc();
+    final citation = fileCitation(
+      sessionId: b['session_id'] as String?,
+      messageId: b['message_id'] as String?,
+      at: now,
+    );
+    final stored = appendPassage(body: '', passage: body, citation: citation);
+    final created = jsonDecode(
+      await c.querySingleJSON(
+        r'''
+        select (
+          insert Document {
+            owner := assert_exists(global current_person),
+            title := <str>$title,
+            body := <str>$body,
+          }
+        ) { id, title, body, created_at }
+        ''',
+        {'title': title, 'body': stored},
+      ),
+    );
+    if (created is! Map || created['id'] is! String) {
+      return _error(500, 'file_failed', 'could not create file');
+    }
+    final id = created['id'] as String;
+    await _upsertMemory(
+      c,
+      kind: 'file',
+      title: title,
+      body: stored,
+      occurredAt: now,
+      source: 'file',
+      sourceId: id,
+    );
+    try {
+      await TimelineWriter.recordFile(
+        c,
+        documentId: id,
+        title: title,
+        body: stored,
+        started: now,
+        ended: now,
+      );
+    } on Object catch (e) {
+      stderr.writeln('timeline: $e');
+    }
+    return Response(201, body: jsonEncode(created), headers: _jsonHeaders);
+  }
+
+  Future<Response> _fileAppend(Request r, gel.Client c) async {
+    final b = await _body(r);
+    final text = (b['text'] as String?)?.trim();
+    if (text == null || text.isEmpty) {
+      return _error(400, 'bad_request', 'text required');
+    }
+    final id = r.params['id']!;
+    final existing = jsonDecode(
+      await c.querySingleJSON(
+        r'''
+        select Document { id, title, body, created_at }
+        filter .id = <uuid>$id
+        ''',
+        {'id': id},
+      ),
+    );
+    if (existing is! Map<String, dynamic>) {
+      return _error(404, 'not_found', 'no such file');
+    }
+    final now = DateTime.now().toUtc();
+    final body = appendPassage(
+      body: existing['body'] as String? ?? '',
+      passage: text,
+      citation: fileCitation(
+        sessionId: b['session_id'] as String?,
+        messageId: b['message_id'] as String?,
+        at: now,
+      ),
+    );
+    final updated = jsonDecode(
+      await c.querySingleJSON(
+        r'''
+        select (
+          update Document filter .id = <uuid>$id set {
+            body := <str>$body,
+            updated_at := datetime_of_statement(),
+          }
+        ) { id, title, body, created_at }
+        ''',
+        {'id': id, 'body': body},
+      ),
+    );
+    final title = existing['title'] as String? ?? 'Untitled';
+    await _upsertMemory(
+      c,
+      kind: 'file',
+      title: title,
+      body: body,
+      occurredAt: now,
+      source: 'file',
+      sourceId: id,
+    );
+    final started = DateTime.tryParse('${existing['created_at']}') ?? now;
+    try {
+      await TimelineWriter.recordFile(
+        c,
+        documentId: id,
+        title: title,
+        body: body,
+        started: started,
+        ended: now,
+      );
+    } on Object catch (e) {
+      stderr.writeln('timeline: $e');
+    }
+    return Response.ok(jsonEncode(updated), headers: _jsonHeaders);
+  }
+
+  Future<Response> _userTimeline(Request r, gel.Client c) async {
+    try {
+      await TimelineWriter.backfillSessions(c);
+    } on Object catch (e) {
+      stderr.writeln('timeline: $e');
+    }
+    final meta = await c.querySingleJSON(queries['user_timeline_meta']);
+    final entries = await c.queryJSON(queries['user_timeline'], {
+      'limit': 200,
+    });
+    final timeline = meta == 'null' ? null : jsonDecode(meta);
+    return _json({
+      'timeline': timeline,
+      'entries': jsonDecode(entries),
+    });
+  }
+
+  Future<Response> _timelines(Request r, gel.Client c) =>
+      _many(c, 'timelines', {'limit': 100});
+
+  Future<Response> _timelineEntries(Request r, gel.Client c) {
+    final after = r.url.queryParameters['after'];
+    final parsed = after == null ? null : DateTime.tryParse(after);
+    return _many(c, 'timeline_entries', {
+      'timeline': r.params['id'],
+      'after': parsed ?? DateTime.utc(1970),
+      'limit': 200,
+    });
+  }
+
+  Future<Response> _sessionResponse(
+    gel.Client c,
+    String id, {
+    int status = 200,
+  }) async {
+    final json = await c.querySingleJSON(
+      r'''
+      select ChatSession {
+        id,
+        title,
+        title_locked,
+        topics,
+        agent_session_key,
+        created_at,
+        last_message_at,
+        first_message_at := min(.messages.created_at),
+        message_count := count(.messages),
+      }
+      filter .id = <uuid>$id
+      ''',
+      {'id': id},
+    );
+    if (json == 'null') return _error(404, 'not_found', 'no such chat');
+    return Response(status, body: json, headers: _jsonHeaders);
+  }
+
+  Future<void> _touchChat(gel.Client c, String sessionId) async {
+    try {
+      await TimelineWriter.touchSession(c, sessionId);
+    } on Object catch (e) {
+      stderr.writeln('timeline: $e');
+    }
+  }
+
+  static List<Map<String, dynamic>> _toolCallMaps(Object? raw) {
+    var value = raw;
+    if (value is String && value.isNotEmpty) {
+      try {
+        value = jsonDecode(value);
+      } on FormatException {
+        return const [];
+      }
+    }
+    if (value is! List) return const [];
+    return [
+      for (final item in value)
+        if (item is Map) Map<String, dynamic>.from(item),
+    ];
+  }
+
+  static String _transcript(List<Map<String, dynamic>> messages) {
+    final lines = <String>[
+      for (final message in messages)
+        if (message['role'] == 'user' || message['role'] == 'assistant')
+          '${message['role']}: ${message['content']}',
+    ];
+    final text = lines.join('\n');
+    return text.length > 12000 ? text.substring(text.length - 12000) : text;
   }
 
   Future<Response> _chatMessages(Request r, gel.Client c) =>
@@ -1134,6 +1582,7 @@ class MaiaApp {
           model: turn.model,
         );
         emit('done', {'message': assistant});
+        await _touchChat(c, sessionId);
       } on Object catch (e) {
         emit('error', {'message': e.toString()});
       } finally {

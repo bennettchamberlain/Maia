@@ -18,13 +18,18 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     on<ChatSessionOpened>(_onOpened);
     on<ChatNewSessionRequested>(_onNew);
     on<ChatSessionDeleted>(_onDeleted);
+    on<ChatSessionRenamed>(_onRenamed);
+    on<ChatForkRequested>(_onFork);
+    on<ChatFileSaved>(_onFile);
     on<ChatMessageSent>(_onSent, transformer: _sequential());
     on<ChatAsideAdded>(_onAside);
-    on<ChatBackToList>((e, emit) => emit(state.copyWith(clearOpen: true)));
+    on<ChatBackToList>(_onBack);
+    on<ChatLeft>(_onLeft);
   }
 
   final MaiaApiClient _api;
   final String Function()? provider;
+  final _closing = <String>{};
 
   static EventTransformer<T> _sequential<T>() =>
       (events, mapper) => events.asyncExpand(mapper);
@@ -33,13 +38,21 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     emit(state.copyWith(status: ChatStatus.loading, clearError: true));
     try {
       final sessions = await _api.chatSessions();
-      emit(state.copyWith(status: ChatStatus.ready, sessions: sessions));
+      final entries = await _entriesFor(sessions);
+      emit(
+        state.copyWith(
+          status: ChatStatus.ready,
+          sessions: sessions,
+          entries: entries,
+        ),
+      );
     } on Exception catch (err) {
       emit(state.copyWith(status: ChatStatus.failure, error: _msg(err)));
     }
   }
 
   Future<void> _onOpened(ChatSessionOpened e, Emitter<ChatState> emit) async {
+    final previous = state.open;
     emit(
       state.copyWith(
         open: e.session,
@@ -48,6 +61,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         clearError: true,
       ),
     );
+    if (previous != null && previous.id != e.session.id) {
+      await _closeQuietly(previous.id, emit);
+    }
     try {
       final messages = await _api.chatMessages(e.session.id);
       emit(state.copyWith(status: ChatStatus.ready, messages: messages));
@@ -60,11 +76,21 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     ChatNewSessionRequested e,
     Emitter<ChatState> emit,
   ) async {
+    final previous = state.open;
+    if (previous != null) await _closeQuietly(previous.id, emit);
     try {
       final session = await _api.chatCreate();
       emit(
         state.copyWith(
           sessions: [session, ...state.sessions],
+          entries: [
+            TimelineEntry.fromSession(
+              sessionId: session.id,
+              createdAt: session.createdAt,
+              title: session.title,
+            ),
+            ...state.entries.where((entry) => entry.sessionId != session.id),
+          ],
           open: session,
           messages: const [],
           status: ChatStatus.ready,
@@ -76,12 +102,99 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     }
   }
 
+  Future<void> _onBack(ChatBackToList e, Emitter<ChatState> emit) async {
+    final open = state.open;
+    emit(state.copyWith(clearOpen: true));
+    if (open != null) await _closeQuietly(open.id, emit);
+  }
+
+  Future<void> _onLeft(ChatLeft e, Emitter<ChatState> emit) async {
+    final open = state.open;
+    if (open != null) await _closeQuietly(open.id, emit);
+  }
+
+  Future<void> _onRenamed(
+    ChatSessionRenamed e,
+    Emitter<ChatState> emit,
+  ) async {
+    try {
+      final updated = await _api.chatRename(e.sessionId, e.title);
+      emit(
+        state.copyWith(
+          sessions: _replaceSession(state.sessions, updated),
+          entries: [
+            for (final entry in state.entries)
+              if (entry.sessionId == updated.id)
+                entry.copyWith(title: updated.title)
+              else
+                entry,
+          ],
+          open: state.open?.id == updated.id ? updated : null,
+        ),
+      );
+    } on Exception catch (err) {
+      emit(state.copyWith(error: _msg(err)));
+    }
+  }
+
+  Future<void> _onFork(ChatForkRequested e, Emitter<ChatState> emit) async {
+    try {
+      final session = await _api.chatFork(
+        e.sessionId,
+        messageId: e.messageId,
+        selection: e.selection,
+      );
+      final messages = await _api.chatMessages(session.id);
+      final entries = await _entriesFor([session, ...state.sessions]);
+      emit(
+        state.copyWith(
+          sessions: [session, ...state.sessions],
+          entries: entries,
+          open: session,
+          messages: messages,
+          status: ChatStatus.ready,
+          clearError: true,
+        ),
+      );
+    } on Exception catch (err) {
+      emit(state.copyWith(error: _msg(err)));
+    }
+  }
+
+  Future<void> _onFile(ChatFileSaved e, Emitter<ChatState> emit) async {
+    final text = e.text.trim();
+    if (text.isEmpty) return;
+    try {
+      if (e.documentId == null) {
+        await _api.documentCreate(
+          body: text,
+          sessionId: e.sessionId,
+          messageId: e.messageId,
+        );
+      } else {
+        await _api.documentAppend(
+          e.documentId!,
+          text: text,
+          sessionId: e.sessionId,
+          messageId: e.messageId,
+        );
+      }
+      final entries = await _entriesFor(state.sessions);
+      emit(state.copyWith(entries: entries, clearError: true));
+    } on Exception catch (err) {
+      emit(state.copyWith(error: _msg(err)));
+    }
+  }
+
   Future<void> _onDeleted(ChatSessionDeleted e, Emitter<ChatState> emit) async {
     try {
       await _api.chatDelete(e.session.id);
       emit(
         state.copyWith(
           sessions: state.sessions.where((s) => s.id != e.session.id).toList(),
+          entries: state.entries
+              .where((entry) => entry.sessionId != e.session.id)
+              .toList(),
           clearOpen: state.open?.id == e.session.id,
         ),
       );
@@ -175,10 +288,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
                 draftReply: '',
                 draftTools: const [],
                 open: updated,
-                sessions: [
-                  updated,
-                  ...state.sessions.where((s) => s.id != updated.id),
-                ],
+                sessions: _replaceSession(state.sessions, updated),
+                entries: _touchEntry(state.entries, updated, message.createdAt),
               ),
             );
           case ChatFailed(:final message):
@@ -264,6 +375,92 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       seq: seq,
       createdAt: stamp,
     );
+  }
+
+  Future<void> _closeQuietly(String id, Emitter<ChatState> emit) async {
+    if (!_closing.add(id)) return;
+    try {
+      final updated = await _api.chatClose(id);
+      List<TimelineEntry> entries;
+      try {
+        entries = (await _api.userTimeline()).entries;
+      } on Exception {
+        entries = _touchEntry(state.entries, updated, updated.lastMessageAt);
+      }
+      emit(
+        state.copyWith(
+          sessions: _replaceSession(state.sessions, updated),
+          entries: entries,
+          open: state.open?.id == updated.id ? updated : null,
+        ),
+      );
+    } on Exception {
+      // Leaving still succeeds when the summary cannot be written.
+    } finally {
+      _closing.remove(id);
+    }
+  }
+
+  Future<List<TimelineEntry>> _entriesFor(List<ChatSession> sessions) async {
+    try {
+      final entries = (await _api.userTimeline()).entries;
+      if (entries.isNotEmpty || sessions.isEmpty) return entries;
+    } on Exception {
+      // Fall through to the chats we already have.
+    }
+    return [
+      for (final session in sessions)
+        TimelineEntry.fromSession(
+          sessionId: session.id,
+          createdAt: session.createdAt,
+          title: session.title,
+          topics: session.topics,
+          firstMessageAt: session.firstMessageAt,
+          lastMessageAt: session.lastMessageAt,
+        ),
+    ];
+  }
+
+  static List<ChatSession> _replaceSession(
+    List<ChatSession> sessions,
+    ChatSession updated,
+  ) => [
+    updated,
+    ...sessions.where((session) => session.id != updated.id),
+  ];
+
+  static List<TimelineEntry> _touchEntry(
+    List<TimelineEntry> entries,
+    ChatSession session,
+    DateTime? ended,
+  ) {
+    var found = false;
+    final next = [
+      for (final entry in entries)
+        if (entry.sessionId == session.id)
+          () {
+            found = true;
+            return entry.copyWith(
+              title: session.title,
+              topics: session.topics,
+              endedAt: ended ?? entry.endedAt,
+            );
+          }()
+        else
+          entry,
+    ];
+    if (found) return next;
+    return [
+      TimelineEntry.fromSession(
+        sessionId: session.id,
+        createdAt: session.createdAt,
+        title: session.title,
+        topics: session.topics,
+        firstMessageAt: session.firstMessageAt,
+        lastMessageAt: ended ?? session.lastMessageAt,
+      ),
+      ...next,
+    ];
   }
 
   static String _titleFrom(String content) {

@@ -25,3 +25,5 @@ export 'src/jobs/embed_job.dart';
 export 'src/jobs/python_job.dart';
 export 'src/parasail_embeddings.dart';
 export 'src/queries.dart';
+export 'src/timeline/summary.dart';
+export 'src/timeline/writer.dart';

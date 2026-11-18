@@ -144,6 +144,66 @@ class MaiaApiClient {
   Future<void> chatDelete(String sessionId) =>
       _delete('/chat/sessions/$sessionId');
 
+  Future<ChatSession> chatRename(String sessionId, String title) async =>
+      ChatSession.fromJson(
+        await _patch('/chat/sessions/$sessionId', {'title': title})
+            as Map<String, dynamic>,
+      );
+
+  /// Summarizes the session when the transcript changed. A locked title stays.
+  Future<ChatSession> chatClose(String sessionId) async => ChatSession.fromJson(
+    await _post('/chat/sessions/$sessionId/close', const {})
+        as Map<String, dynamic>,
+  );
+
+  Future<ChatSession> chatFork(
+    String sessionId, {
+    required String messageId,
+    String? selection,
+  }) async => ChatSession.fromJson(
+    await _post('/chat/sessions/$sessionId/fork', {
+      'message_id': messageId,
+      if (selection != null && selection.isNotEmpty) 'selection': selection,
+    }) as Map<String, dynamic>,
+  );
+
+  Future<UserTimelineView> userTimeline() async => UserTimelineView.fromJson(
+    await _get('/timeline') as Map<String, dynamic>,
+  );
+
+  Future<List<TimelineInfo>> timelines() async =>
+      _list(await _get('/timelines'), TimelineInfo.fromJson);
+
+  Future<List<Document>> documents() async =>
+      _list(await _get('/files'), Document.fromJson);
+
+  Future<Document> documentCreate({
+    required String body,
+    String? title,
+    String? sessionId,
+    String? messageId,
+  }) async => Document.fromJson(
+    await _post('/files', {
+      'body': body,
+      if (title != null) 'title': title,
+      if (sessionId != null) 'session_id': sessionId,
+      if (messageId != null) 'message_id': messageId,
+    }) as Map<String, dynamic>,
+  );
+
+  Future<Document> documentAppend(
+    String documentId, {
+    required String text,
+    String? sessionId,
+    String? messageId,
+  }) async => Document.fromJson(
+    await _post('/files/$documentId/append', {
+      'text': text,
+      if (sessionId != null) 'session_id': sessionId,
+      if (messageId != null) 'message_id': messageId,
+    }) as Map<String, dynamic>,
+  );
+
   Future<ChatCatalog> chatTools() async => ChatCatalog.fromJson(
     await _get('/chat/tools') as Map<String, dynamic>,
   );
@@ -348,6 +408,13 @@ class MaiaApiClient {
     final uri = _baseUrl.resolve(path.substring(1));
     return _decode(
       await _http.post(uri, headers: _headers, body: jsonEncode(body)),
+    );
+  }
+
+  Future<Object?> _patch(String path, Object body) async {
+    final uri = _baseUrl.resolve(path.substring(1));
+    return _decode(
+      await _http.patch(uri, headers: _headers, body: jsonEncode(body)),
     );
   }
 

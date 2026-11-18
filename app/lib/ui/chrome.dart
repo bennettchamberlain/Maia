@@ -132,11 +132,13 @@ class MaiaHeader extends StatelessWidget {
     required this.title,
     this.leading,
     this.actions = const [],
+    this.onTitleTap,
   });
 
   final String title;
   final Widget? leading;
   final List<Widget> actions;
+  final VoidCallback? onTitleTap;
 
   @override
   Widget build(BuildContext context) {
@@ -156,11 +158,14 @@ class MaiaHeader extends StatelessWidget {
               children: [
                 ?leading,
                 Expanded(
-                  child: Text(
-                    title,
-                    style: theme.textTheme.h4,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  child: GestureDetector(
+                    onTap: onTitleTap,
+                    child: Text(
+                      title,
+                      style: theme.textTheme.h4,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 ),
                 if (actions.isNotEmpty)

@@ -5,6 +5,7 @@ import 'package:gel/gel.dart' as gel;
 import 'package:http/http.dart' as http;
 import 'package:maia_api/src/db.dart';
 import 'package:maia_api/src/graph/conclusion.dart';
+import 'package:maia_api/src/timeline/writer.dart';
 import 'package:maia_jobs/maia_jobs.dart';
 
 /// Passive job: read one memory, ask the local model what it establishes,
@@ -107,6 +108,7 @@ Rules:
       if (id != null) about.add(id);
     }
     if (about.isNotEmpty) {
+      final ids = about.toList();
       await client.execute(
         r'''
         update MemoryItem filter .id = <uuid>$id set {
@@ -115,8 +117,19 @@ Rules:
           )
         }
         ''',
-        {'id': memoryId, 'ids': about.toList()},
+        {'id': memoryId, 'ids': ids},
       );
+      try {
+        await TimelineWriter.fanOntology(
+          client,
+          thingIds: ids,
+          memoryId: memoryId,
+          body: text,
+          at: DateTime.now().toUtc(),
+        );
+      } on Object catch (e) {
+        stderr.writeln('conclude: timeline fan-out failed: $e');
+      }
     }
     return {
       'things': conclusion.things.length,

@@ -10,8 +10,10 @@ import 'package:maia_app/chat/parts/chat_part_view.dart';
 import 'package:maia_app/chat/quote.dart';
 import 'package:maia_app/chat/view/composer.dart';
 import 'package:maia_app/chat/view/file_chip.dart';
+import 'package:maia_app/chat/view/timeline_column.dart';
 import 'package:maia_app/config/chat_settings_cubit.dart';
 import 'package:maia_app/ui/chrome.dart';
+import 'package:maia_app/ui/selection_menu.dart';
 import 'package:maia_models/maia_models.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -28,7 +30,7 @@ class ChatPage extends StatelessWidget {
         api: context.read<MaiaApiClient>(),
         provider: () => context.read<ChatSettingsCubit>().state,
       )..add(const ChatStarted()),
-      child: const ChatView(),
+      child: const _CloseWhenPaused(child: ChatView()),
     );
     try {
       context.read<VoiceCubit>();
@@ -56,7 +58,7 @@ class ChatView extends StatelessWidget {
           final listWidth = math.min(300, available).toDouble();
           return Row(
             children: [
-              SizedBox(width: listWidth, child: const _SessionList()),
+              SizedBox(width: listWidth, child: const TimelineColumn()),
               const MaiaDivider.vertical(),
               const Expanded(child: _WideConversation()),
             ],
@@ -64,7 +66,9 @@ class ChatView extends StatelessWidget {
         },
       );
     }
-    return hasOpen ? const _Conversation(showBack: true) : const _SessionList();
+    return hasOpen
+        ? const _Conversation(showBack: true)
+        : const TimelineColumn();
   }
 }
 
@@ -75,125 +79,6 @@ class _WideConversation extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasOpen = context.select<ChatBloc, bool>((b) => b.state.open != null);
     return hasOpen ? const _Conversation() : const _EmptyConversation();
-  }
-}
-
-class _SessionList extends StatelessWidget {
-  const new();
-
-  @override
-  Widget build(BuildContext context) {
-    final state = context.watch<ChatBloc>().state;
-    return Scaffold(
-      body: MaiaPane(
-        header: MaiaHeader(
-          title: 'Chat',
-          actions: [
-            ShadIconButton.ghost(
-              key: const Key('chat_new_button'),
-              icon: const Icon(LucideIcons.squarePen, size: 16),
-              onPressed: () =>
-                  context.read<ChatBloc>().add(const ChatNewSessionRequested()),
-            ),
-          ],
-        ),
-        body: _list(context, state),
-      ),
-    );
-  }
-
-  Widget _list(BuildContext context, ChatState state) {
-    return switch (state.status) {
-      ChatStatus.initial ||
-      ChatStatus.loading when state.sessions.isEmpty => const MaiaSkeleton(),
-      ChatStatus.failure when state.sessions.isEmpty => MaiaFailure(
-        message: state.error ?? 'Could not load chats',
-        onRetry: () => context.read<ChatBloc>().add(const ChatStarted()),
-      ),
-      _ when state.sessions.isEmpty => const _EmptyList(),
-      _ => RefreshIndicator(
-        onRefresh: () async =>
-            context.read<ChatBloc>().add(const ChatStarted()),
-        child: ListView.separated(
-          itemCount: state.sessions.length,
-          separatorBuilder: (_, _) => const MaiaDivider.horizontal(),
-          itemBuilder: (context, i) {
-            final s = state.sessions[i];
-            return Dismissible(
-              key: ValueKey(s.id),
-              direction: DismissDirection.endToStart,
-              background: ColoredBox(
-                color: ShadTheme.of(context).colorScheme.destructive,
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 20),
-                    child: Icon(
-                      LucideIcons.trash2,
-                      color: ShadTheme.of(context)
-                          .colorScheme
-                          .destructiveForeground,
-                    ),
-                  ),
-                ),
-              ),
-              onDismissed: (_) =>
-                  context.read<ChatBloc>().add(ChatSessionDeleted(s)),
-              child: _SessionTile(session: s, selected: state.open?.id == s.id),
-            );
-          },
-        ),
-      ),
-    };
-  }
-}
-
-class _SessionTile extends StatelessWidget {
-  const new({required this.session, required this.selected});
-
-  final ChatSession session;
-  final bool selected;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
-    final when = session.lastMessageAt;
-    final subtitle =
-        '${session.messageCount} messages'
-        '${when != null ? ' · ${_ago(when)}' : ''}';
-    return Material(
-      color: selected ? theme.colorScheme.accent : theme.colorScheme.background,
-      child: InkWell(
-        onTap: () => context.read<ChatBloc>().add(ChatSessionOpened(session)),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: [
-              Icon(
-                LucideIcons.messageCircle,
-                size: 16,
-                color: theme.colorScheme.mutedForeground,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      session.title ?? 'New chat',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.p,
-                    ),
-                    Text(subtitle, style: theme.textTheme.muted),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
 
@@ -279,6 +164,18 @@ class _ConversationState extends State<_Conversation> {
             body: MaiaPane(
               header: MaiaHeader(
                 title: open?.title ?? 'New chat',
+                onTitleTap: open == null
+                    ? null
+                    : () async {
+                        final title = await askSessionTitle(
+                          context,
+                          open.title ?? '',
+                        );
+                        if (title == null || !context.mounted) return;
+                        context.read<ChatBloc>().add(
+                          ChatSessionRenamed(open.id, title),
+                        );
+                      },
                 leading: widget.showBack
                     ? ShadIconButton.ghost(
                         icon: const Icon(LucideIcons.arrowLeft, size: 16),
@@ -488,15 +385,18 @@ class _Action extends StatelessWidget {
 
 class _Bubble extends StatelessWidget {
   new message(ChatMessage m)
-    : role = m.role,
+    : messageId = m.id,
+      role = m.role,
       text = m.content,
       tools = m.toolCalls ?? const [],
       streaming = false;
 
   const new draft(this.text, {this.tools = const []})
-    : role = 'assistant',
+    : messageId = null,
+      role = 'assistant',
       streaming = true;
 
+  final String? messageId;
   final String role;
   final String text;
   final List<ChatToolCall> tools;
@@ -510,7 +410,16 @@ class _Bubble extends StatelessWidget {
         alignment: Alignment.centerLeft,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 6),
-          child: SelectableText(text, style: theme.textTheme.p),
+          child: SelectableText(
+            text,
+            style: theme.textTheme.p,
+            contextMenuBuilder: (context, state) => maiaTextMenu(
+              context,
+              state,
+              fallbackText: text,
+              messageId: messageId,
+            ),
+          ),
         ),
       );
     }
@@ -560,12 +469,24 @@ class _Bubble extends StatelessWidget {
               ? FileAwareText(
                   text: text,
                   style: theme.textTheme.p.copyWith(color: foreground),
+                  contextMenuBuilder: (context, state) => maiaTextMenu(
+                    context,
+                    state,
+                    fallbackText: text,
+                    messageId: messageId,
+                  ),
                 )
               : ChatMessageBody(
                   text: text,
                   foreground: foreground,
                   tools: tools,
                   streaming: streaming,
+                  contextMenuBuilder: (context, state) => maiaTextMenu(
+                    context,
+                    state,
+                    fallbackText: text,
+                    messageId: messageId,
+                  ),
                 ),
         ),
       ),
@@ -589,16 +510,6 @@ class _Hint extends StatelessWidget {
   );
 }
 
-class _EmptyList extends StatelessWidget {
-  const new();
-
-  @override
-  Widget build(BuildContext context) => const MaiaScrollFill(
-    padding: EdgeInsets.all(24),
-    child: Text('No chats yet. Start one with the + button.'),
-  );
-}
-
 class _EmptyConversation extends StatelessWidget {
   const new();
 
@@ -607,10 +518,36 @@ class _EmptyConversation extends StatelessWidget {
       const MaiaEmpty('Pick a chat or start a new one.');
 }
 
-String _ago(DateTime t) {
-  final d = DateTime.now().difference(t);
-  if (d.inMinutes < 1) return 'now';
-  if (d.inHours < 1) return '${d.inMinutes}m';
-  if (d.inDays < 1) return '${d.inHours}h';
-  return '${d.inDays}d';
+class _CloseWhenPaused extends StatefulWidget {
+  const new({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_CloseWhenPaused> createState() => _CloseWhenPausedState();
+}
+
+class _CloseWhenPausedState extends State<_CloseWhenPaused>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      context.read<ChatBloc>().add(const ChatLeft());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

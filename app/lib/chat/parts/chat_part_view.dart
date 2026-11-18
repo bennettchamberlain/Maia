@@ -21,12 +21,14 @@ class ChatMessageBody extends StatelessWidget {
     required this.foreground,
     this.tools = const [],
     this.streaming = false,
+    this.contextMenuBuilder,
   });
 
   final String text;
   final Color foreground;
   final List<ChatToolCall> tools;
   final bool streaming;
+  final Widget Function(BuildContext, EditableTextState)? contextMenuBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -74,6 +76,7 @@ class ChatMessageBody extends StatelessWidget {
             ChatProse(:final text) => SelectableText(
               _plain(text),
               style: theme.textTheme.p.copyWith(color: foreground),
+              contextMenuBuilder: contextMenuBuilder,
             ),
             ChatBlock(:final part) => ChatPartView(part),
             ChatBlockPending() => const SizedBox(
