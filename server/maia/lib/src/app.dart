@@ -2091,17 +2091,25 @@ class MaiaApp {
 
   /// Browser hits the same host as the Flutter API (usually forwarded 8090).
   /// We pass the OAuth dance through to the Connect sidecar on loopback.
+  ///
+  /// One's local redirect is HTTP (`127.0.0.1:8090/one/callback`). The
+  /// state cookie is SameSite=Lax and only Secure on https, so the
+  /// callback completes in dev without TLS.
   Future<Response> _oneProxy(Request r) async {
     final action = r.url.pathSegments.isEmpty
         ? 'authorize'
         : r.url.pathSegments.last;
+    final public = r.requestedUri;
     final target = Uri.parse(
       '${config.connectSidecarUrl}/api/one/$action',
-    ).replace(query: r.requestedUri.query);
+    ).replace(query: public.query);
     try {
       final req = http.Request(r.method, target)
+        ..followRedirects = false
         ..headers.addAll({
           'accept': r.headers['accept'] ?? '*/*',
+          'x-forwarded-proto': public.scheme,
+          'x-forwarded-host': public.authority,
           if (r.headers['content-type'] != null)
             'content-type': r.headers['content-type']!,
           if (r.headers['cookie'] != null) 'cookie': r.headers['cookie']!,
@@ -2113,17 +2121,19 @@ class MaiaApp {
       final res = await req.send().timeout(const Duration(seconds: 30));
       final bytes = await res.stream.toBytes();
       final cookies = [
-        for (final cookie in res.headersSplitValues['set-cookie'] ?? const <String>[])
-          cookie.replaceAll('Path=/api/one', 'Path=/one'),
+        for (final cookie in _oneSplitCookies(
+          res.headersSplitValues['set-cookie'] ?? const <String>[],
+        ))
+          _oneCookieForBrowser(cookie, public),
       ];
+      final location = _oneLocationForBrowser(res.headers['location'], public);
       return Response(
         res.statusCode,
         body: bytes,
         headers: {
           if (res.headers['content-type'] != null)
             'content-type': res.headers['content-type']!,
-          if (res.headers['location'] != null)
-            'location': res.headers['location']!,
+          if (location != null) 'location': location,
           if (cookies.isNotEmpty) 'set-cookie': cookies,
         },
       );
@@ -2139,6 +2149,36 @@ class MaiaApp {
         headers: const {'content-type': 'text/html; charset=utf-8'},
       );
     }
+  }
+
+  Iterable<String> _oneSplitCookies(Iterable<String> raw) sync* {
+    final next = RegExp(r',(?=[A-Za-z0-9_]+=)');
+    for (final cookie in raw) {
+      yield* cookie.split(next);
+    }
+  }
+
+  String _oneCookieForBrowser(String cookie, Uri public) {
+    var out = cookie.replaceAll('Path=/api/one', 'Path=/one');
+    if (public.scheme != 'https') {
+      out = out.replaceAll(RegExp(r';\s*Secure\b', caseSensitive: false), '');
+    }
+    return out;
+  }
+
+  String? _oneLocationForBrowser(String? location, Uri public) {
+    if (location == null || location.isEmpty) return null;
+    final uri = Uri.tryParse(location);
+    if (uri == null || !uri.hasScheme) return location;
+    final sidecar = Uri.parse(config.connectSidecarUrl);
+    if (uri.host != sidecar.host || uri.port != sidecar.port) return location;
+    return uri
+        .replace(
+          scheme: public.scheme,
+          host: public.host,
+          port: public.hasPort ? public.port : null,
+        )
+        .toString();
   }
 
   Future<Response> _oneConnectors(Request r, gel.Client c) async {

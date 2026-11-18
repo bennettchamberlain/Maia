@@ -14,6 +14,11 @@ const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "public"
 
 const PERSON = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// OAuth state -> Maia person. The callback URL has no ?person=, and
+// folded Set-Cookie headers can drop maia_person. The PKCE cookie is
+// enough for One; this map is enough for us.
+const pendingPeople = new Map();
+
 function cookiePath() {
   try {
     const path = new URL(process.env.ONE_REDIRECT_URI).pathname.replace(/\/[^/]*$/, "");
@@ -45,7 +50,10 @@ function personId(req) {
   const fromCookie = readCookie(req, "maia_person");
   if (PERSON.test(fromCookie)) return fromCookie;
   const fromHeader = req.headers["x-maia-person"] || "";
-  return PERSON.test(fromHeader) ? fromHeader : null;
+  if (PERSON.test(fromHeader)) return fromHeader;
+  const state = url.searchParams.get("state") || "";
+  const pending = state ? pendingPeople.get(state) : "";
+  return PERSON.test(pending) ? pending : null;
 }
 
 async function postGrant(person, reference, connections) {
@@ -121,6 +129,9 @@ try {
     handlers = handlersMod.createOneConnectHandlers(connect, {
       identifyUser: (req) => personId(req),
       onComplete: async ({ userId, result }) => {
+        for (const [state, person] of pendingPeople) {
+          if (person === userId) pendingPeople.delete(state);
+        }
         if (result.outcome !== "connected") return;
         const rows = await connect.listConnections(userId);
         const reference = await userStore.loadUser(userId);
@@ -337,6 +348,15 @@ const server = createServer(async (req, res) => {
           const extra = `maia_person=${encodeURIComponent(person)}; Path=${cookiePath()}; Max-Age=1800; HttpOnly; SameSite=Lax`;
           const orig = res.setHeader;
           res.setHeader = function setHeader(name, value) {
+            if (String(name).toLowerCase() === "location") {
+              const loc = Array.isArray(value) ? String(value[0]) : String(value);
+              try {
+                const state = new URL(loc).searchParams.get("state");
+                if (state) pendingPeople.set(state, person);
+              } catch {
+                // Location is One's authorize URL; a bad URL just skips the map.
+              }
+            }
             if (String(name).toLowerCase() === "set-cookie") {
               const list = Array.isArray(value) ? value.slice() : [value];
               list.push(extra);
