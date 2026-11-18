@@ -31,7 +31,7 @@ The only chromatic colors are Felipe Pantone's diffraction sunset, warm on one s
 
 Lines are 1px. Dots are 1 to 2px. No fills, no glossy orbs, no bouncing bars, no drop shadows on the mark. A circle, if one is needed, is a tick ring like a scientific plate.
 
-The cloud is a shallow arch. Grains sit dense on the spine and thin toward the ends, with a few points off the curve. It is not a sphere and not a face.
+The talk mark is that ring. Grains sit on the circle, with a few just off it. It turns slowly. It is not an arc, not a sphere, and not a face.
 
 Rest moves slowly. A cloud tumbles over many seconds. An event is a fast spike that eases back. Attack is sharp. Decay is short.
 

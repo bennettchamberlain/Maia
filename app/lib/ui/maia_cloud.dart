@@ -3,8 +3,8 @@ import 'dart:math' as math;
 import 'package:flutter/widgets.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
-/// A slow point cloud. While [speaking], points kick outward in short
-/// spikes that stand in for a voice. No audio analysis.
+/// A ring of points. It turns on its own. While [speaking], points kick
+/// outward in short spikes that stand in for a voice. No audio analysis.
 class MaiaCloud extends StatefulWidget {
   const new({this.speaking = false, this.size = 76, super.key});
 
@@ -27,7 +27,7 @@ class _MaiaCloudState extends State<MaiaCloud>
       vsync: this,
       duration: const Duration(seconds: 24),
     )..repeat();
-    _grains = _arch();
+    _grains = _ring();
   }
 
   @override
@@ -59,17 +59,16 @@ class _MaiaCloudState extends State<MaiaCloud>
 }
 
 class _Grain {
-  const new(this.x, this.off, this.i, this.core);
+  const new(this.angle, this.radius, this.i, this.core);
 
-  final double x;
-  final double off;
+  final double angle;
+  final double radius;
   final int i;
   final double core;
 }
 
-/// A shallow arch. Dense on the spine, thin at the ends, a few points off
-/// the curve. Same drawing as the app icon.
-List<_Grain> _arch() {
+/// A tick ring. Most points sit on the circle. A few sit just off it.
+List<_Grain> _ring() {
   final random = math.Random(11);
   double gauss() {
     final u = math.max(1e-9, random.nextDouble());
@@ -78,28 +77,18 @@ List<_Grain> _arch() {
   }
 
   final grains = <_Grain>[];
-  var i = 0;
-  void add(double x, double off, double spread) {
-    final y = 0.24 * math.pow(x / 0.92, 2) + off;
-    if (x.abs() > 0.96 || y < -0.32 || y > 0.58) return;
-    final core = math.exp(-(off * off) / (2 * spread * spread + 1e-6));
-    grains.add(_Grain(x, off, i, core));
-    i++;
+  const count = 168;
+  for (var n = 0; n < count; n++) {
+    final wobble = gauss() * 0.028;
+    final core = math.exp(-(wobble * wobble) / 0.0008).clamp(0.25, 1.0);
+    grains.add(_Grain((n / count) * math.pi * 2, 0.78 + wobble, n, core));
   }
-
-  for (var n = 0; n < 36; n++) {
-    final x = -0.88 + (1.76 * n / 35);
-    add(x, gauss() * 0.016, 0.016);
-  }
-  for (var n = 0; n < 180; n++) {
-    final sign = random.nextBool() ? -1.0 : 1.0;
-    final x = sign * math.pow(random.nextDouble(), 1.35) * 0.92;
-    final spread = 0.022 + 0.06 * (x.abs() / 0.92);
-    var off = gauss() * spread;
-    if (random.nextDouble() < 0.1) {
-      off += (random.nextBool() ? 1 : -1) * (0.05 + random.nextDouble() * 0.16);
-    }
-    add(x, off, spread);
+  for (var n = 0; n < 28; n++) {
+    final sign = random.nextBool() ? 1.0 : -1.0;
+    final radius = 0.78 + sign * (0.06 + random.nextDouble() * 0.1);
+    grains.add(
+      _Grain(random.nextDouble() * math.pi * 2, radius, count + n, 0.3),
+    );
   }
   return grains;
 }
@@ -130,15 +119,17 @@ class _CloudPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final span = size.shortestSide * 0.42;
-    final origin = Offset(size.width / 2, size.height * 0.46);
-    final drift = math.sin(seconds * 0.2) * 0.03;
+    final origin = Offset(size.width / 2, size.height / 2);
+    final spin = seconds * 0.22;
+    final breathe = 1 + math.sin(seconds * 0.35) * 0.03;
     for (final grain in grains) {
       final spike = speaking ? _spike(seconds, grain.i) : 0.0;
-      final wobble = math.sin(seconds * 0.45 + grain.i * 0.17) * 0.012;
-      final kick = spike * 0.28 * (grain.off >= 0 ? 1 : -1);
-      final x = grain.x + drift;
-      final y = 0.24 * math.pow(x / 0.92, 2) + grain.off * (1 + wobble) + kick;
-      final at = Offset(origin.dx + x * span, origin.dy + y * span);
+      final radius = (grain.radius + spike * 0.24) * breathe;
+      final angle = grain.angle + spin;
+      final at = Offset(
+        origin.dx + math.cos(angle) * radius * span,
+        origin.dy + math.sin(angle) * radius * span,
+      );
       final color = spike > 0.08
           ? _band(spike).withValues(alpha: 0.95)
           : ink.withValues(alpha: 0.28 + grain.core * 0.62);
