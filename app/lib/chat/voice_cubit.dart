@@ -9,6 +9,9 @@ import 'package:maia_app/chat/parts/chat_part.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
+/// Why the microphone is open. Talk sends the words. Transcribe types them.
+enum VoiceCapture { talk, transcribe }
+
 class VoiceState extends Equatable {
   const new({
     this.enabled = false,
@@ -23,9 +26,12 @@ class VoiceState extends Equatable {
     this.sidecarTried = false,
     this.sidecarModel,
     this.keepUntil,
+    this.capture,
     this.partial = '',
     this.lastHeard,
     this.heardSeq = 0,
+    this.transcript,
+    this.transcriptSeq = 0,
     this.spokenMessageId,
     this.error,
   });
@@ -43,9 +49,12 @@ class VoiceState extends Equatable {
   final bool sidecarTried;
   final String? sidecarModel;
   final DateTime? keepUntil;
+  final VoiceCapture? capture;
   final String partial;
   final String? lastHeard;
   final int heardSeq;
+  final String? transcript;
+  final int transcriptSeq;
   final String? spokenMessageId;
   final String? error;
 
@@ -62,13 +71,17 @@ class VoiceState extends Equatable {
     bool? sidecarTried,
     String? sidecarModel,
     DateTime? keepUntil,
+    VoiceCapture? capture,
     String? partial,
     String? lastHeard,
     int? heardSeq,
+    String? transcript,
+    int? transcriptSeq,
     String? spokenMessageId,
     String? error,
     bool clearHeard = false,
     bool clearError = false,
+    bool clearCapture = false,
     bool clearSidecarModel = false,
   }) {
     return VoiceState(
@@ -86,9 +99,12 @@ class VoiceState extends Equatable {
           ? null
           : sidecarModel ?? this.sidecarModel,
       keepUntil: keepUntil ?? this.keepUntil,
+      capture: clearCapture ? null : capture ?? this.capture,
       partial: partial ?? this.partial,
       lastHeard: clearHeard ? null : lastHeard ?? this.lastHeard,
       heardSeq: heardSeq ?? this.heardSeq,
+      transcript: transcript ?? this.transcript,
+      transcriptSeq: transcriptSeq ?? this.transcriptSeq,
       spokenMessageId: spokenMessageId ?? this.spokenMessageId,
       error: clearError ? null : error ?? this.error,
     );
@@ -108,9 +124,12 @@ class VoiceState extends Equatable {
     sidecarTried,
     sidecarModel,
     keepUntil,
+    capture,
     partial,
     lastHeard,
     heardSeq,
+    transcript,
+    transcriptSeq,
     spokenMessageId,
     error,
   ];
@@ -118,12 +137,10 @@ class VoiceState extends Equatable {
 
 /// Local mouth and ears for chat. Thinking stays on Parasail through the API.
 class VoiceCubit extends Cubit<VoiceState> {
-  VoiceCubit({
-    required MaiaApiClient api,
-    SharedPreferences? prefs,
-  }) : _api = api,
-       _prefs = prefs,
-       super(VoiceState(enabled: prefs?.getBool(_enabledKey) ?? false));
+  VoiceCubit({required MaiaApiClient api, SharedPreferences? prefs})
+    : _api = api,
+      _prefs = prefs,
+      super(VoiceState(enabled: prefs?.getBool(_enabledKey) ?? false));
 
   static const _enabledKey = 'maia.voice.enabled';
 
@@ -283,28 +300,35 @@ class VoiceCubit extends Cubit<VoiceState> {
     }
   }
 
-  Future<void> toggleListen() async {
+  /// Opens the microphone for [next]. The same button again stops it.
+  /// Talk turns spoken replies on. Transcribe only fills the composer.
+  Future<void> begin(VoiceCapture next) async {
     if (state.listening) {
+      final same = state.capture == next;
       await stopListen();
-      return;
+      if (same) return;
+    }
+    if (next == VoiceCapture.talk && !state.enabled) {
+      await setEnabled(on: true);
     }
     if (!await prepareListen()) return;
-    emit(state.copyWith(listening: true, partial: '', clearError: true));
+    emit(
+      state.copyWith(
+        listening: true,
+        capture: next,
+        partial: '',
+        clearError: true,
+      ),
+    );
     try {
       await _stt!.listen(
         onResult: (result) {
-          emit(state.copyWith(partial: result.recognizedWords));
-          if (!result.finalResult) return;
-          final text = result.recognizedWords.trim();
-          emit(
-            state.copyWith(
-              listening: false,
-              lastHeard: text.isEmpty ? null : text,
-              heardSeq: text.isEmpty ? state.heardSeq : state.heardSeq + 1,
-              partial: '',
-              clearHeard: text.isEmpty,
-            ),
-          );
+          final words = result.recognizedWords;
+          if (!result.finalResult) {
+            emit(state.copyWith(partial: words));
+            return;
+          }
+          _keepWords(words.trim());
         },
         listenOptions: SpeechListenOptions(
           listenFor: const Duration(seconds: 20),
@@ -318,6 +342,34 @@ class VoiceCubit extends Cubit<VoiceState> {
     }
   }
 
+  void _keepWords(String text) {
+    if (text.isEmpty) {
+      emit(state.copyWith(listening: false, partial: '', clearCapture: true));
+      return;
+    }
+    if (state.capture == VoiceCapture.transcribe) {
+      emit(
+        state.copyWith(
+          listening: false,
+          transcript: text,
+          transcriptSeq: state.transcriptSeq + 1,
+          partial: '',
+          clearCapture: true,
+        ),
+      );
+      return;
+    }
+    emit(
+      state.copyWith(
+        listening: false,
+        lastHeard: text,
+        heardSeq: state.heardSeq + 1,
+        partial: '',
+        clearCapture: true,
+      ),
+    );
+  }
+
   Future<void> stopListen() async {
     try {
       await _stt?.stop();
@@ -325,14 +377,11 @@ class VoiceCubit extends Cubit<VoiceState> {
       // Plugin already idle.
     }
     final leftover = state.partial.trim();
-    emit(
-      state.copyWith(
-        listening: false,
-        lastHeard: leftover.isEmpty ? state.lastHeard : leftover,
-        heardSeq: leftover.isEmpty ? state.heardSeq : state.heardSeq + 1,
-        partial: '',
-      ),
-    );
+    if (leftover.isEmpty) {
+      emit(state.copyWith(listening: false, partial: '', clearCapture: true));
+      return;
+    }
+    _keepWords(leftover);
   }
 
   Future<void> speak(String text) async {

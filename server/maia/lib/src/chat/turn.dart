@@ -41,14 +41,7 @@ runChatTurn({
     messages.add({
       'role': 'assistant',
       'content': text.isEmpty ? null : text.toString(),
-      'tool_calls': [
-        for (final c in calls)
-          {
-            'id': c.id,
-            'type': 'function',
-            'function': {'name': c.name, 'arguments': c.arguments},
-          },
-      ],
+      'tool_calls': [for (final c in calls) c.toWire()],
     });
     for (final call in calls) {
       final result = await toolbox.run(db, call.name, call.arguments);

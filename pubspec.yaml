@@ -9,3 +9,4 @@ workspace:
   - packages/maia_api_client
   - packages/maia_jobs
   - server/maia
+  - evals/chat

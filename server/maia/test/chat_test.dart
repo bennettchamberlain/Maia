@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:http/http.dart' as http;
 import 'package:maia_api/maia_api.dart';
 import 'package:test/test.dart';
 
@@ -42,10 +44,7 @@ void main() {
 
   group('ChatToolbox formatting', () {
     test('memories and graph collapse to GenUI JSON', () {
-      expect(
-        ChatToolbox.formatMemories(const []),
-        contains('no memories'),
-      );
+      expect(ChatToolbox.formatMemories(const []), contains('no memories'));
       expect(
         ChatToolbox.formatMemoryRow({
           'id': 'abc',
@@ -68,11 +67,7 @@ void main() {
             },
           },
         ]),
-        allOf(
-          contains('"type":"map"'),
-          contains('Cafe'),
-          contains('37.8'),
-        ),
+        allOf(contains('"type":"map"'), contains('Cafe'), contains('37.8')),
       );
       expect(
         ChatToolbox.formatGraph({
@@ -88,7 +83,11 @@ void main() {
             },
           ],
         }),
-        allOf(contains('"type":"graph"'), contains('ship chat'), contains('Alex')),
+        allOf(
+          contains('"type":"graph"'),
+          contains('ship chat'),
+          contains('Alex'),
+        ),
       );
     });
   });
@@ -143,4 +142,52 @@ void main() {
       );
     });
   });
+
+  group('Gemini tool signatures', () {
+    test('a streamed signature is kept on the tool call', () async {
+      const sse = '''
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","extra_content":{"google":{"thought_signature":"sig-a"}},"function":{"name":"web_search","arguments":"{\\"q\\":"}}]}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"lisbon\\"}"}}]}}]}
+
+data: {"choices":[{"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+''';
+      final client = AgentClient(
+        baseUrl: Uri.parse(
+          'https://generativelanguage.googleapis.com/v1beta/openai',
+        ),
+        model: 'gemini-3-flash-preview',
+        token: 'test-key',
+        httpClient: _SseClient(sse),
+      );
+      final events = await client.stream(const [
+        {'role': 'user', 'content': 'weather'},
+      ]).toList();
+      final call = events.whereType<AgentToolCall>().single;
+      expect(call.name, 'web_search');
+      expect(call.arguments, '{"q":"lisbon"}');
+      expect(call.toWire()['extra_content'], {
+        'google': {'thought_signature': 'sig-a'},
+      });
+      final auth = (_SseClient.lastRequest?.headers['authorization']);
+      expect(auth, 'Bearer test-key');
+    });
+  });
+}
+
+class _SseClient extends http.BaseClient {
+  _SseClient(this.payload);
+  final String payload;
+  static http.BaseRequest? lastRequest;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    lastRequest = request;
+    return http.StreamedResponse(
+      Stream<List<int>>.value(utf8.encode(payload)),
+      200,
+    );
+  }
 }

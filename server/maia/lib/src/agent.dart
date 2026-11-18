@@ -15,11 +15,54 @@ final class AgentText extends AgentEvent {
 }
 
 /// A tool the model invoked.
+///
+/// [extra] is everything on the tool-call object besides `index`, `id`,
+/// `type`, and `function`. Gemini puts `thought_signature` under
+/// `extra_content.google` and rejects the follow-up request if it is dropped.
 final class AgentToolCall extends AgentEvent {
-  const AgentToolCall(this.id, this.name, this.arguments);
+  const AgentToolCall(this.id, this.name, this.arguments, {this.extra});
   final String id;
   final String name;
   final String arguments;
+  final Map<String, dynamic>? extra;
+
+  /// OpenAI tool-call object, including provider fields such as a signature.
+  Map<String, dynamic> toWire() => {
+    'id': id,
+    'type': 'function',
+    'function': {'name': name, 'arguments': arguments},
+    if (extra != null) ...extra!,
+  };
+}
+
+typedef _PendingTool = ({
+  String id,
+  String name,
+  StringBuffer args,
+  Map<String, dynamic> extra,
+});
+
+/// Copies provider fields from one streamed tool-call chunk onto [into].
+/// Nested maps merge. `index`, `id`, `type`, and `function` are not extra.
+void mergeToolExtra(Map<String, dynamic> into, Map<String, dynamic> chunk) {
+  for (final entry in chunk.entries) {
+    if (entry.key == 'index' ||
+        entry.key == 'id' ||
+        entry.key == 'type' ||
+        entry.key == 'function') {
+      continue;
+    }
+    final next = entry.value;
+    final current = into[entry.key];
+    if (current is Map && next is Map) {
+      mergeToolExtra(
+        current.cast<String, dynamic>(),
+        next.cast<String, dynamic>(),
+      );
+    } else if (next != null) {
+      into[entry.key] = next;
+    }
+  }
 }
 
 /// Terminal event. `model` is whatever the harness reports it used.
@@ -121,7 +164,7 @@ class AgentClient {
       final body = await res.stream.bytesToString();
       throw AgentException(res.statusCode, body);
     }
-    final toolBuffers = <int, ({String id, String name, StringBuffer args})>{};
+    final toolBuffers = <int, _PendingTool>{};
     String? modelUsed;
     String? finish;
     await for (final line
@@ -162,13 +205,20 @@ class AgentClient {
             final name = fn['name'] as String? ?? existing?.name ?? '';
             final buf = existing?.args ?? StringBuffer();
             buf.write(fn['arguments'] as String? ?? '');
-            toolBuffers[idx] = (id: id, name: name, args: buf);
+            final extra = existing?.extra ?? <String, dynamic>{};
+            mergeToolExtra(extra, call.cast<String, dynamic>());
+            toolBuffers[idx] = (id: id, name: name, args: buf, extra: extra);
           }
         }
       }
     }
     for (final b in toolBuffers.values) {
-      yield AgentToolCall(b.id, b.name, b.args.toString());
+      yield AgentToolCall(
+        b.id,
+        b.name,
+        b.args.toString(),
+        extra: b.extra.isEmpty ? null : b.extra,
+      );
     }
     yield AgentDone(model: modelUsed, finishReason: finish);
   }

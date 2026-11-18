@@ -1,0 +1,15 @@
+name: maia_chat_eval
+description: A second Maia client that tests chat against the shared server.
+version: 0.1.0
+publish_to: none
+
+resolution: workspace
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  http: ^1.2.0
+  maia_api_client:
+    path: ../../packages/maia_api_client
+  maia_models:
+    path: ../../packages/maia_models

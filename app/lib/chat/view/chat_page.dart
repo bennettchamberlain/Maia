@@ -1,14 +1,16 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:maia_api_client/maia_api_client.dart';
+import 'package:maia_app/chat/attach.dart';
 import 'package:maia_app/chat/chat.dart';
 import 'package:maia_app/chat/parts/chat_part_view.dart';
 import 'package:maia_app/config/chat_settings_cubit.dart';
 import 'package:maia_app/ui/chrome.dart';
 import 'package:maia_models/maia_models.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 /// Chat with the Maia agent. Phone: list of conversations, tap to open.
@@ -30,8 +32,7 @@ class ChatPage extends StatelessWidget {
       return chat;
     } on Object {
       return BlocProvider(
-        create: (context) =>
-            VoiceCubit(api: context.read<MaiaApiClient>()),
+        create: (context) => VoiceCubit(api: context.read<MaiaApiClient>()),
         child: chat,
       );
     }
@@ -88,9 +89,8 @@ class _SessionList extends StatelessWidget {
             ShadIconButton.ghost(
               key: const Key('chat_new_button'),
               icon: const Icon(LucideIcons.squarePen, size: 16),
-              onPressed: () => context.read<ChatBloc>().add(
-                const ChatNewSessionRequested(),
-              ),
+              onPressed: () =>
+                  context.read<ChatBloc>().add(const ChatNewSessionRequested()),
             ),
           ],
         ),
@@ -101,8 +101,8 @@ class _SessionList extends StatelessWidget {
 
   Widget _list(BuildContext context, ChatState state) {
     return switch (state.status) {
-      ChatStatus.initial || ChatStatus.loading when state.sessions.isEmpty =>
-        const MaiaSkeleton(),
+      ChatStatus.initial ||
+      ChatStatus.loading when state.sessions.isEmpty => const MaiaSkeleton(),
       ChatStatus.failure when state.sessions.isEmpty => MaiaFailure(
         message: state.error ?? 'Could not load chats',
         onRetry: () => context.read<ChatBloc>().add(const ChatStarted()),
@@ -127,19 +127,16 @@ class _SessionList extends StatelessWidget {
                     padding: const EdgeInsets.only(right: 20),
                     child: Icon(
                       LucideIcons.trash2,
-                      color: ShadTheme.of(
-                        context,
-                      ).colorScheme.destructiveForeground,
+                      color: ShadTheme.of(context)
+                          .colorScheme
+                          .destructiveForeground,
                     ),
                   ),
                 ),
               ),
               onDismissed: (_) =>
                   context.read<ChatBloc>().add(ChatSessionDeleted(s)),
-              child: _SessionTile(
-                session: s,
-                selected: state.open?.id == s.id,
-              ),
+              child: _SessionTile(session: s, selected: state.open?.id == s.id),
             );
           },
         ),
@@ -224,6 +221,24 @@ class _ConversationState extends State<_Conversation> {
     _controller.clear();
   }
 
+  void _insert(String text) {
+    final current = _controller.text.trim();
+    final next = current.isEmpty ? text : '$current\n\n$text';
+    _controller.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: next.length),
+    );
+  }
+
+  Future<void> _pickFile() async {
+    final file = await openFile();
+    if (file == null || !mounted) return;
+    final length = await file.length();
+    final bytes = length > 48000 ? null : await file.readAsBytes();
+    if (!mounted) return;
+    _insert(attachmentNote(name: file.name, length: length, bytes: bytes));
+  }
+
   void _scrollToEnd() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
@@ -233,12 +248,22 @@ class _ConversationState extends State<_Conversation> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocListener<VoiceCubit, VoiceState>(
-      listenWhen: (p, c) =>
-          p.heardSeq != c.heardSeq && (c.lastHeard ?? '').isNotEmpty,
-      listener: (context, voice) {
-        context.read<ChatBloc>().add(ChatMessageSent(voice.lastHeard!));
-      },
+    return MultiBlocListener(
+      listeners: [
+        BlocListener<VoiceCubit, VoiceState>(
+          listenWhen: (p, c) =>
+              p.heardSeq != c.heardSeq && (c.lastHeard ?? '').isNotEmpty,
+          listener: (context, voice) {
+            context.read<ChatBloc>().add(ChatMessageSent(voice.lastHeard!));
+          },
+        ),
+        BlocListener<VoiceCubit, VoiceState>(
+          listenWhen: (p, c) =>
+              p.transcriptSeq != c.transcriptSeq &&
+              (c.transcript ?? '').isNotEmpty,
+          listener: (context, voice) => _insert(voice.transcript!),
+        ),
+      ],
       child: BlocConsumer<ChatBloc, ChatState>(
         listenWhen: (p, c) =>
             p.messages.length != c.messages.length ||
@@ -253,130 +278,109 @@ class _ConversationState extends State<_Conversation> {
           );
         },
         builder: (context, state) {
-        final open = state.open;
-        final theme = ShadTheme.of(context);
-        return Scaffold(
-          body: MaiaPane(
-            header: MaiaHeader(
-              title: open?.title ?? 'New chat',
-              leading: widget.showBack
-                  ? ShadIconButton.ghost(
-                      icon: const Icon(LucideIcons.arrowLeft, size: 16),
-                      onPressed: () => context.read<ChatBloc>().add(
-                        const ChatBackToList(),
-                      ),
-                    )
-                  : null,
-              actions: const [_VoiceToggle()],
-            ),
-            body: state.status == ChatStatus.loading && state.messages.isEmpty
-                ? const MaiaSkeleton()
-                : ListView(
-                    controller: _scroll,
-                    padding: const EdgeInsets.all(12),
-                    children: [
-                      if (state.messages.isEmpty && !state.sending)
-                        const _Hint(),
-                      for (final m in state.messages) _Bubble.message(m),
-                      if (state.sending)
-                        _Bubble.draft(
-                          state.draftReply,
-                          tools: state.draftTools,
+          final open = state.open;
+          final theme = ShadTheme.of(context);
+          return Scaffold(
+            body: MaiaPane(
+              header: MaiaHeader(
+                title: open?.title ?? 'New chat',
+                leading: widget.showBack
+                    ? ShadIconButton.ghost(
+                        icon: const Icon(LucideIcons.arrowLeft, size: 16),
+                        onPressed: () => context.read<ChatBloc>().add(
+                          const ChatBackToList(),
                         ),
-                    ],
-                  ),
-            footer: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (state.error != null)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Text(
-                      state.error!,
-                      style: theme.textTheme.small.copyWith(
-                        color: theme.colorScheme.destructive,
+                      )
+                    : null,
+                actions: const [_VoiceToggle()],
+              ),
+              body: state.status == ChatStatus.loading && state.messages.isEmpty
+                  ? const MaiaSkeleton()
+                  : ListView(
+                      controller: _scroll,
+                      padding: const EdgeInsets.all(12),
+                      children: [
+                        if (state.messages.isEmpty && !state.sending)
+                          const _Hint(),
+                        for (final m in state.messages) _Bubble.message(m),
+                        if (state.sending)
+                          _Bubble.draft(
+                            state.draftReply,
+                            tools: state.draftTools,
+                          ),
+                      ],
+                    ),
+              footer: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (state.error != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text(
+                        state.error!,
+                        style: theme.textTheme.small.copyWith(
+                          color: theme.colorScheme.destructive,
+                        ),
                       ),
                     ),
+                  const _VoiceStatusLine(),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+                    child: _ComposerActions(onFile: _pickFile),
                   ),
-                const _VoiceStatusLine(),
-                SafeArea(
-                  top: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        return SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: ConstrainedBox(
-                            constraints: BoxConstraints(
-                              minWidth: constraints.maxWidth,
-                            ),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                const _MicButton(),
-                                const SizedBox(width: 8),
-                                SizedBox(
-                                  width: math.max(
-                                    96,
-                                    constraints.maxWidth - 112,
-                                  ),
-                                  child: ShadInput(
-                                    key: const Key('chat_composer'),
-                                    controller: _controller,
-                                    minLines: 1,
-                                    maxLines: 5,
-                                    textInputAction: TextInputAction.send,
-                                    onSubmitted: (_) => _send(),
-                                    placeholder: Text(
-                                      context.select<VoiceCubit, String>((v) {
-                                        if (v.state.listening) {
-                                          final partial = v.state.partial
-                                              .trim();
-                                          return partial.isEmpty
-                                              ? 'Listening…'
-                                              : partial;
-                                        }
-                                        return v.state.enabled
-                                            ? 'Ask Maia, or speak…'
-                                            : 'Ask Maia…';
-                                      }),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                ShadIconButton(
-                                  key: const Key('chat_send_button'),
-                                  enabled: !state.sending,
-                                  onPressed: state.sending ? null : _send,
-                                  icon: state.sending
-                                      ? SizedBox.square(
-                                          dimension: 16,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: theme
-                                                .colorScheme
-                                                .primaryForeground,
-                                          ),
-                                        )
-                                      : const Icon(
-                                          LucideIcons.arrowUp,
-                                          size: 16,
-                                        ),
-                                ),
-                              ],
+                  SafeArea(
+                    top: false,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(
+                            child: ShadInput(
+                              key: const Key('chat_composer'),
+                              controller: _controller,
+                              minLines: 1,
+                              maxLines: 5,
+                              textInputAction: TextInputAction.send,
+                              onSubmitted: (_) => _send(),
+                              placeholder: Text(
+                                context.select<VoiceCubit, String>((v) {
+                                  if (v.state.listening) {
+                                    final partial = v.state.partial.trim();
+                                    return partial.isEmpty
+                                        ? 'Listening…'
+                                        : partial;
+                                  }
+                                  return 'Ask Maia…';
+                                }),
+                              ),
                             ),
                           ),
-                        );
-                      },
+                          const SizedBox(width: 8),
+                          ShadIconButton(
+                            key: const Key('chat_send_button'),
+                            enabled: !state.sending,
+                            onPressed: state.sending ? null : _send,
+                            icon: state.sending
+                                ? SizedBox.square(
+                                    dimension: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color:
+                                          theme.colorScheme.primaryForeground,
+                                    ),
+                                  )
+                                : const Icon(LucideIcons.arrowUp, size: 16),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        );
+          );
         },
       ),
     );
@@ -395,9 +399,8 @@ class _VoiceToggle extends StatelessWidget {
         voice.enabled ? LucideIcons.volume2 : LucideIcons.volumeOff,
         size: 16,
       ),
-      onPressed: () => unawaited(
-        context.read<VoiceCubit>().setEnabled(on: !voice.enabled),
-      ),
+      onPressed: () =>
+          unawaited(context.read<VoiceCubit>().setEnabled(on: !voice.enabled)),
     );
   }
 }
@@ -411,7 +414,8 @@ class _VoiceStatusLine extends StatelessWidget {
     final theme = ShadTheme.of(context);
     final warming =
         voice.sidecarStarting || voice.sidecarLoading && !voice.sidecarLoaded;
-    final text = voice.error ??
+    final text =
+        voice.error ??
         (warming
             ? 'Starting PersonaVoice on the server. First load can take '
                   'a few minutes. You can still speak on this phone.'
@@ -433,44 +437,60 @@ class _VoiceStatusLine extends StatelessWidget {
   }
 }
 
-class _MicButton extends StatelessWidget {
-  const _MicButton();
+class _ComposerActions extends StatelessWidget {
+  const _ComposerActions({required this.onFile});
 
-  Future<void> _tap(BuildContext context) async {
-    final cubit = context.read<VoiceCubit>();
-    if (!cubit.state.enabled) {
-      await cubit.setEnabled(on: true);
-    } else if (!cubit.state.sidecarLive && !cubit.state.sidecarStarting) {
-      unawaited(cubit.startSidecar());
-    }
-    await cubit.toggleListen();
-  }
+  final Future<void> Function() onFile;
 
   @override
   Widget build(BuildContext context) {
     final voice = context.watch<VoiceCubit>().state;
     final sending = context.select<ChatBloc, bool>((b) => b.state.sending);
-    final theme = ShadTheme.of(context);
-    final warming =
-        !voice.listening &&
-        (voice.sidecarStarting || voice.sidecarLoading) &&
-        !voice.sidecarLoaded;
-    return ShadIconButton.ghost(
-      key: const Key('chat_mic_button'),
-      icon: warming
-          ? SizedBox.square(
-              dimension: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: theme.colorScheme.foreground,
-              ),
-            )
-          : Icon(
-              voice.listening ? LucideIcons.circle : LucideIcons.mic,
-              size: 16,
-              color: voice.listening ? theme.colorScheme.destructive : null,
-            ),
-      onPressed: sending ? null : () => unawaited(_tap(context)),
+    final transcribing =
+        voice.listening && voice.capture == VoiceCapture.transcribe;
+    final talking = voice.listening && voice.capture == VoiceCapture.talk;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        _Action(
+          key: const Key('chat_transcribe_button'),
+          label: transcribing ? 'Stop' : 'Transcribe',
+          onPressed: () => unawaited(
+            context.read<VoiceCubit>().begin(VoiceCapture.transcribe),
+          ),
+        ),
+        _Action(
+          key: const Key('chat_talk_button'),
+          label: talking ? 'Stop' : 'Talk',
+          onPressed: sending
+              ? null
+              : () => unawaited(
+                  context.read<VoiceCubit>().begin(VoiceCapture.talk),
+                ),
+        ),
+        _Action(
+          key: const Key('chat_file_button'),
+          label: 'File',
+          onPressed: () => unawaited(onFile()),
+        ),
+      ],
+    );
+  }
+}
+
+class _Action extends StatelessWidget {
+  const _Action({required this.label, required this.onPressed, super.key});
+
+  final String label;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return ShadButton.outline(
+      size: ShadButtonSize.sm,
+      onPressed: onPressed,
+      child: Text(label),
     );
   }
 }
@@ -515,9 +535,7 @@ class _Bubble extends StatelessWidget {
           decoration: BoxDecoration(
             color: background,
             borderRadius: const BorderRadius.all(Radius.circular(8)),
-            border: mine
-                ? null
-                : Border.all(color: theme.colorScheme.border),
+            border: mine ? null : Border.all(color: theme.colorScheme.border),
           ),
           child: mine
               ? SelectableText(
@@ -534,7 +552,6 @@ class _Bubble extends StatelessWidget {
       ),
     );
   }
-
 }
 
 class _Hint extends StatelessWidget {
@@ -544,10 +561,9 @@ class _Hint extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.all(24),
     child: Text(
-      'Ask about your memories, places you have been, or anything in the '
-      'world. Maia searches memory first, then the web. Turn on the '
-      'speaker to hear replies; the mic speaks from this device while '
-      'thinking stays on Parasail.',
+      'Ask about a memory, a place, or the web. Transcribe types what you '
+      'say. Talk sends it and speaks the reply. File attaches something '
+      'you pick. The reply comes from the server.',
       textAlign: TextAlign.center,
       style: ShadTheme.of(context).textTheme.muted,
     ),

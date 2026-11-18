@@ -123,6 +123,8 @@ schema/.gel/
 
 # Maia / event local
 .env
+# Eval client of the shared server: URL and the eval person's password.
+evals/chat/*.local
 .venv/
 .one/
 .onerc
