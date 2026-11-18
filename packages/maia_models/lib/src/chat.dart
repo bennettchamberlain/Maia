@@ -359,6 +359,12 @@ final class ChatDelta extends ChatStreamEvent {
   final String text;
 }
 
+/// Replaces the in-flight draft. Used when a printed tool call is dropped.
+final class ChatDraftReplaced extends ChatStreamEvent {
+  const ChatDraftReplaced(this.text);
+  final String text;
+}
+
 /// The harness called a tool.
 final class ChatToolUsed extends ChatStreamEvent {
   const ChatToolUsed(this.call);
