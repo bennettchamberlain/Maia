@@ -67,6 +67,20 @@ module default {
   # stays rejected.
   scalar type EdgeStatus extending enum<proposed, verified, rejected>;
 
+  # Memory write tiers. `review` is a diary of the consolidation sweep.
+  # A reply may read instruction, curated, and episodic. It never reads review.
+  scalar type MemoryTier extending enum<
+    instruction, curated, episodic, prospective, review
+  >;
+
+  # Who produced the row. The model cannot set this. The server does.
+  scalar type MemoryOrigin extending enum<
+    owner, agent, tool, web, connector, system
+  >;
+
+  # Proposed rows wait for a person. Active rows may be recalled.
+  scalar type RecordStatus extending enum<proposed, active, rejected>;
+
   scalar type Embedding extending ext::pgvector::vector<768>;
   # Parasail serverless embeddings on this event key are BGE-M3 (1024).
   # GritLM-7B (4096) was not deployed; keep the column typed to the live model.
@@ -362,6 +376,14 @@ module default {
     embedding_cloud: EmbeddingCloud;
     embedded_cloud_at: datetime;
     embedding_cloud_model: str;
+    required tier: MemoryTier { default := MemoryTier.episodic };
+    required origin: MemoryOrigin { default := MemoryOrigin.agent };
+    required status: RecordStatus { default := RecordStatus.active };
+    required recall_count: int32 { default := 0 };
+    required query_count: int32 { default := 0 };
+    promoted_to: MemoryItem {
+      on target delete allow;
+    };
 
     constraint exclusive on ((.owner, .source, .source_id));
     index on ((.owner, .occurred_at));
@@ -459,6 +481,9 @@ module default {
     topics: array<str> { default := <array<str>>[] };
     # Last message seq included in the stored title and topics.
     required summarized_through_seq: int32 { default := 0 };
+    # Older turns, folded so the model sees a short prefix plus the live tail.
+    compaction: str;
+    required compacted_through_seq: int32 { default := 0 };
     # Harness-side continuity key (OpenClaw session key). Stable per session.
     required agent_session_key: str { default := <str>uuid_generate_v4() };
     last_message_at: datetime;
@@ -485,6 +510,45 @@ module default {
 
     constraint exclusive on ((.session, .seq));
     index on ((.session, .seq));
+  }
+
+  # Event-conditioned instruction. Checked against the user's words.
+  # A clock reminder stays a job. A vague aim stays a goal.
+  type StandingIntent extending Owned {
+    overloaded required data_class: str { default := 'intent' };
+    overloaded required sensitive: bool { default := true };
+
+    required phrase: str;
+    required instruction: str;
+    required status: RecordStatus { default := RecordStatus.active };
+
+    index on ((.owner, .status));
+  }
+
+  # A procedure the harness may follow. Proposed until the person confirms.
+  type Skill extending Owned {
+    overloaded required data_class: str { default := 'skill' };
+    overloaded required sensitive: bool { default := true };
+
+    required name: str;
+    required body: str;
+    required status: RecordStatus { default := RecordStatus.proposed };
+
+    constraint exclusive on ((.owner, .name));
+  }
+
+  # One piece of general work. The chat turn stays the memory plane.
+  # This row is the work plane: a goal, a toolset, and a result.
+  type WorkRun extending Owned {
+    overloaded required data_class: str { default := 'work' };
+    overloaded required sensitive: bool { default := true };
+
+    required goal: str;
+    required toolset: str { default := 'work' };
+    required state: JobState { default := JobState.created };
+    result: str;
+
+    index on ((.owner, .created_at));
   }
 
   # A text the person kept. Lives in Napalm, next to the chat it came from.
