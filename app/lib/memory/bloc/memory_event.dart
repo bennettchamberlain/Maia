@@ -7,22 +7,27 @@ sealed class MemoryEvent extends Equatable {
   List<Object?> get props => [];
 }
 
-/// First load. No-op once the feed is already loaded.
+/// First load. No-op once a timeline is already on screen.
 final class MemoryFetched extends MemoryEvent {
   const new();
 }
 
-/// Pull-to-refresh: reload the first page.
+/// Pull-to-refresh: reload timelines and the selected stream.
 final class MemoryRefreshed extends MemoryEvent {
   const new();
 }
 
-/// Scrolled to the end: fetch the next page.
-final class MemoryLoadedMore extends MemoryEvent {
-  const new();
+/// Show the events on this timeline.
+final class MemoryTimelineSelected extends MemoryEvent {
+  const new(this.id);
+
+  final String id;
+
+  @override
+  List<Object?> get props => [id];
 }
 
-/// A manual note typed in the app.
+/// A manual note typed in the app. It lands on the user timeline.
 final class MemoryNoteAdded extends MemoryEvent {
   const new({
     required this.title,

@@ -7,7 +7,27 @@ import 'package:maia_models/maia_models.dart';
 
 class _MockApi extends Mock implements MaiaApiClient;
 
-MemoryItem _item(String id, DateTime at) => MemoryItem(
+final _t0 = DateTime.utc(2026, 10, 27, 12);
+
+TimelineInfo _timeline(String id, String kind, String name) => TimelineInfo(
+  id: id,
+  key: kind == 'user' ? 'user' : '$kind:$id',
+  name: name,
+  kind: kind,
+);
+
+TimelineEntry _entry(String id, {String kind = 'session', DateTime? at}) {
+  final when = at ?? _t0;
+  return TimelineEntry(
+    id: id,
+    kind: kind,
+    title: id,
+    startedAt: when,
+    endedAt: when,
+  );
+}
+
+MemoryItem _note(String id, DateTime at) => MemoryItem(
   id: id,
   kind: 'note',
   title: id,
@@ -17,13 +37,14 @@ MemoryItem _item(String id, DateTime at) => MemoryItem(
 
 void main() {
   late _MockApi api;
-  final t0 = DateTime.utc(2026, 10, 27, 12);
+  final user = _timeline('u', 'user', 'Memory');
+  final gmail = _timeline('g', 'connection', 'Gmail');
 
   setUpAll(() {
     registerFallbackValue(
       MemoryUpsert(
         kind: 'note',
-        occurredAt: t0,
+        occurredAt: _t0,
         source: 'manual',
         sourceId: 'x',
       ),
@@ -32,82 +53,106 @@ void main() {
 
   setUp(() => api = _MockApi());
 
+  void stubUser({
+    List<TimelineEntry> entries = const [],
+    List<MemoryItem> notes = const [],
+    List<TimelineInfo> timelines = const [],
+  }) {
+    when(() => api.userTimeline()).thenAnswer(
+      (_) async => UserTimelineView(timeline: user, entries: entries),
+    );
+    when(() => api.timelines()).thenAnswer((_) async => timelines);
+    when(() => api.memoryFeed(limit: 50)).thenAnswer((_) async => notes);
+    when(() => api.library()).thenAnswer((_) async => LibraryView.empty);
+  }
+
   group('MemoryBloc', () {
     blocTest<MemoryBloc, MemoryState>(
-      'loads first page and reports hasMore from page size',
+      'opens on the user timeline and keeps the other streams as filters',
       setUp: () {
-        when(() => api.memoryFeed(limit: 2)).thenAnswer(
-          (_) async => [
-            _item('a', t0),
-            _item('b', t0.subtract(const Duration(hours: 1))),
-          ],
+        stubUser(
+          entries: [_entry('chat')],
+          timelines: [gmail, user],
+          notes: [_note('n', _t0.add(const Duration(hours: 1)))],
         );
       },
-      build: () => MemoryBloc(api: api, pageSize: 2),
+      build: () => MemoryBloc(api: api),
       act: (b) => b.add(const MemoryFetched()),
       expect: () => [
-        const MemoryState(status: MemoryStatus.loading),
+        const MemoryState(status: MemoryStatus.loading, busy: true),
         isA<MemoryState>()
             .having((s) => s.status, 'status', MemoryStatus.success)
-            .having((s) => s.items.length, 'items', 2)
-            .having((s) => s.hasMore, 'hasMore', true),
+            .having((s) => s.selectedId, 'selected', 'u')
+            .having((s) => s.timelines.map((t) => t.id).toList(), 'order', [
+              'u',
+              'g',
+            ])
+            .having((s) => s.entries.map((e) => e.id).toList(), 'entries', [
+              'n',
+              'chat',
+            ]),
       ],
     );
 
     blocTest<MemoryBloc, MemoryState>(
-      'loads more using the last occurred_at as cursor',
+      'loads the events on the timeline that was selected',
       setUp: () {
-        when(() => api.memoryFeed(before: t0, limit: 2)).thenAnswer(
-          (_) async => [_item('c', t0.subtract(const Duration(days: 1)))],
-        );
+        when(() => api.timelineFeed('g'))
+            .thenAnswer((_) async => [_entry('mail', kind: 'mail')]);
       },
-      build: () => MemoryBloc(api: api, pageSize: 2),
+      build: () => MemoryBloc(api: api),
       seed: () => MemoryState(
         status: MemoryStatus.success,
-        items: [_item('a', t0.add(const Duration(hours: 1))), _item('b', t0)],
+        timelines: [user, gmail],
+        selectedId: 'u',
+        entries: [_entry('chat')],
       ),
-      act: (b) => b.add(const MemoryLoadedMore()),
+      act: (b) => b.add(const MemoryTimelineSelected('g')),
       expect: () => [
         isA<MemoryState>()
-            .having((s) => s.items.map((m) => m.id).toList(), 'ids', [
-              'a',
-              'b',
-              'c',
-            ])
-            .having((s) => s.hasMore, 'hasMore', false),
+            .having((s) => s.selectedId, 'selected', 'g')
+            .having((s) => s.entries, 'cleared', isEmpty)
+            .having((s) => s.busy, 'busy', true),
+        isA<MemoryState>()
+            .having((s) => s.entries.single.id, 'id', 'mail')
+            .having((s) => s.busy, 'busy', false),
       ],
     );
 
     blocTest<MemoryBloc, MemoryState>(
       'surfaces api failure',
       setUp: () {
-        when(() => api.memoryFeed())
+        when(() => api.userTimeline())
             .thenThrow(const MaiaApiException(401, 'expired'));
       },
       build: () => MemoryBloc(api: api),
       act: (b) => b.add(const MemoryFetched()),
       expect: () => [
-        const MemoryState(status: MemoryStatus.loading),
+        const MemoryState(status: MemoryStatus.loading, busy: true),
         const MemoryState(status: MemoryStatus.failure, error: 'expired'),
       ],
     );
 
     blocTest<MemoryBloc, MemoryState>(
-      'adds a note at the top, de-duplicating by id',
+      'adds a note on the user timeline, de-duplicating by id',
       setUp: () {
         when(() => api.memoryUpsert(any())).thenAnswer(
-          (_) async => _item('new', t0.add(const Duration(hours: 2))),
+          (_) async => _note('new', _t0.add(const Duration(hours: 2))),
         );
       },
       build: () => MemoryBloc(api: api),
-      seed: () =>
-          MemoryState(status: MemoryStatus.success, items: [_item('a', t0)]),
+      seed: () => MemoryState(
+        status: MemoryStatus.success,
+        timelines: [user],
+        selectedId: 'u',
+        entries: [_entry('chat')],
+      ),
       act: (b) => b.add(const MemoryNoteAdded(title: 'hi', sourceId: 'k1')),
       expect: () => [
         isA<MemoryState>().having(
-          (s) => s.items.map((m) => m.id).toList(),
+          (s) => s.entries.map((e) => e.id).toList(),
           'ids',
-          ['new', 'a'],
+          ['new', 'chat'],
         ),
       ],
       verify: (_) {

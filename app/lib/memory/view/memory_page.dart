@@ -1,9 +1,10 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:maia_api_client/maia_api_client.dart';
+import 'package:maia_app/chat/day_groups.dart';
 import 'package:maia_app/memory/memory.dart';
 import 'package:maia_app/ui/chrome.dart';
 import 'package:maia_models/maia_models.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 class MemoryPage extends StatelessWidget {
@@ -29,7 +30,6 @@ class MemoryView extends StatelessWidget {
       body: MaiaPane(
         header: MaiaHeader(
           title: 'Memory',
-          // TODO(maia): semantic search needs OLLAMA_URL on the server.
           actions: [
             ShadIconButton.ghost(
               key: const Key('memory_addNote_fab'),
@@ -71,17 +71,60 @@ class MemoryView extends StatelessWidget {
   }
 }
 
-class _MemoryBody extends StatelessWidget {
+class _MemoryBody extends StatefulWidget {
   const new();
+
+  @override
+  State<_MemoryBody> createState() => _MemoryBodyState();
+}
+
+class _MemoryBodyState extends State<_MemoryBody> {
+  final _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<MemoryBloc>().state;
+    final query = _search.text.trim().toLowerCase();
+    final entries = [
+      for (final entry in state.entries)
+        if (_matches(entry, query)) entry,
+    ];
+    return Column(
+      children: [
+        if (!state.library.isEmpty) const _LibraryShelf(),
+        if (state.timelines.isNotEmpty) const _TimelineFilters(),
+        if (state.timelines.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: ShadInput(
+              key: const Key('memory_search'),
+              controller: _search,
+              placeholder: const Text('Search this timeline…'),
+              onChanged: (_) => setState(() {}),
+            ),
+          ),
+        Expanded(child: _list(context, state, entries, query.isNotEmpty)),
+      ],
+    );
+  }
+
+  Widget _list(
+    BuildContext context,
+    MemoryState state,
+    List<TimelineEntry> entries,
+    bool filtered,
+  ) {
     switch (state.status) {
       case MemoryStatus.initial:
       case MemoryStatus.loading:
         return const MaiaSkeleton();
-      case MemoryStatus.failure when state.items.isEmpty:
+      case MemoryStatus.failure when state.timelines.isEmpty:
         return MaiaFailure(
           message: state.error ?? 'Could not load memory',
           onRetry: () =>
@@ -89,114 +132,324 @@ class _MemoryBody extends StatelessWidget {
         );
       case MemoryStatus.failure:
       case MemoryStatus.success:
-        if (state.items.isEmpty) {
-          return const MaiaEmpty('Nothing here yet.');
+        if (state.busy && state.entries.isEmpty) {
+          return const MaiaSkeleton();
+        }
+        if (entries.isEmpty) {
+          final message = filtered
+              ? 'Nothing matches.'
+              : 'Nothing on this timeline yet.';
+          return RefreshIndicator(
+            onRefresh: () => _refresh(context),
+            child: MaiaScrollFill(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                message,
+                textAlign: TextAlign.center,
+                style: ShadTheme.of(context).textTheme.muted,
+              ),
+            ),
+          );
         }
         return RefreshIndicator(
-          onRefresh: () async {
-            final bloc = context.read<MemoryBloc>()
-              ..add(const MemoryRefreshed());
-            await bloc.stream.firstWhere(
-              (s) => s.status != MemoryStatus.loading,
-            );
-          },
-          child: NotificationListener<ScrollNotification>(
-            onNotification: (n) {
-              if (n.metrics.extentAfter < 400) {
-                context.read<MemoryBloc>().add(const MemoryLoadedMore());
-              }
-              return false;
-            },
-            child: ListView.separated(
-              physics: const AlwaysScrollableScrollPhysics(),
-              itemCount: state.items.length + (state.hasMore ? 1 : 0),
-              separatorBuilder: (_, _) => const MaiaDivider.horizontal(),
-              itemBuilder: (context, i) {
-                if (i >= state.items.length) {
-                  return const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: MaiaSkeleton(rows: 1),
-                  );
-                }
-                return _MemoryTile(item: state.items[i]);
-              },
-            ),
-          ),
+          onRefresh: () => _refresh(context),
+          child: _grouped(context, entries),
         );
     }
   }
+
+  Future<void> _refresh(BuildContext context) async {
+    final bloc = context.read<MemoryBloc>()..add(const MemoryRefreshed());
+    await bloc.stream.firstWhere((s) => !s.busy);
+  }
+
+  Widget _grouped(BuildContext context, List<TimelineEntry> entries) {
+    final groups = groupEntries(entries, DateTime.now());
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+      children: [
+        for (final group in groups) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 12, 4, 6),
+            child: Text(
+              group.label,
+              style: ShadTheme.of(context).textTheme.muted,
+            ),
+          ),
+          for (final entry in group.entries) _EventTile(entry: entry),
+        ],
+      ],
+    );
+  }
+
+  bool _matches(TimelineEntry entry, String query) {
+    if (query.isEmpty) return true;
+    final hay = [
+      entry.title,
+      entry.body,
+      entry.platform,
+      entry.account,
+      entry.source,
+      _kindLine(entry),
+      ...entry.topics,
+    ].whereType<String>().join(' ').toLowerCase();
+    return hay.contains(query);
+  }
 }
 
-class _MemoryTile extends StatelessWidget {
-  const new({required this.item});
+class _LibraryShelf extends StatelessWidget {
+  const new();
 
-  final MemoryItem item;
+  @override
+  Widget build(BuildContext context) {
+    final library = context.watch<MemoryBloc>().state.library;
+    final theme = ShadTheme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (library.skills.isNotEmpty)
+            _ShelfRow(label: 'Skills', entries: library.skills),
+          if (library.files.isNotEmpty)
+            _ShelfRow(label: 'Files', entries: library.files),
+          if (library.turns.isNotEmpty)
+            _ShelfRow(label: 'Turns', entries: library.turns),
+          Divider(height: 1, color: theme.colorScheme.border),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShelfRow extends StatelessWidget {
+  const new({required this.label, required this.entries});
+
+  final String label;
+  final List<LibraryEntry> entries;
 
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    final when = item.occurredAt.toLocal();
-    final stamp =
-        '${when.year}-${_two(when.month)}-${_two(when.day)} '
-        '${_two(when.hour)}:${_two(when.minute)}';
-    final subtitle = [
-      stamp,
-      item.source,
-      ?item.place?.city,
-      ?item.body,
-    ].join(' · ');
-    return Material(
-      color: theme.colorScheme.background,
-      child: InkWell(
-        onTap: () => showShadDialog<void>(
-          context: context,
-          builder: (_) => ShadDialog(
-            title: Text(item.title ?? item.kind),
-            child: Text(item.body ?? '(no body)\n\n$stamp · ${item.source}'),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 52,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(label, style: theme.textTheme.muted),
+            ),
           ),
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final entry in entries.take(8))
+                  ShadBadge.outline(
+                    onPressed: () => showShadDialog<void>(
+                      context: context,
+                      builder: (_) => ShadDialog(
+                        title: Text(entry.name),
+                        child: Text(
+                          entry.line.isEmpty ? entry.kind : entry.line,
+                        ),
+                      ),
+                    ),
+                    child: Text(entry.name),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TimelineFilters extends StatelessWidget {
+  const new();
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<MemoryBloc>().state;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: ShadTheme.of(context).colorScheme.border),
         ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: [
-              Icon(
-                _iconFor(item.kind),
-                size: 16,
-                color: theme.colorScheme.mutedForeground,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item.title ?? '(untitled ${item.kind})',
-                      style: theme.textTheme.p,
-                    ),
-                    Text(
-                      subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.muted,
-                    ),
-                  ],
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            for (final timeline in state.timelines)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: _TimelineBadge(
+                  timeline: timeline,
+                  selected: timeline.id == state.selectedId,
                 ),
               ),
-            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TimelineBadge extends StatelessWidget {
+  const new({required this.timeline, required this.selected});
+
+  final TimelineInfo timeline;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = timeline.name.isEmpty ? timeline.kind : timeline.name;
+    void select() {
+      context.read<MemoryBloc>().add(MemoryTimelineSelected(timeline.id));
+    }
+
+    final child = Text(label);
+    if (selected) {
+      return ShadBadge.secondary(
+        key: Key('memory_timeline_${timeline.id}'),
+        onPressed: select,
+        child: child,
+      );
+    }
+    return ShadBadge.outline(
+      key: Key('memory_timeline_${timeline.id}'),
+      onPressed: select,
+      child: child,
+    );
+  }
+}
+
+class _EventTile extends StatelessWidget {
+  const new({required this.entry});
+
+  final TimelineEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    final line = _kindLine(entry);
+    final when = formatSpan(entry.startedAt, entry.endedAt);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: theme.colorScheme.muted,
+        borderRadius: const BorderRadius.all(Radius.circular(12)),
+        child: InkWell(
+          borderRadius: const BorderRadius.all(Radius.circular(12)),
+          onTap: () => showShadDialog<void>(
+            context: context,
+            builder: (_) => _EventDialog(entry: entry),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  _iconFor(entry.kind),
+                  size: 16,
+                  color: theme.colorScheme.mutedForeground,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        entry.title ?? '(untitled ${entry.kind})',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.p,
+                      ),
+                      Text(
+                        '$line · $when',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.muted,
+                      ),
+                      if (entry.body != null && entry.body!.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            entry.body!,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.muted,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  static String _two(int n) => n.toString().padLeft(2, '0');
-
   static IconData _iconFor(String kind) => switch (kind) {
     'note' => LucideIcons.stickyNote,
-    'photo' => LucideIcons.image,
-    'message' => LucideIcons.messageCircle,
-    'event' => LucideIcons.calendar,
-    _ => LucideIcons.brain,
+    'session' => LucideIcons.messageCircle,
+    'mail' => LucideIcons.mail,
+    'calendar' => LucideIcons.calendar,
+    'file' => LucideIcons.file,
+    'ontology' => LucideIcons.brain,
+    _ => LucideIcons.circle,
+  };
+}
+
+class _EventDialog extends StatelessWidget {
+  const new({required this.entry});
+
+  final TimelineEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final when = formatSpan(entry.startedAt, entry.endedAt);
+    final bits = [_kindLine(entry), when, ?entry.source].join(' · ');
+    return ShadDialog(
+      title: Text(entry.title ?? entry.kind),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(bits),
+          if (entry.body != null && entry.body!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(entry.body!),
+          ],
+          for (final topic in entry.topics)
+            Padding(padding: const EdgeInsets.only(top: 8), child: Text(topic)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Account line for a connector. A plain kind name for everything else.
+String _kindLine(TimelineEntry entry) {
+  final account = entryAccountLine(entry);
+  if (account.isNotEmpty) return account;
+  return switch (entry.kind) {
+    'session' => 'Chat',
+    'note' => 'Note',
+    'file' => 'File',
+    'ontology' => 'About',
+    _ => entry.kind,
   };
 }
 
@@ -231,10 +484,8 @@ class _AddNoteDialogState extends State<_AddNoteDialog> {
           key: const Key('memory_addNote_save'),
           onPressed: () {
             if (_title.text.trim().isEmpty) return;
-            Navigator.of(context).pop((
-              title: _title.text.trim(),
-              body: _body.text.trim(),
-            ));
+            Navigator.of(context)
+                .pop((title: _title.text.trim(), body: _body.text.trim()));
           },
           child: const Text('Save'),
         ),
