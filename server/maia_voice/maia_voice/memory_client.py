@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-log = logging.getLogger("scoria.voice.memory")
+log = logging.getLogger("maia.voice.memory")
 
 
 class MemoryClient:
@@ -30,13 +30,13 @@ class MemoryClient:
         try:
             r = await self._http.post(f"{self.base}/auth/signin", json={"handle": self.handle, "password": self.password})
             if r.status_code != 200:
-                log.warning("scoria sign-in refused: %s", r.text[:200])
+                log.warning("maia sign-in refused: %s", r.text[:200])
                 return False
             d = r.json()
             self.token, self.person = d["token"], d["person"]
             return True
         except httpx.HTTPError as e:
-            log.warning("scoria api unreachable: %s", e)
+            log.warning("maia api unreachable: %s", e)
             return False
 
     def _h(self) -> dict[str, str]:

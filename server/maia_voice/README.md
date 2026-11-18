@@ -1,4 +1,4 @@
-# scoria-voice
+# maia-voice
 
 Full-duplex voice for Maia. [PersonaPlex](https://github.com/NVIDIA/personaplex)
 (NVIDIA's Moshi fork) is the mouth and the ears. Thinking prefers Parasail
@@ -29,24 +29,24 @@ frame. `HookedLMGen` lets a `TextPolicy` replace that token:
   Done in quiet moments (model and user both silent), capped at 6 s wait. The
   silent frames are not sent to the client, so playback does not lag.
 
-The meta prompt is persisted (`~/.local/state/scoria-voice/persona.json`) and
+The meta prompt is persisted (`~/.local/state/maia-voice/persona.json`) and
 every refinement — from the console or from the user saying "speak slower" —
 is injected live.
 
 ## Run
 
 ```sh
-cd server/scoria_voice
+cd server/maia_voice
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python torch torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
 printf 'torch>=2.14\nhuggingface-hub>=0.30\n' > /tmp/overrides.txt
 uv pip install --python .venv/bin/python --override /tmp/overrides.txt -e .   # moshi-personaplex pins torch 2.4 / hf-hub 0.24; override
 
 export HF_TOKEN_FILE=~/devel/mynamehf.txt              # or HF_TOKEN=…
-export SCORIA_HANDLE=admin SCORIA_PASSWORD=…           # memory tools (scoria-api on :8090)
+export MAIA_HANDLE=admin MAIA_PASSWORD=…           # memory tools (maia-api on :8090)
 export PARASAIL_API_KEY=…                              # brain thinking (Ollama if unset)
-export VOICE_SSL_DIR=~/.local/state/scoria-voice/ssl   # browsers need https for the mic
-.venv/bin/scoria-voice                                 # https://localhost:8998
+export VOICE_SSL_DIR=~/.local/state/maia-voice/ssl   # browsers need https for the mic
+.venv/bin/maia-voice                                 # https://localhost:8998
 ```
 
 Open `/console` to toggle the model on, edit the meta prompt, watch the
@@ -56,7 +56,7 @@ UI (it connects to the same `/api/chat`).
 | env | default | meaning |
 |---|---|---|
 | `BRAIN_PROVIDER` | `auto` | `auto` / `parasail` / `ollama`. Auto uses Parasail when a key is set |
-| `PARASAIL_API_KEY` | unset | Cloud thinking. Same key as scoria-api chat |
+| `PARASAIL_API_KEY` | unset | Cloud thinking. Same key as maia-api chat |
 | `PARASAIL_MODEL` | `parasail-glm-53-flash` | Parasail chat model for the brain |
 | `BRAIN_MODEL` | best present of `gpt-oss:120b, qwen3.5:122b, gpt-oss:20b, qwen3.5:32b, qwen3.5:9b` | Ollama fallback |
 | `WHISPER_MODEL` | `distil-large-v3` | faster-whisper model (CPU int8) |
@@ -85,7 +85,7 @@ would be ~4×) for the main transformer, plus `torch.compile` to shrink the
 depformer's kernel count. Projected best case is ~80–110 ms/frame — borderline.
 On any NVIDIA GPU with ≥ 24 GB (the model's intended target) it runs real time
 out of the box, and this service is network-separable: point `OLLAMA_URL` and
-`SCORIA_API_URL` at this machine and run `scoria-voice` where the GPU is.
+`MAIA_API_URL` at this machine and run `maia-voice` where the GPU is.
 
 ## API
 

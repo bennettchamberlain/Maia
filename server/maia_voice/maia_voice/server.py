@@ -25,7 +25,7 @@ from .persona import PersonaStore
 from .session import Session
 from .stt import Transcriber
 
-log = logging.getLogger("scoria.voice")
+log = logging.getLogger("maia.voice")
 CONSOLE_HTML = Path(__file__).with_name("console.html")
 
 
@@ -33,9 +33,9 @@ class App:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.engine = Engine(cfg)
-        self.store = PersonaStore(Path(os.environ.get("VOICE_STATE_DIR", "~/.local/state/scoria-voice")).expanduser() / "persona.json")
+        self.store = PersonaStore(Path(os.environ.get("VOICE_STATE_DIR", "~/.local/state/maia-voice")).expanduser() / "persona.json")
         self.persona = self.store.persona
-        self.memory = MemoryClient(cfg.scoria_api_url, cfg.scoria_handle, cfg.scoria_password) if cfg.scoria_api_url else None
+        self.memory = MemoryClient(cfg.maia_api_url, cfg.maia_handle, cfg.maia_password) if cfg.maia_api_url else None
         self.brain: Brain | None = None
         self.transcriber: Transcriber | None = None
         self._stt_task: asyncio.Future | None = None
@@ -73,7 +73,7 @@ class App:
         await loop.run_in_executor(None, self.engine.ensure_assets)
         if self.memory is not None:
             ok = await self.memory.sign_in()
-            log.info("scoria memory: %s", "signed in" if ok else "unavailable")
+            log.info("maia memory: %s", "signed in" if ok else "unavailable")
         if self.cfg.brain_enabled:
             self.brain = Brain(self.cfg, self.memory, self.persona, self.broadcast_brain, self._persona_changed)
             # Parasail returns immediately. A local Ollama warm-up can sit on a
@@ -325,7 +325,7 @@ def _ssl_context(ssl_dir: str) -> ssl.SSLContext:
     cert, key = d / "cert.pem", d / "key.pem"
     if not (cert.exists() and key.exists()):
         subprocess.run(
-            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-days", "365", "-subj", "/CN=scoria-voice"],
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-days", "365", "-subj", "/CN=maia-voice"],
             check=True, capture_output=True,
         )
     ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
@@ -345,7 +345,7 @@ def main() -> None:
     web_app = app.build()
     ctx = _ssl_context(cfg.ssl_dir) if cfg.ssl_dir else None
     scheme = "https" if ctx else "http"
-    log.info("scoria-voice on %s://%s:%d  (console at /console)", scheme, cfg.host, cfg.port)
+    log.info("maia-voice on %s://%s:%d  (console at /console)", scheme, cfg.host, cfg.port)
     web.run_app(web_app, host=cfg.host, port=cfg.port, ssl_context=ctx, print=None)
 
 

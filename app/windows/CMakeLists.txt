@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
-project(scoria_app LANGUAGES CXX)
+project(maia_app LANGUAGES CXX)
 
-set(BINARY_NAME "scoria_app")
+set(BINARY_NAME "maia_app")
 
 cmake_policy(SET CMP0063 NEW)
 

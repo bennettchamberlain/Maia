@@ -1,14 +1,14 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:scoria_api_client/scoria_api_client.dart';
-import 'package:scoria_app/chat/voice_cubit.dart';
-import 'package:scoria_app/config/chat_settings_cubit.dart';
-import 'package:scoria_app/config/server_cubit.dart';
-import 'package:scoria_app/home/home.dart';
-import 'package:scoria_app/l10n/l10n.dart';
-import 'package:scoria_app/session/session.dart';
-import 'package:scoria_app/sign_in/sign_in.dart';
-import 'package:scoria_app/ui/chrome.dart';
+import 'package:maia_api_client/maia_api_client.dart';
+import 'package:maia_app/chat/voice_cubit.dart';
+import 'package:maia_app/config/chat_settings_cubit.dart';
+import 'package:maia_app/config/server_cubit.dart';
+import 'package:maia_app/home/home.dart';
+import 'package:maia_app/l10n/l10n.dart';
+import 'package:maia_app/session/session.dart';
+import 'package:maia_app/sign_in/sign_in.dart';
+import 'package:maia_app/ui/chrome.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

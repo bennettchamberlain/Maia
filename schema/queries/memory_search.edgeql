@@ -1,5 +1,5 @@
 # Semantic search over memories the caller can see.
-# The embedding is computed by scoria-api (Ollama) and passed in.
+# The embedding is computed by maia-api (Ollama) and passed in.
 # variables: $embedding (array<float32>, 768), $limit (int64)
 with
   q := <Embedding><array<float32>>$embedding

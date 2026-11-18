@@ -1,9 +1,9 @@
 import 'dart:convert';
 
-import 'package:scoria_api/src/db.dart';
-import 'package:scoria_api/src/embeddings.dart';
-import 'package:scoria_api/src/parasail_embeddings.dart';
-import 'package:scoria_jobs/scoria_jobs.dart';
+import 'package:maia_api/src/db.dart';
+import 'package:maia_api/src/embeddings.dart';
+import 'package:maia_api/src/parasail_embeddings.dart';
+import 'package:maia_jobs/maia_jobs.dart';
 
 /// Fills local and/or cloud embedding columns for one memory.
 class EmbedJob {

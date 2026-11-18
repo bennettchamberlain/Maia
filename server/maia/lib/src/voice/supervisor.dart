@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
-import 'package:scoria_api/src/config.dart';
+import 'package:maia_api/src/config.dart';
 
 /// Starts the local PersonaVoice process and asks it to load weights.
 ///
@@ -103,12 +103,12 @@ class VoiceSupervisor {
     final bin = config.voiceBin;
     if (bin == null || !File(bin).existsSync()) {
       throw StateError(
-        'No scoria-voice binary. Set VOICE_BIN or install the '
-        'sidecar venv under server/scoria_voice.',
+        'No maia-voice binary. Set VOICE_BIN or install the '
+        'sidecar venv under server/maia_voice.',
       );
     }
     final state = Directory(
-      '${Platform.environment['HOME']}/.local/state/scoria-voice',
+      '${Platform.environment['HOME']}/.local/state/maia-voice',
     );
     state.createSync(recursive: true);
     final log = File('${state.path}/sidecar.log');
@@ -119,8 +119,8 @@ class VoiceSupervisor {
       ..['VOICE_PORT'] = '$port'
       ..['VOICE_AUTOLOAD'] = '1'
       ..['VOICE_KEEP_ALIVE_SEC'] = '${config.voiceKeepAlive.inSeconds}'
-      ..['SCORIA_API_URL'] =
-          Platform.environment['SCORIA_API_URL'] ??
+      ..['MAIA_API_URL'] =
+          Platform.environment['MAIA_API_URL'] ??
           'http://127.0.0.1:${config.port}';
     var dead = false;
     _child = await Process.start(

@@ -1,4 +1,4 @@
-/// Error from scoria-api. `statusCode` is the HTTP status; `code` is the
+/// Error from maia-api. `statusCode` is the HTTP status; `code` is the
 /// machine-readable error the server returned, when it did.
 class MaiaApiException implements Exception {
   const MaiaApiException(this.statusCode, this.message, {this.code});

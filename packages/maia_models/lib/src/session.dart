@@ -1,4 +1,4 @@
-import 'package:scoria_models/src/person.dart';
+import 'package:maia_models/src/person.dart';
 
 /// Result of `POST /auth/signin`. The token is the caller on later requests.
 class Session {

@@ -105,7 +105,7 @@ test-results-desktop/
 # Local HBPE model checkpoints pulled out of the container volume for offline eval
 backend/.cache/
 
-# --- Scoria (Dart/Flutter monorepo) -----------------------------------------
+# --- Maia (Dart/Flutter monorepo) -----------------------------------------
 .dart_tool/
 .packages
 pubspec.lock

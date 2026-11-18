@@ -1,5 +1,5 @@
-name: scoria_api_client
-description: HTTP client for scoria-api, used by the Flutter app
+name: maia_api_client
+description: HTTP client for maia-api, used by the Flutter app
 version: 0.1.0+1
 publish_to: none
 
@@ -9,8 +9,8 @@ environment:
 
 dependencies:
   http: ^1.2.0
-  scoria_models:
-    path: ../scoria_models
+  maia_models:
+    path: ../maia_models
 
 dev_dependencies:
   mocktail: ^1.0.5

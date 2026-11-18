@@ -2,13 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
-import 'package:scoria_api_client/src/scoria_api_exception.dart';
-import 'package:scoria_models/scoria_models.dart';
+import 'package:maia_api_client/src/maia_api_exception.dart';
+import 'package:maia_models/maia_models.dart';
 
 /// Supplies the current bearer token, or null when signed out.
 typedef TokenProvider = String? Function();
 
-/// Client for scoria-api.
+/// Client for maia-api.
 ///
 /// The server applies Napalm policies as the signed-in person. This client
 /// only carries the token; it never decides what is visible.

@@ -30,7 +30,7 @@ from .engine import Engine
 from .persona import Persona
 from .stt import Transcriber, UtteranceSegmenter
 
-log = logging.getLogger("scoria.voice.session")
+log = logging.getLogger("maia.voice.session")
 
 Broadcast = Callable[[dict], Awaitable[None]]
 

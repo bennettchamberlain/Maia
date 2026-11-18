@@ -1,4 +1,4 @@
-import 'package:scoria_api/scoria_api.dart';
+import 'package:maia_api/maia_api.dart';
 import 'package:test/test.dart';
 
 void main() {

@@ -28,8 +28,8 @@ Rules:
 def main() -> int:
     job = json.load(sys.stdin)
     data = job.get("data") or {}
-    base = os.environ.get("SCORIA_API_URL", "http://127.0.0.1:8080").rstrip("/")
-    token = str(data.get("token") or os.environ.get("SCORIA_API_TOKEN") or "").strip()
+    base = os.environ.get("MAIA_API_URL", "http://127.0.0.1:8080").rstrip("/")
+    token = str(data.get("token") or os.environ.get("MAIA_API_TOKEN") or "").strip()
     headers = {"authorization": f"Bearer {token}"} if token else {}
 
     with httpx.Client(timeout=45) as http:
@@ -76,7 +76,7 @@ def main() -> int:
             if t.get("kind") in {"organization", "place"}
         ]
         wrote["grounded"] = _ground_thin(http, base, headers, public)
-        if os.environ.get("SCORIA_USE_CREWAI") == "1":
+        if os.environ.get("MAIA_USE_CREWAI") == "1":
             try:
                 from swarm.crew import run_crew
 

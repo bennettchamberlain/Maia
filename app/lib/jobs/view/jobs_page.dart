@@ -1,9 +1,9 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:scoria_api_client/scoria_api_client.dart';
-import 'package:scoria_app/jobs/jobs.dart';
-import 'package:scoria_app/ui/chrome.dart';
-import 'package:scoria_models/scoria_models.dart';
+import 'package:maia_api_client/maia_api_client.dart';
+import 'package:maia_app/jobs/jobs.dart';
+import 'package:maia_app/ui/chrome.dart';
+import 'package:maia_models/maia_models.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 class JobsPage extends StatelessWidget {

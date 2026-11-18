@@ -25,7 +25,7 @@ import ollama
 from .memory_client import MemoryClient
 from .persona import Persona
 
-log = logging.getLogger("scoria.voice.brain")
+log = logging.getLogger("maia.voice.brain")
 
 NOOP = "NOOP"
 
@@ -116,7 +116,7 @@ class Brain:
         self.on_persona_change = on_persona_change
         self.history: list[dict[str, Any]] = []  # recent dialogue, both sides
         self._busy = asyncio.Lock()
-        self._http = httpx.AsyncClient(timeout=60, follow_redirects=True, headers={"user-agent": "scoria-voice/0.1"})
+        self._http = httpx.AsyncClient(timeout=60, follow_redirects=True, headers={"user-agent": "maia-voice/0.1"})
 
     def _use_parasail(self) -> bool:
         if self.cfg.brain_provider == "ollama":
@@ -269,17 +269,17 @@ class Brain:
                 return time.strftime("%A %Y-%m-%d %H:%M %Z")
             if name == "memory_search":
                 if not (self.memory and self.memory.available):
-                    return "memory unavailable (not signed in to scoria-api)"
+                    return "memory unavailable (not signed in to maia-api)"
                 items = await self.memory.search(str(args.get("query", "")))
                 return _fmt_memory(items)
             if name == "memory_recent":
                 if not (self.memory and self.memory.available):
-                    return "memory unavailable (not signed in to scoria-api)"
+                    return "memory unavailable (not signed in to maia-api)"
                 items = await self.memory.recent(int(args.get("limit", 10)))
                 return _fmt_memory(items)
             if name == "remember":
                 if not (self.memory and self.memory.available):
-                    return "memory unavailable (not signed in to scoria-api)"
+                    return "memory unavailable (not signed in to maia-api)"
                 m = await self.memory.remember(str(args.get("title", "note")), args.get("body"))
                 return f"saved {m.get('id')}"
             if name == "web_search":

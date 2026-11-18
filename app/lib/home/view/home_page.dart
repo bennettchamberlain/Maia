@@ -1,11 +1,11 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:scoria_app/chat/chat.dart';
-import 'package:scoria_app/jobs/jobs.dart';
-import 'package:scoria_app/memory/memory.dart';
-import 'package:scoria_app/tools/tools.dart';
-import 'package:scoria_app/session/session.dart';
-import 'package:scoria_models/scoria_models.dart';
+import 'package:maia_app/chat/chat.dart';
+import 'package:maia_app/jobs/jobs.dart';
+import 'package:maia_app/memory/memory.dart';
+import 'package:maia_app/tools/tools.dart';
+import 'package:maia_app/session/session.dart';
+import 'package:maia_models/maia_models.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 /// Shell with one destination per feature. Chat, memory and jobs are live;

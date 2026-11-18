@@ -2,8 +2,8 @@ import asyncio
 
 import numpy as np
 
-from scoria_voice.persona import Persona
-from scoria_voice.stt import UtteranceSegmenter, VadParams, resample_linear
+from maia_voice.persona import Persona
+from maia_voice.stt import UtteranceSegmenter, VadParams, resample_linear
 
 
 def test_persona_render_and_refine():

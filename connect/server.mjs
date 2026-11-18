@@ -8,8 +8,8 @@ import { parseUserReference } from "@withone/connect/server";
 loadEnv({ path: join(dirname(fileURLToPath(import.meta.url)), "..", ".env") });
 
 const PORT = Number(process.env.CONNECT_PORT || 8788);
-const SCORIA = (process.env.SCORIA_API_URL || "http://127.0.0.1:8080").replace(/\/$/, "");
-const INTERNAL = process.env.SCORIA_INTERNAL_SECRET || "";
+const MAIA = (process.env.MAIA_API_URL || "http://127.0.0.1:8080").replace(/\/$/, "");
+const INTERNAL = process.env.MAIA_INTERNAL_SECRET || "";
 const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "public", "index.html"), "utf8");
 
 const PERSON = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -38,7 +38,7 @@ function personId(req) {
   if (PERSON.test(fromQuery)) return fromQuery;
   const fromCookie = readCookie(req, "maia_person");
   if (PERSON.test(fromCookie)) return fromCookie;
-  const fromHeader = req.headers["x-scoria-person"] || "";
+  const fromHeader = req.headers["x-maia-person"] || "";
   return PERSON.test(fromHeader) ? fromHeader : null;
 }
 
@@ -60,7 +60,7 @@ async function postGrant(person, reference, connections) {
       access: row.access ?? null,
     }));
   }
-  const r = await fetch(`${SCORIA}/internal/one/grant`, {
+  const r = await fetch(`${MAIA}/internal/one/grant`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-maia-internal": INTERNAL },
     body: JSON.stringify(body),
@@ -73,7 +73,7 @@ const userStore = {
     await postGrant(appUserId, reference, null);
   },
   async loadUser(appUserId) {
-    const r = await fetch(`${SCORIA}/internal/one/grant`, {
+    const r = await fetch(`${MAIA}/internal/one/grant`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-maia-internal": INTERNAL },
       body: JSON.stringify({ person_id: appUserId, lookup: true }),
@@ -88,7 +88,7 @@ const userStore = {
     return null;
   },
   async clearUser(appUserId) {
-    await fetch(`${SCORIA}/internal/one/grant`, {
+    await fetch(`${MAIA}/internal/one/grant`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-maia-internal": INTERNAL },
       body: JSON.stringify({ person_id: appUserId, revoked: true }),

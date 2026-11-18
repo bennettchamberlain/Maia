@@ -1,5 +1,5 @@
-import 'package:scoria_models/src/person.dart';
-import 'package:scoria_models/src/place.dart';
+import 'package:maia_models/src/person.dart';
+import 'package:maia_models/src/place.dart';
 
 /// A memory as returned by `memory_feed` / `memory_get` / `memory_search`.
 class MemoryItem {

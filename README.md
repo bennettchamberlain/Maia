@@ -98,7 +98,7 @@ curve.
 - Voice brain: PersonaVoice can think on Parasail while speech stays on the
   device or a local sidecar.
 
-`SCORIA_CHAT_PROVIDER=auto` prefers Parasail, then Ollama. The graph does
+`MAIA_CHAT_PROVIDER=auto` prefers Parasail, then Ollama. The graph does
 not move just because the model did.
 
 ### MCP and plugins
@@ -131,10 +131,10 @@ cp .env.example .env
 
 set -a && source .env && set +a
 export HACKATHON_ROOT="$PWD"
-export SCORIA_PYTHON="$PWD/.venv/bin/python"
-export SCORIA_QUERIES_DIR="$PWD/schema/queries"
-export SCORIA_PORT=8090
-cd server/scoria_api && dart run bin/main.dart
+export MAIA_PYTHON="$PWD/.venv/bin/python"
+export MAIA_QUERIES_DIR="$PWD/schema/queries"
+export MAIA_PORT=8090
+cd server/maia && dart run bin/main.dart
 ```
 
 Flutter talks to `http://localhost:8090` on the same machine, or the Mac’s

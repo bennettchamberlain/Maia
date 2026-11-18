@@ -1,8 +1,8 @@
 import 'dart:io';
 
 import 'package:postgres/postgres.dart';
-import 'package:scoria_api/scoria_api.dart';
-import 'package:scoria_jobs/scoria_jobs.dart';
+import 'package:maia_api/maia_api.dart';
+import 'package:maia_jobs/maia_jobs.dart';
 import 'package:shelf/shelf_io.dart' as io;
 
 Future<void> main() async {
@@ -89,10 +89,10 @@ Future<void> main() async {
           workdir: root,
           environment: {
             'PYTHONPATH': root,
-            'SCORIA_API_URL': 'http://127.0.0.1:${config.port}',
+            'MAIA_API_URL': 'http://127.0.0.1:${config.port}',
             'CONNECT_URL': config.connectSidecarUrl,
             if ((oneSecret == null || oneSecret.isEmpty) && fixture.existsSync())
-              'SCORIA_ETL_FIXTURE': fixture.path,
+              'MAIA_ETL_FIXTURE': fixture.path,
           },
         ).run,
       );

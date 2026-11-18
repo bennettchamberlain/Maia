@@ -1,7 +1,7 @@
 [project]
-name = "scoria-voice"
+name = "maia-voice"
 version = "0.1.0"
-description = "Full-duplex voice for Scoria: PersonaPlex mouth + ears, local LLM brain with memory and tools"
+description = "Full-duplex voice for Maia: PersonaPlex mouth + ears, local LLM brain with memory and tools"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   # PersonaPlex (NVIDIA Moshi fork). Pinned to the commit we read; its pins on
@@ -25,14 +25,14 @@ dependencies = [
 ]
 
 [project.scripts]
-scoria-voice = "scoria_voice.server:main"
+maia-voice = "maia_voice.server:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["scoria_voice*"]
+include = ["maia_voice*"]
 
 [tool.uv]
 # torch comes from the ROCm index; installed separately so the resolver does

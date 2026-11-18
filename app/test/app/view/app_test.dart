@@ -1,11 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:scoria_api_client/scoria_api_client.dart';
-import 'package:scoria_app/app/app.dart';
-import 'package:scoria_app/home/home.dart';
-import 'package:scoria_app/sign_in/sign_in.dart';
-import 'package:scoria_models/scoria_models.dart';
+import 'package:maia_api_client/maia_api_client.dart';
+import 'package:maia_app/app/app.dart';
+import 'package:maia_app/home/home.dart';
+import 'package:maia_app/sign_in/sign_in.dart';
+import 'package:maia_models/maia_models.dart';
 
 class _MockApi extends Mock implements MaiaApiClient;
 

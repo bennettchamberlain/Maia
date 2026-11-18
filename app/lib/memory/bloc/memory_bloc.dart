@@ -1,7 +1,7 @@
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
-import 'package:scoria_api_client/scoria_api_client.dart';
-import 'package:scoria_models/scoria_models.dart';
+import 'package:maia_api_client/maia_api_client.dart';
+import 'package:maia_models/maia_models.dart';
 
 part 'memory_event.dart';
 part 'memory_state.dart';

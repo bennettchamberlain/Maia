@@ -1,9 +1,9 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:scoria_api_client/scoria_api_client.dart';
-import 'package:scoria_app/memory/memory.dart';
-import 'package:scoria_app/ui/chrome.dart';
-import 'package:scoria_models/scoria_models.dart';
+import 'package:maia_api_client/maia_api_client.dart';
+import 'package:maia_app/memory/memory.dart';
+import 'package:maia_app/ui/chrome.dart';
+import 'package:maia_models/maia_models.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 class MemoryPage extends StatelessWidget {
@@ -30,7 +30,7 @@ class MemoryView extends StatelessWidget {
         children: [
           MaiaHeader(
             title: 'Memory',
-            // TODO(scoria): semantic search needs OLLAMA_URL on the server.
+            // TODO(maia): semantic search needs OLLAMA_URL on the server.
             actions: [
               ShadIconButton.ghost(
                 key: const Key('memory_addNote_fab'),

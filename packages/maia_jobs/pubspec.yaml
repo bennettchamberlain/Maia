@@ -1,4 +1,4 @@
-name: scoria_jobs
+name: maia_jobs
 description: PGBoss-schema job runner in Dart
 version: 0.1.0+1
 publish_to: none

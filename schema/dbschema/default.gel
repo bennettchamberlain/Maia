@@ -2,7 +2,7 @@ using extension pgvector;
 
 module default {
   # ---------------------------------------------------------------------------
-  # Caller identity. scoria-api sets `current_person_id` per request on a
+  # Caller identity. maia-api sets `current_person_id` per request on a
   # non-superuser role. Policies read `current_person` for flags.
   # ---------------------------------------------------------------------------
   global current_person_id: uuid;
@@ -10,7 +10,7 @@ module default {
     select Person filter .id = global current_person_id
   );
 
-  # Set only by the scoria-api process for credential lookups. Never by a
+  # Set only by the maia-api process for credential lookups. Never by a
   # caller. Replaced by Napalm LocalAuth (`POST /db/{id}/signin`) once the
   # Napalm server is the runtime.
   global service_mode: bool;
@@ -34,7 +34,7 @@ module default {
 
   scalar type GrantMode extending enum<auto, review, block>;
 
-  # Disclosure ladder, coarsest first. Applied in scoria-api, stored here.
+  # Disclosure ladder, coarsest first. Applied in maia-api, stored here.
   scalar type Disclosure extending enum<
     none, boolean, count, summary, redacted, full
   >;
@@ -91,7 +91,7 @@ module default {
       allow select
       using (exists global current_person_id);
 
-    # scoria-api resolves handle -> person during sign-in, before anyone
+    # maia-api resolves handle -> person during sign-in, before anyone
     # is signed in. Only the service role gets this; it reads, never writes.
     access policy service_reads
       allow select
@@ -121,7 +121,7 @@ module default {
   }
 
   # Long-lived bearer credential for machines (the OpenClaw memory plugin,
-  # scripts). Only the hash is stored; scoria-api resolves hash -> person in
+  # scripts). Only the hash is stored; maia-api resolves hash -> person in
   # service_mode, exactly like LocalCredential. Owner can list/revoke.
   type ApiKey {
     required person: Person;

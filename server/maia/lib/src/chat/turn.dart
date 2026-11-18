@@ -1,6 +1,6 @@
 import 'package:gel/gel.dart' as gel;
-import 'package:scoria_api/src/agent.dart';
-import 'package:scoria_api/src/chat/tools.dart';
+import 'package:maia_api/src/agent.dart';
+import 'package:maia_api/src/chat/tools.dart';
 
 /// One model round-trip plus tool calls, streamed to the client as SSE
 /// payloads (`delta`, `tool`). OpenClaw keeps its own tools; host tools

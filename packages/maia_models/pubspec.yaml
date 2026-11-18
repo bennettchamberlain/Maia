@@ -1,4 +1,4 @@
-name: scoria_models
+name: maia_models
 description: Shared Maia domain models (Person, MemoryItem, JobRecord, Presence)
 version: 0.1.0+1
 publish_to: none

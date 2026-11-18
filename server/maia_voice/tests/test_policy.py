@@ -1,6 +1,6 @@
 """TextPolicy pacing rules, with a fake SentencePiece tokenizer."""
 
-from scoria_voice.hooked_lmgen import PAD, TextPolicy
+from maia_voice.hooked_lmgen import PAD, TextPolicy
 
 
 class FakeTok:

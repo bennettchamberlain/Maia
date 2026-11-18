@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:scoria_api/scoria_api.dart';
+import 'package:maia_api/maia_api.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -100,12 +100,12 @@ void main() {
   group('Config chat provider', () {
     test('reads Parasail chat model and You.com key', () {
       final c = Config.fromEnv({
-        'SCORIA_SESSION_SECRET': 'a-very-long-secret-at-least-32-chars!!',
+        'MAIA_SESSION_SECRET': 'a-very-long-secret-at-least-32-chars!!',
         'PARASAIL_API_KEY': 'k',
         'PARASAIL_MODEL': 'parasail-glm-53-flash',
         'YDC_API_KEY': 'you',
         'OLLAMA_URL': 'http://127.0.0.1:11434',
-        'SCORIA_CHAT_PROVIDER': 'auto',
+        'MAIA_CHAT_PROVIDER': 'auto',
       });
       expect(c.parasailChatModel, 'parasail-glm-53-flash');
       expect(c.youApiKey, 'you');

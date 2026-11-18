@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:scoria_api_client/scoria_api_client.dart';
+import 'package:maia_api_client/maia_api_client.dart';
 import 'package:test/test.dart';
 
 void main() {

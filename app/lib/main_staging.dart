@@ -1,6 +1,6 @@
 import 'package:flutter/widgets.dart';
-import 'package:scoria_app/app/app.dart';
-import 'package:scoria_app/bootstrap.dart';
+import 'package:maia_app/app/app.dart';
+import 'package:maia_app/bootstrap.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Future<void> main() async {

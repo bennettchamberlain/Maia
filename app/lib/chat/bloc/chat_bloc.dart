@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
-import 'package:scoria_api_client/scoria_api_client.dart';
-import 'package:scoria_app/chat/parts/chat_part.dart';
-import 'package:scoria_models/scoria_models.dart';
+import 'package:maia_api_client/maia_api_client.dart';
+import 'package:maia_app/chat/parts/chat_part.dart';
+import 'package:maia_models/maia_models.dart';
 
 part 'chat_event.dart';
 part 'chat_state.dart';
@@ -205,7 +205,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     );
     final replied = next.skip(userAt + 1).any((m) => m.role == 'assistant');
     if (!replied) {
-      final fence = scoriaWebSearchFence(query);
+      final fence = maiaWebSearchFence(query);
       final content = partial.trim().isEmpty
           ? fence
           : '${partial.trim()}\n\n$fence';

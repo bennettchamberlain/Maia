@@ -24,7 +24,7 @@ from moshi.models.compression import MimiModel
 
 from .hooked_lmgen import HookedLMGen, TextPolicy
 
-log = logging.getLogger("scoria.voice.engine")
+log = logging.getLogger("maia.voice.engine")
 
 
 def _hf_download(repo: str, name: str, token: str | None) -> str:

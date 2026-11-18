@@ -13,7 +13,7 @@ PGBoss-schema job runner in Dart
 Install via `dart pub add`:
 
 ```sh
-dart pub add scoria_jobs
+dart pub add maia_jobs
 ```
 
 ---

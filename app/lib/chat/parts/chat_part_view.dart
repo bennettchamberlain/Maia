@@ -4,12 +4,12 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:scoria_app/chat/bloc/chat_bloc.dart';
-import 'package:scoria_app/chat/parts/chat_part.dart';
-import 'package:scoria_app/chat/parts/you_search.dart';
-import 'package:scoria_app/chat/voice_cubit.dart';
-import 'package:scoria_app/ui/chrome.dart';
-import 'package:scoria_models/scoria_models.dart';
+import 'package:maia_app/chat/bloc/chat_bloc.dart';
+import 'package:maia_app/chat/parts/chat_part.dart';
+import 'package:maia_app/chat/parts/you_search.dart';
+import 'package:maia_app/chat/voice_cubit.dart';
+import 'package:maia_app/ui/chrome.dart';
+import 'package:maia_models/maia_models.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 

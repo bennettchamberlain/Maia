@@ -27,8 +27,8 @@ def main() -> int:
     data = job.get("data") or {}
     platform = data.get("platform")
 
-    base = os.environ.get("SCORIA_API_URL", "http://127.0.0.1:8080").rstrip("/")
-    token = str(data.get("token") or os.environ.get("SCORIA_API_TOKEN") or "").strip()
+    base = os.environ.get("MAIA_API_URL", "http://127.0.0.1:8080").rstrip("/")
+    token = str(data.get("token") or os.environ.get("MAIA_API_TOKEN") or "").strip()
     headers = {"authorization": f"Bearer {token}"} if token else {}
 
     result: dict = {"platform": platform, "upserted": 0}
@@ -92,14 +92,14 @@ def _pull(platform: str, *, person_id: str) -> object:
         if detail == "reconnect_required":
             raise RuntimeError("One grant needs a reconnect")
         raise RuntimeError(detail or f"One pull failed ({response.status_code})")
-    fixture = os.environ.get("SCORIA_ETL_FIXTURE")
+    fixture = os.environ.get("MAIA_ETL_FIXTURE")
     if fixture:
         data = json.loads(Path(fixture).read_text())
         if isinstance(data, dict) and platform in data:
             return data[platform]
         return data
     if not os.environ.get("ONE_SECRET") and not os.environ.get("ONE_CONNECTION_KEYS"):
-        raise RuntimeError("ONE_SECRET not set; connect One or set SCORIA_ETL_FIXTURE")
+        raise RuntimeError("ONE_SECRET not set; connect One or set MAIA_ETL_FIXTURE")
     intent, task = INTENTS.get(
         platform,
         ("list recent records", f"pull recent {platform} records into memory"),

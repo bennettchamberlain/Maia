@@ -1,11 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:scoria_api_client/scoria_api_client.dart';
-import 'package:scoria_app/config/app_config.dart';
-import 'package:scoria_app/config/server_cubit.dart';
-import 'package:scoria_app/session/session.dart';
-import 'package:scoria_app/sign_in/sign_in.dart';
+import 'package:maia_api_client/maia_api_client.dart';
+import 'package:maia_app/config/app_config.dart';
+import 'package:maia_app/config/server_cubit.dart';
+import 'package:maia_app/session/session.dart';
+import 'package:maia_app/sign_in/sign_in.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 class SignInPage extends StatelessWidget {

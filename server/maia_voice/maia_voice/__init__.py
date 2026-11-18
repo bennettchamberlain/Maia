@@ -1,4 +1,4 @@
-"""scoria-voice: a full-duplex voice front end with a real brain behind it.
+"""maia-voice: a full-duplex voice front end with a real brain behind it.
 
 PersonaPlex (NVIDIA's Moshi fork) is the mouth and the ears: low-latency,
 full-duplex, consistent persona. It is also a 7B model that does not know

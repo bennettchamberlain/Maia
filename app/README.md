@@ -96,7 +96,7 @@ This project follows the [official internationalization guide for Flutter][inter
 1. Use the new string:
 
 ```dart
-import 'package:scoria_app/l10n/l10n.dart';
+import 'package:maia_app/l10n/l10n.dart';
 
 @override
 Widget build(BuildContext context) {

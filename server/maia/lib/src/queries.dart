@@ -3,7 +3,7 @@ import 'dart:io';
 /// The named-query catalog: `schema/queries/*.edgeql` loaded once.
 ///
 /// This is the same contract Napalm deploys at `/db/{id}/query/{name}`.
-/// Until the server runs on Napalm proper, scoria-api executes the text
+/// Until the server runs on Napalm proper, maia-api executes the text
 /// itself; the names and variables do not change when that switch happens.
 class NamedQueries {
   NamedQueries._(this._queries);

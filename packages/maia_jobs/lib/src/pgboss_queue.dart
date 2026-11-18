@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:postgres/postgres.dart';
-import 'package:scoria_jobs/src/job.dart';
+import 'package:maia_jobs/src/job.dart';
 
 /// Queue operations against the pg-boss 10 schema.
 ///

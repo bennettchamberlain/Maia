@@ -1,5 +1,5 @@
-name: scoria_api
-description: "scoria-api: Dart server over Napalm (sign-in, ingest, memory, jobs)"
+name: maia_api
+description: "maia-api: Dart server over Napalm (sign-in, ingest, memory, jobs)"
 version: 0.1.0+1
 publish_to: none
 
@@ -12,10 +12,10 @@ dependencies:
   gel: ^0.6.0
   http: ^1.2.0
   postgres: ^3.5.0
-  scoria_jobs:
-    path: ../../packages/scoria_jobs
-  scoria_models:
-    path: ../../packages/scoria_models
+  maia_jobs:
+    path: ../../packages/maia_jobs
+  maia_models:
+    path: ../../packages/maia_models
   shelf: ^1.4.2
   shelf_router: ^1.1.4
 
@@ -25,4 +25,4 @@ dev_dependencies:
   very_good_analysis: ^11.0.0
 
 executables:
-  scoria_api: main
+  maia_api: main

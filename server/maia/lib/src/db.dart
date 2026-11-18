@@ -1,5 +1,5 @@
 import 'package:gel/gel.dart';
-import 'package:scoria_api/src/config.dart';
+import 'package:maia_api/src/config.dart';
 
 /// Gel/Napalm connections for the two roles this process plays.
 class Db {

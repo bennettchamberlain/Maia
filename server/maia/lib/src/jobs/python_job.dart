@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:scoria_jobs/scoria_jobs.dart';
+import 'package:maia_jobs/maia_jobs.dart';
 
 /// Runs a Python module in [workdir] with the job payload on stdin.
 ///

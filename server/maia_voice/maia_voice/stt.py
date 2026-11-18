@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-log = logging.getLogger("scoria.voice.stt")
+log = logging.getLogger("maia.voice.stt")
 
 OnUtterance = Callable[[str, float, float], Awaitable[None]]  # text, start_ts, end_ts
 

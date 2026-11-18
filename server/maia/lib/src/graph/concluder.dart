@@ -3,9 +3,9 @@ import 'dart:io';
 
 import 'package:gel/gel.dart' as gel;
 import 'package:http/http.dart' as http;
-import 'package:scoria_api/src/db.dart';
-import 'package:scoria_api/src/graph/conclusion.dart';
-import 'package:scoria_jobs/scoria_jobs.dart';
+import 'package:maia_api/src/db.dart';
+import 'package:maia_api/src/graph/conclusion.dart';
+import 'package:maia_jobs/maia_jobs.dart';
 
 /// Passive job: read one memory, ask the local model what it establishes,
 /// and write goals, projects, habits, entities and edges.

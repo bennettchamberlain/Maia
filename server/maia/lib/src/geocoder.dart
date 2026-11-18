@@ -47,7 +47,7 @@ class GeoPlace {
 class Geocoder {
   Geocoder({
     this.googleApiKey,
-    this.userAgent = 'scoria-api (self-hosted)',
+    this.userAgent = 'maia-api (self-hosted)',
     http.Client? client,
   }) : _http = client ?? http.Client();
 

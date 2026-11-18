@@ -23,7 +23,7 @@ class Config {
     this.connectPublicUrl = 'http://127.0.0.1:8788',
     this.connectSidecarUrl = 'http://127.0.0.1:8788',
     this.googleMapsApiKey,
-    this.geocodeUserAgent = 'scoria-api (local)',
+    this.geocodeUserAgent = 'maia-api (local)',
     this.parasailApiKey,
     this.parasailBaseUrl = 'https://api.parasail.io/v1',
     this.parasailEmbedModel = 'parasail-bge-m3',
@@ -38,33 +38,33 @@ class Config {
 
   factory Config.fromEnv([Map<String, String>? env]) {
     final e = env ?? Platform.environment;
-    final secret = e['SCORIA_SESSION_SECRET'];
+    final secret = e['MAIA_SESSION_SECRET'];
     if (secret == null || secret.length < 32) {
       throw StateError(
-        'SCORIA_SESSION_SECRET must be set to at least 32 characters',
+        'MAIA_SESSION_SECRET must be set to at least 32 characters',
       );
     }
     final root = _blankToNull(e['HACKATHON_ROOT'] ?? e['REQUIEM_ROOT']);
     return Config(
-      port: int.parse(e['SCORIA_PORT'] ?? '8080'),
+      port: int.parse(e['MAIA_PORT'] ?? '8080'),
       gelDsn: e['GEL_DSN'] ?? 'gel://admin@127.0.0.1:5656/main',
       gelTlsInsecure:
           (e['GEL_CLIENT_TLS_SECURITY'] ?? 'insecure') == 'insecure',
       sessionSecret: secret,
-      queriesDir: e['SCORIA_QUERIES_DIR'] ?? _defaultQueriesDir(),
-      pgUrl: e['SCORIA_PG_URL'],
+      queriesDir: e['MAIA_QUERIES_DIR'] ?? _defaultQueriesDir(),
+      pgUrl: e['MAIA_PG_URL'],
       ollamaUrl: e['OLLAMA_URL'],
-      embeddingModel: e['SCORIA_EMBEDDING_MODEL'] ?? 'nomic-embed-text',
-      concludeModel: e['SCORIA_CONCLUDE_MODEL'] ?? 'llama3.2:3b',
-      agentUrl: e['SCORIA_AGENT_URL'],
-      agentToken: e['SCORIA_AGENT_TOKEN'],
-      agentModel: e['SCORIA_AGENT_MODEL'] ?? 'openclaw/default',
-      chatProvider: (e['SCORIA_CHAT_PROVIDER'] ?? 'auto').toLowerCase(),
+      embeddingModel: e['MAIA_EMBEDDING_MODEL'] ?? 'nomic-embed-text',
+      concludeModel: e['MAIA_CONCLUDE_MODEL'] ?? 'llama3.2:3b',
+      agentUrl: e['MAIA_AGENT_URL'],
+      agentToken: e['MAIA_AGENT_TOKEN'],
+      agentModel: e['MAIA_AGENT_MODEL'] ?? 'openclaw/default',
+      chatProvider: (e['MAIA_CHAT_PROVIDER'] ?? 'auto').toLowerCase(),
       parasailChatModel:
           e['PARASAIL_MODEL'] ??
-          e['SCORIA_PARASAIL_CHAT_MODEL'] ??
+          e['MAIA_PARASAIL_CHAT_MODEL'] ??
           'parasail-glm-53-flash',
-      ollamaChatModel: e['SCORIA_CHAT_MODEL'] ?? 'llama3.2',
+      ollamaChatModel: e['MAIA_CHAT_MODEL'] ?? 'llama3.2',
       youApiKey: _blankToNull(e['YDC_API_KEY'] ?? e['YOU_WEB_SEARCH_TOKEN']),
       connectPublicUrl:
           e['CONNECT_PUBLIC_URL'] ??
@@ -75,12 +75,12 @@ class Config {
         e['GOOGLE_MAPS_API_KEY'] ?? e['GEOCODING_API_KEY'],
       ),
       geocodeUserAgent:
-          e['SCORIA_GEOCODE_USER_AGENT'] ?? 'scoria-api (self-hosted)',
+          e['MAIA_GEOCODE_USER_AGENT'] ?? 'maia-api (self-hosted)',
       parasailApiKey: _blankToNull(e['PARASAIL_API_KEY']),
       parasailBaseUrl: e['PARASAIL_BASE_URL'] ?? 'https://api.parasail.io/v1',
       parasailEmbedModel: e['PARASAIL_EMBED_MODEL'] ?? 'parasail-bge-m3',
-      internalSecret: _blankToNull(e['SCORIA_INTERNAL_SECRET']),
-      pythonBin: e['SCORIA_PYTHON'] ??
+      internalSecret: _blankToNull(e['MAIA_INTERNAL_SECRET']),
+      pythonBin: e['MAIA_PYTHON'] ??
           (e['VIRTUAL_ENV'] == null
               ? 'python3'
               : '${e['VIRTUAL_ENV']}/bin/python'),
@@ -89,7 +89,7 @@ class Config {
       voiceBin: _blankToNull(e['VOICE_BIN']) ?? _defaultVoiceBin(root),
       voiceWorkdir:
           _blankToNull(e['VOICE_WORKDIR']) ??
-          (root == null ? null : '$root/server/scoria_voice'),
+          (root == null ? null : '$root/server/maia_voice'),
       voiceKeepAlive: Duration(
         seconds: int.tryParse(e['VOICE_KEEP_ALIVE_SEC'] ?? '') ?? 6 * 3600,
       ),
@@ -165,7 +165,7 @@ class Config {
 
   static String? _defaultVoiceBin(String? root) {
     if (root == null) return null;
-    final path = '$root/server/scoria_voice/.venv/bin/scoria-voice';
+    final path = '$root/server/maia_voice/.venv/bin/maia-voice';
     return File(path).existsSync() ? path : null;
   }
 
@@ -173,7 +173,7 @@ class Config {
       s == null || s.trim().isEmpty ? null : s.trim();
 
   static String _defaultQueriesDir() {
-    // server/scoria_api -> repo root -> schema/queries
+    // server/maia -> repo root -> schema/queries
     final here = Directory.current.path;
     return '$here/../../schema/queries';
   }

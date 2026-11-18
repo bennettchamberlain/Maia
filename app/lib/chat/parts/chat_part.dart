@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:equatable/equatable.dart';
-import 'package:scoria_models/scoria_models.dart';
+import 'package:maia_models/maia_models.dart';
 
 /// One node in a chat surface. Parts nest, the same way a catalog widget
 /// would, but the set is the one this app renders.
@@ -370,19 +370,19 @@ final class ChatBlockPending extends ChatSegment {
 const _searchTools = {'web_search', 'you_search', 'you_web_search'};
 
 /// Fence the model, or a dropped connection, uses to ask for a live search.
-String scoriaWebSearchFence(String query) {
+String maiaWebSearchFence(String query) {
   final body = jsonEncode({'type': 'webSearch', 'query': query});
-  return '```scoria\n$body\n```';
+  return '```maia\n$body\n```';
 }
 
-/// Splits [content] into prose and ```scoria fenced parts. [tools] named
+/// Splits [content] into prose and ```maia fenced parts. [tools] named
 /// `web_search` (or the You.com aliases) append a search surface.
 List<ChatSegment> parseChatSegments(
   String content, {
   List<ChatToolCall> tools = const [],
 }) {
   final segments = <ChatSegment>[];
-  final complete = RegExp('```scoria[ \t]*\r?\n?([\\s\\S]*?)```');
+  final complete = RegExp('```maia[ \t]*\r?\n?([\\s\\S]*?)```');
   var cursor = 0;
   for (final match in complete.allMatches(content)) {
     _addProse(segments, content.substring(cursor, match.start));
@@ -390,10 +390,10 @@ List<ChatSegment> parseChatSegments(
     cursor = match.end;
   }
   final rest = content.substring(cursor);
-  final pendingAt = rest.indexOf('```scoria');
+  final pendingAt = rest.indexOf('```maia');
   final afterOpen = pendingAt < 0
       ? ''
-      : rest.substring(pendingAt + '```scoria'.length);
+      : rest.substring(pendingAt + '```maia'.length);
   if (pendingAt >= 0 && !afterOpen.contains('```')) {
     _addProse(segments, rest.substring(0, pendingAt));
     segments.add(const ChatBlockPending());

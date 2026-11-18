@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:scoria_jobs/src/job.dart';
-import 'package:scoria_jobs/src/pgboss_queue.dart';
+import 'package:maia_jobs/src/job.dart';
+import 'package:maia_jobs/src/pgboss_queue.dart';
 
 /// Handles one job. Throw to fail it (pg-boss retry semantics apply).
 typedef JobHandler = Future<Object?> Function(Job job);

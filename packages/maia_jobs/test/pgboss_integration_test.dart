@@ -4,15 +4,15 @@ library;
 import 'dart:io';
 
 import 'package:postgres/postgres.dart';
-import 'package:scoria_jobs/scoria_jobs.dart';
+import 'package:maia_jobs/maia_jobs.dart';
 import 'package:test/test.dart';
 
-/// Runs only when SCORIA_PG_TEST_URL is set, e.g.
-/// postgres://scoria:scoria@127.0.0.1:5433/scoria
+/// Runs only when MAIA_PG_TEST_URL is set, e.g.
+/// postgres://maia:maia@127.0.0.1:5433/maia
 void main() {
-  final url = Platform.environment['SCORIA_PG_TEST_URL'];
+  final url = Platform.environment['MAIA_PG_TEST_URL'];
   if (url == null) {
-    test('skipped: SCORIA_PG_TEST_URL not set', () {});
+    test('skipped: MAIA_PG_TEST_URL not set', () {});
     return;
   }
 

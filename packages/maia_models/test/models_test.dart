@@ -1,4 +1,4 @@
-import 'package:scoria_models/scoria_models.dart';
+import 'package:maia_models/maia_models.dart';
 import 'package:test/test.dart';
 
 void main() {

@@ -5,22 +5,22 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:gel/gel.dart' as gel;
 import 'package:http/http.dart' as http;
-import 'package:scoria_api/src/agent.dart';
-import 'package:scoria_api/src/auth/api_key.dart';
-import 'package:scoria_api/src/auth/password.dart';
-import 'package:scoria_api/src/chat/prefs.dart';
-import 'package:scoria_api/src/chat/tools.dart';
-import 'package:scoria_api/src/chat/turn.dart';
-import 'package:scoria_api/src/auth/session_token.dart';
-import 'package:scoria_api/src/config.dart';
-import 'package:scoria_api/src/db.dart';
-import 'package:scoria_api/src/embeddings.dart';
-import 'package:scoria_api/src/geocoder.dart';
-import 'package:scoria_api/src/parasail_embeddings.dart';
-import 'package:scoria_api/src/graph/graph_block.dart';
-import 'package:scoria_api/src/queries.dart';
-import 'package:scoria_api/src/voice/supervisor.dart';
-import 'package:scoria_jobs/scoria_jobs.dart';
+import 'package:maia_api/src/agent.dart';
+import 'package:maia_api/src/auth/api_key.dart';
+import 'package:maia_api/src/auth/password.dart';
+import 'package:maia_api/src/chat/prefs.dart';
+import 'package:maia_api/src/chat/tools.dart';
+import 'package:maia_api/src/chat/turn.dart';
+import 'package:maia_api/src/auth/session_token.dart';
+import 'package:maia_api/src/config.dart';
+import 'package:maia_api/src/db.dart';
+import 'package:maia_api/src/embeddings.dart';
+import 'package:maia_api/src/geocoder.dart';
+import 'package:maia_api/src/parasail_embeddings.dart';
+import 'package:maia_api/src/graph/graph_block.dart';
+import 'package:maia_api/src/queries.dart';
+import 'package:maia_api/src/voice/supervisor.dart';
+import 'package:maia_jobs/maia_jobs.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
@@ -298,8 +298,7 @@ class MaiaApp {
   ) {
     return (Request r) async {
       final secret = config.internalSecret;
-      final got =
-          r.headers['x-maia-internal'] ?? r.headers['x-scoria-internal'];
+      final got = r.headers['x-maia-internal'];
       if (secret == null || got == null || got != secret) {
         return _error(401, 'unauthorized', 'internal secret required');
       }
@@ -1191,7 +1190,7 @@ class MaiaApp {
         '$onScreen'
         'Keep prose short. After tools, emit a visual surface when it helps, '
         'using one or more fenced blocks:\n'
-        '```scoria\n'
+        '```maia\n'
         '{"type":"card","title":"...","subtitle":"..."}\n'
         '```\n'
         'Catalog (type + fields): '

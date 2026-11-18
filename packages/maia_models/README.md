@@ -13,7 +13,7 @@ Shared Maia domain models (Person, MemoryItem, JobRecord, Presence)
 Install via `dart pub add`:
 
 ```sh
-dart pub add scoria_models
+dart pub add maia_models
 ```
 
 ---
