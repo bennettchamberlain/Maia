@@ -21,6 +21,9 @@ import 'package:maia_api/src/faults.dart';
 import 'package:maia_api/src/geocoder.dart';
 import 'package:maia_api/src/parasail_embeddings.dart';
 import 'package:maia_api/src/graph/graph_block.dart';
+import 'package:maia_api/src/harness/harness.dart';
+import 'package:maia_api/src/library/store.dart';
+import 'package:maia_api/src/jobs/dream_job.dart';
 import 'package:maia_api/src/queries.dart';
 import 'package:maia_api/src/timeline/summary.dart';
 import 'package:maia_api/src/timeline/writer.dart';
@@ -82,6 +85,7 @@ class MaiaApp {
   final Password _password;
   final SessionToken _tokens;
   final ApiKeys _apiKeys = const ApiKeys();
+  final turns = TurnLanes();
 
   /// hash -> (person id, resolved at). Keeps machine callers off the
   /// credential table on every request.
@@ -181,6 +185,16 @@ class MaiaApp {
     ..get('/jobs', _authed(_jobsList))
     ..get('/graph', _authed((r, c) => _one(c, 'graph')))
     ..get('/chat/tools', _authed(_chatTools))
+    ..get('/chat/search', _authed(_sessionSearch))
+    ..post('/harness/consolidate', _authed(_consolidate))
+    ..post('/harness/dream', _authed(_dreamNow))
+    ..get('/dreams', _authed(_dreamList))
+    ..get('/intents', _authed(_intentList))
+    ..post('/intents', _authed(_intentCreate))
+    ..post('/skills', _authed(_skillCreate))
+    ..post('/skills/<id>/confirm', _authed(_skillConfirm))
+    ..post('/memory/<id>/promote', _authed(_memoryPromote))
+    ..post('/work', _authed(_workStart))
     ..get('/voice/status', _authed(_voiceStatus))
     ..get('/voice/live', _authed(_voiceLive))
     ..post('/voice/start', _authed(_voiceStart))
@@ -197,12 +211,15 @@ class MaiaApp {
     ..delete('/chat/sessions/<id>', _authed(_chatDelete))
     ..get('/chat/sessions/<id>/messages', _authed(_chatMessages))
     ..post('/chat/sessions/<id>/messages', _authed(_chatSend))
+    ..post('/chat/sessions/<id>/steer', _authed(_chatSteer))
+    ..get('/library', _authed(_libraryList))
     ..get('/files', _authed(_files))
     ..post('/files', _authed(_fileCreate))
     ..post('/files/<id>/append', _authed(_fileAppend))
     ..get('/timeline', _authed(_userTimeline))
     ..get('/timelines', _authed(_timelines))
     ..get('/timelines/<id>/entries', _authed(_timelineEntries))
+    ..get('/timelines/<id>/feed', _authed(_timelineFeed))
     ..get('/graph/candidates', _authed(_weaveCandidates))
     ..post('/graph/entities', _authed(_graphEntity))
     ..post('/graph/edges', _authed(_graphEdge))
@@ -339,7 +356,10 @@ class MaiaApp {
       if (personId == null) {
         return _error(400, 'bad_request', 'person_id required');
       }
-      return next(r.change(context: {'internal_body': b}), db.asPerson(personId));
+      return next(
+        r.change(context: {'internal_body': b}),
+        db.asPerson(personId),
+      );
     };
   }
 
@@ -496,9 +516,10 @@ class MaiaApp {
     final id = (jsonDecode(json) as Map<String, dynamic>)['id'] as String;
     var embedded = false;
     var cloudEmbedded = false;
-    final text = [if (title != null) title, if (body != null) body]
-        .join('\n')
-        .trim();
+    final text = [
+      if (title != null) title,
+      if (body != null) body,
+    ].join('\n').trim();
     if (embeddings case final emb?) {
       try {
         final vector = await emb.embed(text);
@@ -585,7 +606,9 @@ class MaiaApp {
             'limit': limit,
           }),
         ) as List<dynamic>;
-        if (rows.isNotEmpty) return rows.cast<Map<String, dynamic>>();
+        if (rows.isNotEmpty) {
+          return _touched(c, rows.cast<Map<String, dynamic>>());
+        }
       } on Object {
         // fall through to local
       }
@@ -599,7 +622,9 @@ class MaiaApp {
             'limit': limit,
           }),
         ) as List<dynamic>;
-        if (rows.isNotEmpty) return rows.cast<Map<String, dynamic>>();
+        if (rows.isNotEmpty) {
+          return _touched(c, rows.cast<Map<String, dynamic>>());
+        }
       } on Object {
         // fall through to keywords
       }
@@ -610,7 +635,19 @@ class MaiaApp {
         'limit': limit,
       }),
     ) as List<dynamic>;
-    return rows.cast<Map<String, dynamic>>();
+    return _touched(c, rows.cast<Map<String, dynamic>>());
+  }
+
+  List<Map<String, dynamic>> _touched(
+    gel.Client c,
+    List<Map<String, dynamic>> rows,
+  ) {
+    final ids = [
+      for (final row in rows)
+        if (row['id'] is String) row['id'] as String,
+    ];
+    unawaited(noteRecall(c, ids));
+    return rows;
   }
 
   // ---- positions / places / presence ----------------------------------------
@@ -839,8 +876,7 @@ class MaiaApp {
       'parasail' => parasailChat,
       'ollama' => ollamaChat,
       'agent' => agent,
-      _ =>
-        openrouterChat ?? geminiChat ?? parasailChat ?? ollamaChat ?? agent,
+      _ => openrouterChat ?? geminiChat ?? parasailChat ?? ollamaChat ?? agent,
     };
   }
 
@@ -852,6 +888,7 @@ class MaiaApp {
     ToolPrefs prefs, {
     String? personId,
     bool connectors = false,
+    String toolset = 'memory',
   }) => ChatToolbox(
     searchMemory: _searchMemory,
     recentMemory: (c, limit) async {
@@ -876,7 +913,9 @@ class MaiaApp {
       body: body,
       occurredAt: DateTime.now().toUtc(),
       source: 'chat',
-      sourceId: _digest('chat:$title:$body:${DateTime.now().toIso8601String()}'),
+      sourceId: _digest(
+        'chat:$title:$body:${DateTime.now().toIso8601String()}',
+      ),
     ),
     lifeGraph: (c) async {
       final row = await c.querySingleJSON(queries['graph']);
@@ -888,9 +927,17 @@ class MaiaApp {
     openRouterBaseUrl: config.openrouterBaseUrl,
     openRouterModel: config.openrouterChatModel,
     disabled: prefs.disabled,
+    allow: toolset == 'work' ? workToolset : memoryToolset,
     connector: connectors && personId != null
         ? (args) => _useConnector(personId, args)
         : null,
+    sessionSearch: (c, query, limit) => searchSessions(c, query, limit: limit),
+    proposeSkill: (c, name, body) => proposeSkill(c, name: name, body: body),
+    createIntent: (c, phrase, instruction) =>
+        createIntent(c, phrase: phrase, instruction: instruction),
+    readLibrary: personId == null
+        ? null
+        : (kind, id) => _library.read(personId: personId, kind: kind, id: id),
   );
 
   Future<String> _useConnector(
@@ -921,10 +968,7 @@ class MaiaApp {
           .timeout(const Duration(seconds: 45));
       return res.body;
     } on Object catch (e) {
-      return jsonEncode({
-        'type': 'text',
-        'text': 'connector unavailable: $e',
-      });
+      return jsonEncode({'type': 'text', 'text': 'connector unavailable: $e'});
     }
   }
 
@@ -987,18 +1031,12 @@ class MaiaApp {
           'available': openrouterChat != null,
           'model': openrouterChat?.model,
         },
-        'gemini': {
-          'available': geminiChat != null,
-          'model': geminiChat?.model,
-        },
+        'gemini': {'available': geminiChat != null, 'model': geminiChat?.model},
         'parasail': {
           'available': parasailChat != null,
           'model': parasailChat?.model,
         },
-        'ollama': {
-          'available': ollamaChat != null,
-          'model': ollamaChat?.model,
-        },
+        'ollama': {'available': ollamaChat != null, 'model': ollamaChat?.model},
         'agent': {'available': agent != null, 'model': agent?.model},
       },
       'tools': box.catalogFor(),
@@ -1019,9 +1057,7 @@ class MaiaApp {
           'kind': 'oauth',
           'connected': oneLive,
           'ready': oneReady,
-          'platforms': [
-            for (final account in accounts) account['platform'],
-          ],
+          'platforms': [for (final account in accounts) account['platform']],
           'accounts': accounts,
           'account_count': accountCount,
           'connected_at': oneLive ? grant!['connected_at'] : null,
@@ -1054,8 +1090,7 @@ class MaiaApp {
           'kind': 'inference',
           'connected': geminiChat != null,
           'model': geminiChat?.model,
-          'description':
-              'Google Gemini for chat. Set GOOGLE_GEMINI_API_KEY on the server.',
+          'description': 'Google Gemini for chat. Set GOOGLE_GEMINI_API_KEY on the server.',
         },
         {
           'id': 'parasail',
@@ -1063,7 +1098,8 @@ class MaiaApp {
           'kind': 'inference',
           'connected': parasailChat != null,
           'model': parasailChat?.model,
-          'description': 'Cloud brain for chat. Set PARASAIL_API_KEY on the server.',
+          'description':
+              'Cloud brain for chat. Set PARASAIL_API_KEY on the server.',
         },
         {
           'id': 'ollama',
@@ -1211,9 +1247,7 @@ class MaiaApp {
     }
     final messages = (raw['messages'] as List<dynamic>? ?? const [])
         .cast<Map<String, dynamic>>();
-    final latest = messages.isEmpty
-        ? 0
-        : (messages.last['seq'] as num).toInt();
+    final latest = messages.isEmpty ? 0 : (messages.last['seq'] as num).toInt();
     final times = [
       for (final message in messages)
         if (DateTime.tryParse('${message['created_at']}') case final at?) at,
@@ -1361,6 +1395,70 @@ class MaiaApp {
     return _sessionResponse(c, id, status: 201);
   }
 
+  PersonLibrary get _library =>
+      PersonLibrary(Directory('${config.dataDir}/library'));
+
+  Future<Response> _libraryList(Request r, gel.Client c) async {
+    final personId = await _personId(c);
+    if (personId == null) return _json(LibrarySnapshot.empty.toJson());
+    final index = await _sessionIndex(c, personId);
+    return _json({
+      ..._library.snapshot(personId).toJson(),
+      if (index.isNotEmpty) 'index': index,
+    });
+  }
+
+  Future<String> _sessionIndex(gel.Client c, String personId) async {
+    try {
+      await _mirrorLibrary(c, personId);
+      final titles = <String>[];
+      final raw = jsonDecode(
+        await c.queryJSON(queries['user_timeline'], {'limit': 8}),
+      );
+      if (raw is List) {
+        for (final row in raw) {
+          if (row is Map && row['title'] is String) {
+            titles.add(row['title'] as String);
+          }
+        }
+      }
+      return loadIndex(_library.snapshot(personId), timeline: titles);
+    } on Object catch (e) {
+      stderr.writeln('library: $e');
+      return '';
+    }
+  }
+
+  Future<void> _mirrorLibrary(gel.Client c, String personId) async {
+    for (final skill in await activeSkills(c)) {
+      final id = skill['id'];
+      if (id is! String) continue;
+      await _library.putIfAbsent(
+        personId: personId,
+        kind: 'skills',
+        id: id,
+        name: '${skill['name'] ?? ''}',
+        body: '${skill['body'] ?? ''}',
+      );
+    }
+    final docs = jsonDecode(
+      await c.queryJSON(queries['documents'], {'limit': 40}),
+    );
+    if (docs is! List) return;
+    for (final doc in docs) {
+      if (doc is! Map) continue;
+      final id = doc['id'];
+      if (id is! String) continue;
+      await _library.putIfAbsent(
+        personId: personId,
+        kind: 'files',
+        id: id,
+        name: '${doc['title'] ?? 'Untitled'}',
+        body: '${doc['body'] ?? ''}',
+      );
+    }
+  }
+
   Future<Response> _files(Request r, gel.Client c) =>
       _many(c, 'documents', {'limit': 100});
 
@@ -1399,6 +1497,17 @@ class MaiaApp {
       return _error(500, 'file_failed', 'could not create file');
     }
     final id = created['id'] as String;
+    final owner = await _personId(c);
+    if (owner != null) {
+      await _library.write(
+        personId: owner,
+        kind: 'files',
+        id: id,
+        name: title,
+        body: stored,
+        bump: true,
+      );
+    }
     await _upsertMemory(
       c,
       kind: 'file',
@@ -1466,6 +1575,17 @@ class MaiaApp {
       ),
     );
     final title = existing['title'] as String? ?? 'Untitled';
+    final owner = await _personId(c);
+    if (owner != null) {
+      await _library.write(
+        personId: owner,
+        kind: 'files',
+        id: id,
+        name: title,
+        body: body,
+        bump: true,
+      );
+    }
     await _upsertMemory(
       c,
       kind: 'file',
@@ -1498,14 +1618,9 @@ class MaiaApp {
       stderr.writeln('timeline: $e');
     }
     final meta = await c.querySingleJSON(queries['user_timeline_meta']);
-    final entries = await c.queryJSON(queries['user_timeline'], {
-      'limit': 200,
-    });
+    final entries = await c.queryJSON(queries['user_timeline'], {'limit': 200});
     final timeline = meta == 'null' ? null : jsonDecode(meta);
-    return _json({
-      'timeline': timeline,
-      'entries': jsonDecode(entries),
-    });
+    return _json({'timeline': timeline, 'entries': jsonDecode(entries)});
   }
 
   Future<Response> _timelines(Request r, gel.Client c) =>
@@ -1518,6 +1633,15 @@ class MaiaApp {
       'timeline': r.params['id'],
       'after': parsed ?? DateTime.utc(1970),
       'limit': 200,
+    });
+  }
+
+  /// Newest first, for the memory page. Agents keep the ascending cursor.
+  Future<Response> _timelineFeed(Request r, gel.Client c) {
+    final limit = int.tryParse(r.url.queryParameters['limit'] ?? '') ?? 200;
+    return _many(c, 'timeline_feed', {
+      'timeline': r.params['id'],
+      'limit': limit.clamp(1, 200),
     });
   }
 
@@ -1629,13 +1753,25 @@ class MaiaApp {
     final platforms = hostTools
         ? await _connectedPlatforms(c)
         : const <String>[];
+    final toolset = b['toolset'] == 'work' ? 'work' : 'memory';
+    final extra = hostTools
+        ? harnessContext(
+            compaction: await _folded(c, sessionId),
+            intents: matchingIntents(await activeIntents(c), content),
+            skills: await activeSkills(c),
+            library: personId == null ? null : await _sessionIndex(c, personId),
+          )
+        : '';
     final frame = <Map<String, dynamic>>[
       {
         'role': 'system',
-        'content': _systemFrame(
-          person,
+        'content': chatPrompt(
+          name: '${person['display_name'] ?? person['handle']}',
+          handle: '${person['handle']}',
+          now: DateTime.now(),
           screen: b['screen'] as String?,
           connectors: platforms,
+          extra: extra,
         ),
       },
     ];
@@ -1648,10 +1784,9 @@ class MaiaApp {
           'limit': 60,
         }),
       ) as List<dynamic>;
-      for (final m in history.cast<Map<String, dynamic>>()) {
-        if (m['role'] == 'user' || m['role'] == 'assistant') {
-          frame.add({'role': m['role'], 'content': m['content']});
-        }
+      final split = splitForCompaction(history.cast<Map<String, dynamic>>());
+      for (final m in split.kept) {
+        frame.add({'role': m['role'], 'content': m['content']});
       }
     }
 
@@ -1661,6 +1796,8 @@ class MaiaApp {
       out.add(utf8.encode('event: $event\ndata: ${jsonEncode(data)}\n\n'));
     }
 
+    final lane = turns.begin(sessionId);
+    lane.onStored = (message) => emit('user', message);
     unawaited(() async {
       emit('user', userMsg);
       try {
@@ -1672,11 +1809,13 @@ class MaiaApp {
                   await _prefsStore.read(personId ?? ''),
                   personId: personId,
                   connectors: platforms.isNotEmpty,
+                  toolset: toolset,
                 )
               : null,
           db: c,
           emit: emit,
           user: 'conv:${session['agent_session_key']}',
+          steer: lane.take,
         );
         final reply = turn.text.trim();
         final assistant = await _appendMessage(
@@ -1705,6 +1844,7 @@ class MaiaApp {
           'message': ref == null ? summary : '$summary Reference $ref.',
         });
       } finally {
+        turns.end(sessionId, lane);
         await out.close();
       }
     }());
@@ -1757,70 +1897,209 @@ class MaiaApp {
     return jsonDecode(json) as Map<String, dynamic>;
   }
 
-  String _systemFrame(
-    Map<String, dynamic> person, {
-    String? screen,
-    List<String> connectors = const [],
-  }) {
-    final name = person['display_name'] ?? person['handle'];
-    final now = DateTime.now();
-    final shown = (screen ?? '').trim();
-    final onScreen = shown.isEmpty
-        ? ''
-        : ' On screen right now, only these parts are visible. Speech may '
-              'refer to these titles and must not invent others:\n$shown\n';
-    final apps = connectors.isEmpty
-        ? ''
-        : 'Connected apps: ${connectors.join(', ')}. Use the connector tool '
-              'to read or change them. Call it with platform and intent, then '
-              'again with action_id and the fields it lists. Every name in '
-              'that list is available. ';
-    final toolNames = connectors.isEmpty
-        ? 'memory_search, memory_recent, memory_get, remember, life_graph, '
-              'web_search, now'
-        : 'memory_search, memory_recent, memory_get, remember, life_graph, '
-              'web_search, now, connector';
-    return 'You are Maia, $name\'s personal assistant. The day is twenty-four '
-        'hours; spend them. The signed-in user is "$name" (handle ${person['handle']}). '
-        'Current local time: ${now.toIso8601String()} (${now.timeZoneName}). '
-        'Tools run as this person on Gel/Napalm: access policies decide what '
-        'memory and graph rows exist. Nested shapes (owner, place, parent, '
-        'parts, edges) come back in one query — do not invent rows you did '
-        'not receive. '
-        'Tools: $toolNames. $apps'
-        'For the user\'s life, people, places, plans or past, '
-        'search memory and life_graph before answering. Verified graph edges '
-        'are facts; proposed edges are not. For the public world, use '
-        'web_search (You.com). Be accurate; say when you do not know. '
-        'Match the tone to the ask. Recall: specific, name the memory. '
-        'People: say verified or proposed to match the edge. '
-        'World: search, then show links. A plan: a short checklist. '
-        'Small talk: one or two sentences, no tools and no cards. '
-        '$onScreen'
-        'Keep prose short. After tools, emit a visual surface when it helps, '
-        'using one or more fenced blocks:\n'
-        '```maia\n'
-        '{"type":"card","title":"...","subtitle":"..."}\n'
-        '```\n'
-        'Catalog (type + fields): '
-        'text(text), heading(text), divider, column(children), row(children), '
-        'list(children), card(title,subtitle,children,detail), '
-        'link(title,url,snippet,detail), image(url,alt), '
-        'webSearch(query), speech(text), '
-        'memory(id,title,kind,when,body,place), '
-        'place(name,city,region,country,lat,lng), '
-        'map(markers[{lat,lng,title}]), '
-        'person(name,handle,relation), '
-        'quote(text,attribution), metric(value,label,detail), badge(text), '
-        'timeline(title,children), checklist(title,items[{text,done}]), '
-        'graph(goals,projects,habits,entities,edges), '
-        'actions(items[{label,prompt,url}]). '
-        'Tool results already arrive as these parts; do not repeat a tool '
-        'surface unless you are adding a new one. Prefer memory/timeline for '
-        'recall, graph for the life graph, link/webSearch for You.com, '
-        'map when several places have coordinates, '
-        'checklist for plans, actions to offer a follow-up, speech for a '
-        'line the device should say. Spoken text is plain English.';
+  Future<String> _folded(gel.Client c, String sessionId) async {
+    final listed = jsonDecode(
+      await c.queryJSON(queries['chat_messages'], {
+        'session': sessionId,
+        'limit': 80,
+      }),
+    );
+    if (listed is! List) return '';
+    final split = splitForCompaction(listed.cast<Map<String, dynamic>>());
+    final stored = await sessionCompaction(c, sessionId);
+    final previous = '${stored?['compaction'] ?? ''}';
+    if (split.older.isEmpty) return previous;
+    final through = (split.older.last['seq'] as num?)?.toInt() ?? 0;
+    final already = (stored?['compacted_through_seq'] as num?)?.toInt() ?? 0;
+    if (through <= already && previous.isNotEmpty) return previous;
+    final text = extractiveCompaction(split.older);
+    if (text.isEmpty) return previous;
+    await storeCompaction(
+      c,
+      sessionId: sessionId,
+      text: text,
+      throughSeq: through,
+    );
+    return text;
+  }
+
+  Future<Response> _sessionSearch(Request r, gel.Client c) async {
+    final q = r.url.queryParameters['q']?.trim() ?? '';
+    if (q.isEmpty) return _error(400, 'bad_request', 'q required');
+    return _json({'messages': await searchSessions(c, q)});
+  }
+
+  Future<Response> _consolidate(Request r, gel.Client c) async =>
+      _json(await consolidate(c));
+
+  Future<Response> _dreamNow(Request r, gel.Client c) async {
+    final key = config.youApiKey;
+    final out = await dream(
+      c,
+      search: key == null || key.isEmpty
+          ? null
+          : (topic) => youResearch(key, topic),
+    );
+    final owner = await _personId(c);
+    if (owner != null) {
+      final topics = out['topics'];
+      final named = topics is List ? topics.join(', ') : '';
+      await _library.write(
+        personId: owner,
+        kind: 'turns',
+        id: 'night-${dreamDay(DateTime.now())}',
+        name: 'Night',
+        body: 'Proposed ${out['proposed']} curated rows. Researched $named.',
+      );
+    }
+    return _json(out);
+  }
+
+  Future<Response> _dreamList(Request r, gel.Client c) async =>
+      _json({'dreams': await recentDreams(c)});
+
+  Future<Response> _intentList(Request r, gel.Client c) async =>
+      _json({'intents': await activeIntents(c)});
+
+  Future<Response> _intentCreate(Request r, gel.Client c) async {
+    final b = await _body(r);
+    final phrase = (b['phrase'] as String?)?.trim() ?? '';
+    final instruction = (b['instruction'] as String?)?.trim() ?? '';
+    if (phrase.isEmpty || instruction.isEmpty) {
+      return _error(400, 'bad_request', 'phrase and instruction required');
+    }
+    final id = await createIntent(c, phrase: phrase, instruction: instruction);
+    return _json({'id': id, 'status': 'active'});
+  }
+
+  Future<Response> _skillCreate(Request r, gel.Client c) async {
+    final b = await _body(r);
+    final name = (b['name'] as String?)?.trim() ?? '';
+    final body = (b['body'] as String?)?.trim() ?? '';
+    if (name.isEmpty || body.isEmpty) {
+      return _error(400, 'bad_request', 'name and body required');
+    }
+    final id = await proposeSkill(c, name: name, body: body);
+    return _json({'id': id, 'status': 'proposed'});
+  }
+
+  Future<Response> _skillConfirm(Request r, gel.Client c) async {
+    final ok = await confirmSkill(c, r.params['id']!);
+    if (!ok) return _error(404, 'not_found', 'no proposed skill');
+    final owner = await _personId(c);
+    if (owner != null) {
+      final row = await c.querySingleJSON(
+        r'''
+        select Skill { id, name, body }
+        filter .id = <uuid>$id
+        ''',
+        {'id': r.params['id']},
+      );
+      if (row != 'null') {
+        final skill = jsonDecode(row) as Map<String, dynamic>;
+        await _library.write(
+          personId: owner,
+          kind: 'skills',
+          id: '${skill['id']}',
+          name: '${skill['name'] ?? ''}',
+          body: '${skill['body'] ?? ''}',
+        );
+      }
+    }
+    return _json({'ok': true});
+  }
+
+  Future<Response> _memoryPromote(Request r, gel.Client c) async {
+    final ok = await promoteMemory(c, r.params['id']!);
+    if (!ok) return _error(404, 'not_found', 'no proposed memory');
+    return _json({'ok': true, 'tier': 'curated'});
+  }
+
+  Future<Response> _workStart(Request r, gel.Client c) async {
+    final b = await _body(r);
+    final goal = (b['goal'] as String?)?.trim() ?? '';
+    if (goal.isEmpty) return _error(400, 'bad_request', 'goal required');
+    final id = await createWork(c, goal);
+    final personId = await _personId(c);
+    if (personId != null) unawaited(_runWork(personId, id, goal));
+    return _json({'id': id, 'state': 'created'});
+  }
+
+  Future<void> _runWork(String personId, String id, String goal) async {
+    final caller = db.asPerson(personId);
+    final model = _resolveChat(null);
+    if (model == null) {
+      await finishWork(caller, id: id, result: 'No chat model.', ok: false);
+      return;
+    }
+    final prefs = await _prefsStore.read(personId);
+    final platforms = await _connectedPlatforms(caller);
+    final box = _toolboxFor(
+      prefs,
+      personId: personId,
+      connectors: platforms.isNotEmpty,
+      toolset: 'work',
+    );
+    final index = await _sessionIndex(caller, personId);
+    try {
+      final turn = await runChatTurn(
+        harness: model,
+        frame: [
+          {
+            'role': 'system',
+            'content':
+                'Do this piece of work with the work tools. '
+                'Save a note only if the person would want it kept.'
+                '${index.isEmpty ? '' : '\n\n$index'}',
+          },
+          {'role': 'user', 'content': goal},
+        ],
+        toolbox: box,
+        db: caller,
+        emit: (String _, Object _) {},
+      );
+      final text = turn.text.trim();
+      final result = text.isEmpty ? '(no result)' : text;
+      await finishWork(caller, id: id, result: result, ok: true);
+      await _recordTurn(personId, id, goal, result);
+    } on Object catch (e) {
+      await finishWork(caller, id: id, result: '$e', ok: false);
+      await _recordTurn(personId, id, goal, '$e');
+    }
+  }
+
+  Future<void> _recordTurn(
+    String personId,
+    String id,
+    String name,
+    String body,
+  ) async {
+    try {
+      await _library.write(
+        personId: personId,
+        kind: 'turns',
+        id: id,
+        name: name,
+        body: body,
+      );
+    } on Object catch (e) {
+      stderr.writeln('library: $e');
+    }
+  }
+
+  Future<Response> _chatSteer(Request r, gel.Client c) async {
+    final lane = turns.current(r.params['id']!);
+    if (lane == null) {
+      return _error(409, 'no_turn', 'No reply is in progress.');
+    }
+    final b = await _body(r);
+    final content = (b['content'] as String?)?.trim();
+    if (content == null || content.isEmpty) {
+      return _error(400, 'bad_request', 'content required');
+    }
+    final userMsg = await _appendMessage(c, r.params['id']!, 'user', content);
+    lane.offer(content, stored: userMsg);
+    return _json({'steered': true, 'message': userMsg});
   }
 
   static String _titleFrom(String content) {
@@ -2062,11 +2341,7 @@ class MaiaApp {
             body: jsonEncode(body),
           )
           .timeout(const Duration(seconds: 60));
-      return Response(
-        res.statusCode,
-        body: res.body,
-        headers: _jsonHeaders,
-      );
+      return Response(res.statusCode, body: res.body, headers: _jsonHeaders);
     } on Object {
       return _error(
         503,
@@ -2100,9 +2375,8 @@ class MaiaApp {
         ? 'authorize'
         : r.url.pathSegments.last;
     final public = r.requestedUri;
-    final target = Uri.parse(
-      '${config.connectSidecarUrl}/api/one/$action',
-    ).replace(query: public.query);
+    final target = Uri.parse('${config.connectSidecarUrl}/api/one/$action')
+        .replace(query: public.query);
     try {
       final req = http.Request(r.method, target)
         ..followRedirects = false
@@ -2230,12 +2504,11 @@ class MaiaApp {
   ) async {
     final token = _jobToken(personId);
     for (final platform in platforms) {
-      await _enqueue(
-        c,
-        'etl',
-        {'person_id': personId, 'platform': platform, 'token': token},
-        options: SendOptions(singletonKey: '$personId:$platform'),
-      );
+      await _enqueue(c, 'etl', {
+        'person_id': personId,
+        'platform': platform,
+        'token': token,
+      }, options: SendOptions(singletonKey: '$personId:$platform'));
     }
   }
 
@@ -2269,19 +2542,17 @@ class MaiaApp {
   }
 
   Future<Response> _oneGrantDelete(Request r, gel.Client c) async {
-    await c.execute(
-      r'''
+    await c.execute(r'''
       update OneGrant
       filter .owner = global current_person
       set { revoked_at := datetime_of_statement() }
-      ''',
-    );
+      ''');
     return _json({'ok': true});
   }
 
   Future<Response> _internalGrant(Request r, gel.Client c) async {
-    final b = (r.context['internal_body'] as Map<String, dynamic>?) ??
-        await _body(r);
+    final b =
+        (r.context['internal_body'] as Map<String, dynamic>?) ?? await _body(r);
     if (b['revoked'] == true) return _oneGrantDelete(r, c);
     if (b['lookup'] == true) return _oneGrantGet(r, c);
     final userId = _connectReference(b);
@@ -2290,8 +2561,8 @@ class MaiaApp {
     }
     final platforms = b.containsKey('platforms')
         ? (b['platforms'] as List<dynamic>? ?? const [])
-            .map((e) => e.toString())
-            .toList()
+              .map((e) => e.toString())
+              .toList()
         : _platformList((await _grantMap(c))?['platforms']);
     final personId = b['person_id'] as String?;
     final json = await c.querySingleJSON(
@@ -2314,7 +2585,10 @@ class MaiaApp {
     final requested = b['platforms'] as List<dynamic>?;
     final platforms = requested == null
         ? await _syncingPlatforms(c, personId)
-        : requested.map((e) => e.toString()).where((p) => p.isNotEmpty).toList();
+        : requested
+              .map((e) => e.toString())
+              .where((p) => p.isNotEmpty)
+              .toList();
     if (platforms.isEmpty) {
       return _error(409, 'not_connected', 'no One accounts to sync');
     }
@@ -2438,8 +2712,7 @@ class MaiaApp {
     if (decoded is! List) return const [];
     return [
       for (final row in decoded)
-        if (row is Map && row['endpoint'] == 'grant')
-          ..._grantAccount(row),
+        if (row is Map && row['endpoint'] == 'grant') ..._grantAccount(row),
     ];
   }
 
@@ -3049,5 +3322,4 @@ class MaiaApp {
     final decoded = jsonDecode(text);
     return decoded is Map<String, dynamic> ? decoded : const {};
   }
-
 }
