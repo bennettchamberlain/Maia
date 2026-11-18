@@ -174,8 +174,170 @@ data: [DONE]
       final auth = (_SseClient.lastRequest?.headers['authorization']);
       expect(auth, 'Bearer test-key');
     });
+
+    test('a signature beside tool_calls is kept on the call', () async {
+      // Gemini sometimes sends the signature on the delta, not inside
+      // the tool-call object. Dropping it is the follow-up 400.
+      const sse = '''
+data: {"choices":[{"delta":{"role":"assistant","extra_content":{"google":{"thought_signature":"sig-sibling"}},"tool_calls":[{"id":"call_9","type":"function","function":{"name":"web_search","arguments":"{\\"query\\":\\"lisbon\\"}"}}]},"index":0}]}
+
+data: {"choices":[{"finish_reason":"tool_calls","index":0}]}
+
+data: [DONE]
+''';
+      final client = AgentClient(
+        baseUrl: Uri.parse(
+          'https://generativelanguage.googleapis.com/v1beta/openai',
+        ),
+        model: 'gemini-3-flash-preview',
+        token: 'test-key',
+        httpClient: _SseClient(sse),
+      );
+      final events = await client
+          .stream(
+            const [
+              {'role': 'user', 'content': 'weather'},
+            ],
+            tools: const [
+              {
+                'type': 'function',
+                'function': {'name': 'web_search'},
+              },
+            ],
+          )
+          .toList();
+      final call = events.whereType<AgentToolCall>().single;
+      expect(call.toWire()['extra_content'], {
+        'google': {'thought_signature': 'sig-sibling'},
+      });
+    });
+
+    test('a signature on the following chunk is kept on the call', () async {
+      const sse = '''
+data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"id":"call_2","type":"function","function":{"name":"web_search","arguments":"{\\"query\\":\\"lisbon\\"}"}}]},"index":0}]}
+
+data: {"choices":[{"delta":{"extra_content":{"google":{"thought_signature":"sig-later"}},"role":"assistant"},"finish_reason":"tool_calls","index":0}]}
+
+data: [DONE]
+''';
+      final client = _gemini(sse);
+      final events = await client.stream(const [
+        {'role': 'user', 'content': 'weather'},
+      ]).toList();
+      final call = events.whereType<AgentToolCall>().single;
+      expect(call.toWire()['extra_content'], {
+        'google': {'thought_signature': 'sig-later'},
+      });
+    });
+
+    test('a signature inside function is echoed there', () async {
+      const sse = '''
+data: {"choices":[{"delta":{"tool_calls":[{"id":"call_3","type":"function","function":{"name":"web_search","arguments":"{}","thought_signature":"sig-fn"}}]}}]}
+
+data: [DONE]
+''';
+      final client = _gemini(sse);
+      final call = (await client.stream(const [
+        {'role': 'user', 'content': 'weather'},
+      ]).toList()).whereType<AgentToolCall>().single;
+      expect(call.toWire()['function'], {
+        'name': 'web_search',
+        'arguments': '{}',
+        'thought_signature': 'sig-fn',
+      });
+    });
+
+    test('parallel calls without index stay separate', () async {
+      const sse = '''
+data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"extra_content":{"google":{"thought_signature":"sig-first"}},"function":{"arguments":"{\\"city\\":\\"Taipei\\"}","name":"get_weather"},"id":"call_a","type":"function"}]},"index":0}]}
+
+data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"function":{"arguments":"{\\"city\\":\\"Kaohsiung\\"}","name":"get_weather"},"id":"call_b","type":"function"}]},"index":0}]}
+
+data: [DONE]
+''';
+      final client = _gemini(sse);
+      final calls = (await client.stream(const [
+        {'role': 'user', 'content': 'both'},
+      ]).toList()).whereType<AgentToolCall>().toList();
+      expect(calls, hasLength(2));
+      expect(calls[0].id, 'call_a');
+      expect(calls[0].arguments, '{"city":"Taipei"}');
+      expect(calls[0].toWire()['extra_content'], {
+        'google': {'thought_signature': 'sig-first'},
+      });
+      expect(calls[1].id, 'call_b');
+      expect(calls[1].arguments, '{"city":"Kaohsiung"}');
+      expect(calls[1].toWire().containsKey('extra_content'), isFalse);
+    });
+  });
+
+  group('replayChatHistory', () {
+    test('a signed tool call is sent back on the next turn', () {
+      final frame = replayChatHistory([
+        {
+          'role': 'user',
+          'content': 'Search the web for the weather in Lisbon tomorrow',
+        },
+        {
+          'role': 'assistant',
+          'content': 'Tomorrow is mild.',
+          'tool_calls': [
+            {
+              'name': 'web_search',
+              'arguments': '{"query":"lisbon"}',
+              'result': '{"type":"text","text":"18C"}',
+              'call_id': 'call_a',
+              'extra': {
+                'extra_content': {
+                  'google': {'thought_signature': 'sig-a'},
+                },
+              },
+            },
+          ],
+        },
+        {'role': 'user', 'content': 'And the day after?'},
+      ]);
+      expect(frame[1]['content'], isNull);
+      expect(frame[1]['tool_calls'], [
+        {
+          'id': 'call_a',
+          'type': 'function',
+          'function': {'name': 'web_search', 'arguments': '{"query":"lisbon"}'},
+          'extra_content': {
+            'google': {'thought_signature': 'sig-a'},
+          },
+        },
+      ]);
+      expect(frame[2], {
+        'role': 'tool',
+        'tool_call_id': 'call_a',
+        'content': '{"type":"text","text":"18C"}',
+      });
+      expect(frame[3], {'role': 'assistant', 'content': 'Tomorrow is mild.'});
+      expect(frame[4]['content'], 'And the day after?');
+    });
+
+    test('an old tool row without a signature stays text', () {
+      final frame = replayChatHistory([
+        {
+          'role': 'assistant',
+          'content': 'done',
+          'tool_calls': [
+            {'name': 'web_search', 'arguments': '{}', 'result': 'ok'},
+          ],
+        },
+      ]);
+      expect(frame.single.containsKey('tool_calls'), isFalse);
+    });
   });
 }
+
+AgentClient _gemini(String sse) => AgentClient(
+  baseUrl: Uri.parse('https://generativelanguage.googleapis.com/v1beta/openai'),
+  model: 'gemini-3-flash-preview',
+  token: 'test-key',
+  httpClient: _SseClient(sse),
+);
 
 class _SseClient extends http.BaseClient {
   _SseClient(this.payload);

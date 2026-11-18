@@ -125,6 +125,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
             emit(state.copyWith(draftReply: '${state.draftReply}$text'));
           case ChatToolUsed(:final call):
             emit(state.copyWith(draftTools: [...state.draftTools, call]));
+          case ChatFinished():
+            break;
           case ChatDone(:final message):
             final title =
                 open.title ?? _titleFrom(state.messages.first.content);

@@ -317,6 +317,8 @@ class MaiaApiClient {
             result: map['result'] as String?,
           ),
         );
+      case 'finish':
+        return ChatFinished(reason: map['reason'] as String?);
       case 'done':
         return ChatDone(
           ChatMessage.fromJson(map['message'] as Map<String, dynamic>),
