@@ -108,7 +108,6 @@ try {
       clientId: process.env.ONE_CLIENT_ID,
       clientSecret: process.env.ONE_CLIENT_SECRET,
       redirectUri,
-      permissionSet: process.env.ONE_PERMISSION_SET || undefined,
       connectKey: process.env.ONE_CONNECT_KEY,
       returnTo: "/one/done",
       userStore,

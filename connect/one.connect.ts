@@ -1,9 +1,9 @@
 import { defineConnectApp } from "@withone/connect/config";
 
-// Maia reads whatever the person grants. They can narrow this on One's
-// page. They cannot widen it. Create or update the app with
-// `one connect create` from this directory, then copy the client secret
-// and connect key from that page into the repo .env.
+// No `ask`. A listed ask caps the grant at those tools, and the person
+// cannot widen it. Omitting it lets them grant any connector they connect
+// on One. Update the live app with `one connect create` from this directory
+// so the old eleven-tool permission set is dropped.
 export default defineConnectApp({
   name: "Maia",
   redirectUris: [
@@ -13,17 +13,4 @@ export default defineConnectApp({
   ],
   reason:
     "Maia reads the accounts you connect and keeps them in your memory on this machine.",
-  ask: {
-    gmail: { access: "read-only" },
-    "google-calendar": { access: "read-only" },
-    "google-docs": { access: "read-only" },
-    github: { access: "read-only" },
-    slack: { access: "read-only" },
-    notion: { access: "read-only" },
-    linear: { access: "read-only" },
-    canva: { access: "read-only" },
-    "one-drive": { access: "read-only" },
-    discord: { access: "read-only" },
-    stripe: { access: "read-only" },
-  },
 });

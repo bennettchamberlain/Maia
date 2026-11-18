@@ -204,6 +204,67 @@ class MaiaApiClient {
     }) as Map<String, dynamic>,
   );
 
+  Future<OneConnectorPage> oneConnectors() async {
+    try {
+      return OneConnectorPage.fromJson(
+        await _get('/one/connectors') as Map<String, dynamic>,
+      );
+    } on MaiaApiException catch (e) {
+      if (e.statusCode != 404 && e.statusCode != 502) rethrow;
+    }
+    return _publicOneCatalog();
+  }
+
+  /// One's public directory. Used when this Maia server has not loaded
+  /// the catalog route yet.
+  Future<OneConnectorPage> _publicOneCatalog() async {
+    final connectors = <OneConnector>[];
+    final categories = <String>{};
+    for (var page = 1; page <= 20; page++) {
+      final response = await _http.get(
+        Uri.parse(
+          'https://api.withone.ai/v1/available-connectors?limit=150&page=$page',
+        ),
+        headers: const {'user-agent': 'maia'},
+      );
+      if (response.statusCode >= 400) break;
+      final json = jsonDecode(response.body);
+      if (json is! Map<String, dynamic>) break;
+      final rows = json['rows'];
+      if (rows is! List || rows.isEmpty) break;
+      for (final row in rows) {
+        if (row is! Map<String, dynamic>) continue;
+        final slug = (row['platform'] as String?)?.trim() ?? '';
+        if (slug.isEmpty || row['active'] == false) continue;
+        final category = (row['category'] as String?)?.trim();
+        final description = (row['description'] as String? ?? '').trim();
+        final named = category == null || category.isEmpty
+            ? 'Other'
+            : category;
+        categories.add(named);
+        connectors.add(
+          OneConnector(
+            slug: slug,
+            title: (row['title'] ?? row['name'] ?? slug).toString(),
+            category: named,
+            description: description.length <= 180
+                ? description
+                : '${description.substring(0, 177)}...',
+            image: row['image'] as String?,
+          ),
+        );
+      }
+      final pages = json['pages'];
+      if (pages is int && page >= pages) break;
+    }
+    final names = categories.toList()..sort();
+    return OneConnectorPage(
+      total: connectors.length,
+      categories: names,
+      connectors: connectors,
+    );
+  }
+
   Future<ChatCatalog> chatTools() async => ChatCatalog.fromJson(
     await _get('/chat/tools') as Map<String, dynamic>,
   );

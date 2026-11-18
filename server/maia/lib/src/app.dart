@@ -15,6 +15,7 @@ import 'package:maia_api/src/auth/session_token.dart';
 import 'package:maia_api/src/config.dart';
 import 'package:maia_api/src/db.dart';
 import 'package:maia_api/src/embeddings.dart';
+import 'package:maia_api/src/one/catalog.dart';
 import 'package:maia_api/src/faults.dart';
 import 'package:maia_api/src/geocoder.dart';
 import 'package:maia_api/src/parasail_embeddings.dart';
@@ -65,6 +66,7 @@ class MaiaApp {
   final Config config;
   final Db db;
   final FaultLog faults;
+  final OneCatalog oneCatalog = OneCatalog();
   final NamedQueries queries;
   final PgBossQueue? jobs;
   final Embeddings? embeddings;
@@ -210,6 +212,7 @@ class MaiaApp {
     ..post('/one/callback', _oneProxy)
     ..get('/one/done', _oneDone)
     ..post('/one/connect', _authed(_oneConnect))
+    ..get('/one/connectors', _authed(_oneConnectors))
     ..get('/one/grant', _authed(_oneGrantGet))
     ..put('/one/grant', _authed(_oneGrantPut))
     ..delete('/one/grant', _authed(_oneGrantDelete))
@@ -2045,6 +2048,24 @@ class MaiaApp {
             'This is not a 8788 link — stay on this host. $e</p></body>',
         headers: const {'content-type': 'text/html; charset=utf-8'},
       );
+    }
+  }
+
+  Future<Response> _oneConnectors(Request r, gel.Client c) async {
+    try {
+      return _json(await oneCatalog.snapshot());
+    } on Object catch (e, st) {
+      final summary = 'The connector list is not available right now.';
+      final ref = await faults.write(
+        kind: 'server',
+        action: 'one connectors',
+        summary: summary,
+        detail: '$e\n$st',
+        route: r.requestedUri.path,
+        client: r.headers['user-agent'],
+        personId: await _personId(c),
+      );
+      return _error(502, 'catalog_unavailable', summary, ref: ref);
     }
   }
 

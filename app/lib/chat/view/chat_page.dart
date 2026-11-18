@@ -166,15 +166,23 @@ class _ConversationState extends State<_Conversation> {
       child: BlocConsumer<ChatBloc, ChatState>(
         listenWhen: (p, c) =>
             p.messages.length != c.messages.length ||
-            p.draftReply != c.draftReply,
+            p.draftReply != c.draftReply ||
+            p.sending != c.sending,
         listener: (context, state) {
           _scrollToEnd();
-          if (state.sending || state.messages.isEmpty) return;
+          final voice = context.read<VoiceCubit>();
+          if (state.sending) {
+            if (state.draftReply.isEmpty) {
+              voice.interruptSpeech();
+            } else {
+              voice.followDraft(state.draftReply);
+            }
+            return;
+          }
+          if (state.messages.isEmpty) return;
           final last = state.messages.last;
           if (last.role != 'assistant') return;
-          unawaited(
-            context.read<VoiceCubit>().speakReply(last.id, last.content),
-          );
+          unawaited(voice.speakReply(last.id, last.content));
         },
         builder: (context, state) {
           final open = state.open;
@@ -221,11 +229,18 @@ class _ConversationState extends State<_Conversation> {
                           ),
                         Builder(
                           builder: (context) {
-                            final line = context.select<VoiceCubit, String>(
-                              (v) => v.state.liveLine,
-                            );
+                            final line = context.select<VoiceCubit, String>((
+                              v,
+                            ) {
+                              final heard = v.state.liveLine.trim();
+                              if (heard.isEmpty) return '';
+                              if (v.state.capture == VoiceCapture.talk) {
+                                return heard;
+                              }
+                              return quotedSpeech(heard);
+                            });
                             if (line.isEmpty) return const SizedBox.shrink();
-                            return _Bubble.live(quotedSpeech(line));
+                            return _Bubble.live(line);
                           },
                         ),
                       ],

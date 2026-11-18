@@ -31,10 +31,7 @@ Look at this.
       final segments = parseChatSegments(
         '',
         tools: const [
-          ChatToolCall(
-            name: 'web_search',
-            arguments: '{"query":"dart maps"}',
-          ),
+          ChatToolCall(name: 'web_search', arguments: '{"query":"dart maps"}'),
         ],
       );
       expect(segments, [const ChatBlock(ChatWebSearch('dart maps'))]);
@@ -89,9 +86,17 @@ Here is the plan.
     });
 
     test('prose is spoken when there is no speech part', () {
+      expect(spokenLinesOf('Hello there. More after that. Ignored third.'), [
+        'Hello there. More after that.',
+      ]);
+    });
+
+    test('a streaming reply speaks only closed sentences', () {
+      expect(finishedSpeech('Hello'), '');
+      expect(finishedSpeech('Hello there. I think'), 'Hello there.');
       expect(
-        spokenLinesOf('Hello there. More after that. Ignored third.'),
-        ['Hello there. More after that.'],
+        finishedSpeech('Hello there. More after that.'),
+        'Hello there. More after that.',
       );
     });
 
@@ -133,8 +138,7 @@ Here is the plan.
           ChatToolCall(
             name: 'memory_search',
             arguments: '{"query":"Alex"}',
-            result:
-                '{"type":"timeline","title":"Memory","children":[{"type":"memory","title":"Standup","kind":"event"}]}',
+            result: '{"type":"timeline","title":"Memory","children":[{"type":"memory","title":"Standup","kind":"event"}]}',
           ),
         ],
       );
@@ -150,17 +154,14 @@ Here is the plan.
 {"type":"map","markers":[{"lat":37.8,"lng":-122.27,"title":"Cafe"},{"latitude":"37.77","longitude":-122.4,"name":"Home"}]}
 ```
 ''';
-    final map = ((parseChatSegments(content).single as ChatBlock).part)
-        as ChatMap;
+    final map =
+        ((parseChatSegments(content).single as ChatBlock).part) as ChatMap;
     expect(map.markers, hasLength(2));
     expect(map.markers.first.title, 'Cafe');
     expect(map.markers.first.lat, 37.8);
     expect(map.markers.last.title, 'Home');
     expect(map.markers.last.lng, -122.4);
-    expect(
-      screenNoteOf(content),
-      'map: 2\nmarker: Cafe\nmarker: Home',
-    );
+    expect(screenNoteOf(content), 'map: 2\nmarker: Cafe\nmarker: Home');
   });
 
   test('screenNoteOf lists the parts a reply drew', () {
@@ -228,9 +229,7 @@ Here is the week.
   testWidgets('a map draws a marker title', (tester) async {
     await tester.pumpApp(
       const ChatPartView(
-        ChatMap([
-          ChatMapMarker(lat: 37.8, lng: -122.27, title: 'Cafe'),
-        ]),
+        ChatMap([ChatMapMarker(lat: 37.8, lng: -122.27, title: 'Cafe')]),
       ),
     );
     expect(find.text('Cafe'), findsOneWidget);
@@ -240,10 +239,7 @@ Here is the week.
   testWidgets('a card expands its detail in place', (tester) async {
     await tester.pumpApp(
       const ChatPartView(
-        ChatCard(
-          title: 'Place',
-          detail: ChatText('Open late'),
-        ),
+        ChatCard(title: 'Place', detail: ChatText('Open late')),
       ),
     );
     expect(find.text('Place'), findsOneWidget);

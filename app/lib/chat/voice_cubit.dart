@@ -165,6 +165,9 @@ class VoiceCubit extends Cubit<VoiceState> {
   SpeechToText? _stt;
   FlutterTts? _tts;
   Future<bool>? _boot;
+  Future<void> _speech = Future<void>.value();
+  int _speechGen = 0;
+  String _queuedSpeech = '';
 
   void _note(String action, Object detail) {
     unawaited(_api.reportFault(action: action, detail: '$detail'));
@@ -178,7 +181,7 @@ class VoiceCubit extends Cubit<VoiceState> {
       unawaited(startSidecar());
     } else {
       await stopListen();
-      await _tts?.stop();
+      interruptSpeech();
       emit(state.copyWith(speaking: false));
     }
   }
@@ -418,7 +421,7 @@ class VoiceCubit extends Cubit<VoiceState> {
           return;
         }
         if (!result.finalResult) {
-          emit(state.copyWith(partial: words));
+          emit(state.copyWith(partial: words, liveLine: words));
           return;
         }
         _keepWords(words);
@@ -519,6 +522,7 @@ class VoiceCubit extends Cubit<VoiceState> {
         lastHeard: text,
         heardSeq: state.heardSeq + 1,
         partial: '',
+        liveLine: '',
         clearCapture: true,
       ),
     );
@@ -585,22 +589,86 @@ class VoiceCubit extends Cubit<VoiceState> {
     emit(state.copyWith(speaking: false));
   }
 
-  /// Speak a finished assistant message on this device. If PersonaPlex is
-  /// live on the voice box, also force those words there — thinking already
-  /// happened on Parasail in the chat turn.
+  /// Speak sentences that have already closed in the streaming draft.
+  /// The open tail waits for the next delta or [speakReply].
+  void followDraft(String draft) {
+    if (!state.enabled || draft.isEmpty) return;
+    final ready = finishedSpeech(draft);
+    if (ready.isEmpty) return;
+    if (_queuedSpeech.isNotEmpty && !ready.startsWith(_queuedSpeech)) {
+      _queuedSpeech = '';
+    }
+    if (ready.length <= _queuedSpeech.length) return;
+    final next = ready.substring(_queuedSpeech.length).trim();
+    _queuedSpeech = ready;
+    if (next.isEmpty) return;
+    _enqueueSpeech(next);
+  }
+
+  /// Drop anything still waiting to be spoken. A new question barges in.
+  void interruptSpeech() {
+    _speechGen++;
+    _queuedSpeech = '';
+    unawaited(_tts?.stop());
+  }
+
+  /// Speak a finished assistant message. Sentences already read from the
+  /// draft are not repeated. PersonaPlex gets the same line when it is up.
   Future<void> speakReply(String messageId, String content) async {
     if (!state.enabled) return;
     if (state.spokenMessageId == messageId) return;
     emit(state.copyWith(spokenMessageId: messageId));
-    final lines = spokenLinesOf(content);
-    if (lines.isEmpty) return;
-    final spoken = lines.join(' ');
-    await speak(spoken);
-    if (!state.sidecarLive) return;
-    try {
-      await _api.voiceSay(spoken);
-    } on Object {
-      // Chat already spoke locally.
+    final full = spokenLinesOf(content).join(' ').trim();
+    final already = _queuedSpeech.trim();
+    _queuedSpeech = '';
+    final rest = _unspoken(full, already);
+    if (rest.isEmpty) return;
+    _enqueueSpeech(rest);
+  }
+
+  void _enqueueSpeech(String text) {
+    final gen = _speechGen;
+    _speech = _speech.then((_) async {
+      if (gen != _speechGen || isClosed) return;
+      await _speakChunk(text);
+    });
+  }
+
+  Future<void> _speakChunk(String text) async {
+    final line = text.trim();
+    if (line.isEmpty) return;
+    if (state.sidecarLive) {
+      unawaited(_sayRemote(line));
     }
+    if (!await prepareSpeak()) return;
+    emit(state.copyWith(speaking: true, clearError: true));
+    try {
+      await _tts?.speak(line);
+    } on Object catch (e) {
+      _note('talk', e);
+      if (!isClosed) {
+        emit(state.copyWith(speaking: false, error: shownFault(e)));
+      }
+      return;
+    }
+    if (!isClosed) emit(state.copyWith(speaking: false));
+  }
+
+  Future<void> _sayRemote(String line) async {
+    try {
+      await _api.voiceSay(line);
+    } on Object {
+      // The phone is already speaking this sentence.
+    }
+  }
+
+  static String _unspoken(String full, String already) {
+    if (full.isEmpty) return '';
+    if (already.isEmpty) return full;
+    if (full.startsWith(already)) {
+      return full.substring(already.length).trim();
+    }
+    if (full == already || already.contains(full)) return '';
+    return full;
   }
 }

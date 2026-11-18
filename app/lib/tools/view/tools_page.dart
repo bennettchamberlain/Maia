@@ -19,6 +19,7 @@ class ToolsPage extends StatefulWidget {
 
 class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
   ChatCatalog? _catalog;
+  List<_Connector> _apps = const [];
   String? _error;
   var _loading = true;
   var _busy = false;
@@ -56,9 +57,28 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
     });
     try {
       final catalog = await _api.chatTools();
+      OneConnectorPage? directory;
+      try {
+        directory = await _api.oneConnectors();
+      } on Exception catch (e) {
+        rememberFault(_api, 'one connectors', e);
+        directory = null;
+      }
       if (!mounted) return;
       setState(() {
         _catalog = catalog;
+        if (directory != null && directory.connectors.isNotEmpty) {
+          _apps = [
+            for (final row in directory.connectors)
+              _Connector(
+                row.slug,
+                row.title,
+                row.category,
+                row.description,
+                image: row.image,
+              ),
+          ];
+        }
         _loading = false;
       });
     } on Exception catch (e) {
@@ -218,29 +238,36 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
   }
 
   _Connector _connectorFor(OneAccount account) {
-    for (final item in _connectors) {
+    for (final item in _apps) {
       if (item.slug == account.platform) return item;
     }
     return _Connector(
       account.platform,
       account.label,
-      'all',
+      'Other',
       'Granted through One.',
-      LucideIcons.link,
-      const Color(0xFF111111),
     );
+  }
+
+  List<(String, String)> get _categoryChips {
+    final names = _apps.map((item) => item.category).toSet().toList()..sort();
+    return [('all', 'All'), for (final name in names) (name, name)];
   }
 
   List<_Connector> get _visible {
     final q = _query.trim().toLowerCase();
-    return [
-      for (final item in _connectors)
+    final matched = [
+      for (final item in _apps)
         if ((_category == 'all' || item.category == _category) &&
             (q.isEmpty ||
                 item.title.toLowerCase().contains(q) ||
-                item.slug.contains(q)))
+                item.slug.contains(q) ||
+                item.description.toLowerCase().contains(q)))
           item,
     ];
+    final cap = q.isEmpty && _category == 'all' ? 24 : 80;
+    if (matched.length <= cap) return matched;
+    return matched.sublist(0, cap);
   }
 
   int get _connectedCount => _one?.accounts.length ?? 0;
@@ -314,7 +341,7 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
                     scrollDirection: Axis.horizontal,
                     child: Row(
                       children: [
-                        for (final chip in _categories) ...[
+                        for (final chip in _categoryChips) ...[
                           _CategoryChip(
                             label: chip.$2,
                             selected: _category == chip.$1,
@@ -350,36 +377,30 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
                       ),
                     const SizedBox(height: 16),
                   ],
-                  if (_query.isEmpty && _category == 'all') ...[
-                    _SectionLabel('Recommended'),
-                    const SizedBox(height: 8),
-                    for (final item in _visible.take(6))
-                      _ConnectorRow(
-                        item: item,
-                        connected: _connected(item),
-                        busy: _busy,
-                        onConnect: () => _connect(item.slug),
-                        onOpen: () => _openDetail(item),
+                  _SectionLabel(
+                    _query.isEmpty && _category == 'all'
+                        ? 'Apps'
+                        : '${_visible.length} shown',
+                  ),
+                  const SizedBox(height: 8),
+                  for (final item in _visible)
+                    _ConnectorRow(
+                      item: item,
+                      connected: _connected(item),
+                      busy: _busy,
+                      onConnect: () => _connect(item.slug),
+                      onOpen: () => _openDetail(item),
+                    ),
+                  if (_apps.isNotEmpty && _query.isEmpty && _category == 'all')
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Search ${_apps.length} apps. Connect opens One, '
+                        'where you can grant any of them.',
+                        style: theme.textTheme.muted,
                       ),
-                    const SizedBox(height: 16),
-                  ],
-                  for (final cat in _categoryGroups(
-                    _visible,
-                    _query,
-                    _category,
-                  )) ...[
-                    _SectionLabel(cat.$1),
-                    const SizedBox(height: 8),
-                    for (final item in cat.$2)
-                      _ConnectorRow(
-                        item: item,
-                        connected: _connected(item),
-                        busy: _busy,
-                        onConnect: () => _connect(item.slug),
-                        onOpen: () => _openDetail(item),
-                      ),
-                    const SizedBox(height: 16),
-                  ],
+                    ),
+                  const SizedBox(height: 16),
                   const SizedBox(height: 8),
                   _MachineSection(
                     catalog: _catalog,
@@ -416,148 +437,16 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
   }
 }
 
-const _categories = <(String, String)>[
-  ('all', 'All'),
-  ('communication', 'Communication'),
-  ('productivity', 'Productivity'),
-  ('code', 'Code'),
-  ('files', 'Files'),
-];
-
-const _connectors = <_Connector>[
-  _Connector(
-    'gmail',
-    'Gmail',
-    'communication',
-    'Pull mail into memory.',
-    LucideIcons.mail,
-    Color(0xFFEA4335),
-  ),
-  _Connector(
-    'google-calendar',
-    'Google Calendar',
-    'communication',
-    'Upcoming events as memories.',
-    LucideIcons.calendar,
-    Color(0xFF4285F4),
-  ),
-  _Connector(
-    'google-docs',
-    'Google Docs',
-    'productivity',
-    'Documents you grant.',
-    LucideIcons.fileText,
-    Color(0xFF4285F4),
-  ),
-  _Connector(
-    'github',
-    'GitHub',
-    'code',
-    'Activity into the life graph.',
-    LucideIcons.gitBranch,
-    Color(0xFF24292F),
-  ),
-  _Connector(
-    'slack',
-    'Slack',
-    'communication',
-    'Channels and DMs you grant.',
-    LucideIcons.hash,
-    Color(0xFF4A154B),
-  ),
-  _Connector(
-    'notion',
-    'Notion',
-    'productivity',
-    'Pages you choose to share.',
-    LucideIcons.bookOpen,
-    Color(0xFF111111),
-  ),
-  _Connector(
-    'linear',
-    'Linear',
-    'productivity',
-    'Issues and projects.',
-    LucideIcons.circleDashed,
-    Color(0xFF5E6AD2),
-  ),
-  _Connector(
-    'canva',
-    'Canva',
-    'productivity',
-    'Designs you grant.',
-    LucideIcons.palette,
-    Color(0xFF00C4CC),
-  ),
-  _Connector(
-    'one-drive',
-    'OneDrive',
-    'files',
-    'Files from Microsoft.',
-    LucideIcons.cloud,
-    Color(0xFF0078D4),
-  ),
-  _Connector(
-    'discord',
-    'Discord',
-    'communication',
-    'Servers you grant.',
-    LucideIcons.messageCircle,
-    Color(0xFF5865F2),
-  ),
-  _Connector(
-    'stripe',
-    'Stripe',
-    'productivity',
-    'Payments you grant.',
-    LucideIcons.creditCard,
-    Color(0xFF635BFF),
-  ),
-];
-
-List<(String, List<_Connector>)> _categoryGroups(
-  List<_Connector> items,
-  String query,
-  String category,
-) {
-  if (query.isNotEmpty) {
-    return items.isEmpty ? const [] : [('Results', items)];
-  }
-  if (category != 'all') {
-    return items.isEmpty ? const [] : [(_titleFor(category), items)];
-  }
-  final skip = items.take(6).map((e) => e.slug).toSet();
-  final rest = [
-    for (final item in items)
-      if (!skip.contains(item.slug)) item,
-  ];
-  final by = <String, List<_Connector>>{};
-  for (final item in rest) {
-    (by[item.category] ??= []).add(item);
-  }
-  return [
-    for (final cat in _categories)
-      if (cat.$1 != 'all' && (by[cat.$1]?.isNotEmpty ?? false))
-        (cat.$2, by[cat.$1]!),
-  ];
-}
-
-String _titleFor(String id) {
-  for (final cat in _categories) {
-    if (cat.$1 == id) return cat.$2;
-  }
-  return id;
-}
-
 class _Connector {
   const _Connector(
     this.slug,
     this.title,
     this.category,
-    this.description,
-    this.icon,
-    this.color,
-  );
+    this.description, {
+    this.icon = LucideIcons.link,
+    this.color = const Color(0xFF111111),
+    this.image,
+  });
 
   final String slug;
   final String title;
@@ -565,6 +454,7 @@ class _Connector {
   final String description;
   final IconData icon;
   final Color color;
+  final String? image;
 }
 
 class _SectionLabel extends StatelessWidget {
@@ -696,7 +586,22 @@ class _AppGlyph extends StatelessWidget {
         color: item.color,
         borderRadius: BorderRadius.circular(size * 0.28),
       ),
-      child: Icon(item.icon, size: size * 0.5, color: Colors.white),
+      child: item.image == null
+          ? Icon(item.icon, size: size * 0.5, color: Colors.white)
+          : ClipRRect(
+              borderRadius: BorderRadius.circular(size * 0.28),
+              child: Image.network(
+                item.image!,
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => Icon(
+                  item.icon,
+                  size: size * 0.5,
+                  color: Colors.white,
+                ),
+              ),
+            ),
     );
   }
 }

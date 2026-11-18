@@ -412,9 +412,7 @@ ChatPart? partFromJson(Object? raw) {
   List<ChatPart> childrenOf() {
     final rawChildren = raw['children'];
     if (rawChildren is! List) return const [];
-    return [
-      for (final child in rawChildren) ?partFromJson(child),
-    ];
+    return [for (final child in rawChildren) ?partFromJson(child)];
   }
 
   final detail = partFromJson(raw['detail']);
@@ -503,7 +501,9 @@ ChatPart? partFromJson(Object? raw) {
     'person' || 'entity' => ChatPerson(
       name: textOf('name').isEmpty ? textOf('title') : textOf('name'),
       handle: textOf('handle'),
-      relation: textOf('relation').isEmpty ? textOf('kind') : textOf('relation'),
+      relation: textOf('relation').isEmpty
+          ? textOf('kind')
+          : textOf('relation'),
     ),
     'quote' => ChatQuote(textOf('text'), attribution: textOf('attribution')),
     'metric' || 'stat' => ChatMetric(
@@ -514,17 +514,13 @@ ChatPart? partFromJson(Object? raw) {
     'badge' || 'tag' => ChatBadge(
       textOf('text').isEmpty ? textOf('label') : textOf('text'),
     ),
-    'timeline' => ChatTimeline(
-      title: textOf('title'),
-      children: childrenOf(),
-    ),
+    'timeline' => ChatTimeline(title: textOf('title'), children: childrenOf()),
     'check' || 'item' => ChatCheck(textOf('text'), done: raw['done'] == true),
-    'checklist' || 'checks' => ChatChecklist(
-      title: textOf('title'),
-      items: checksOf(),
-    ),
-    'graph' || 'lifeGraph' || 'life_graph' =>
-        _graphFromJson(Map<Object?, Object?>.from(raw)),
+    'checklist' ||
+    'checks' => ChatChecklist(title: textOf('title'), items: checksOf()),
+    'graph' ||
+    'lifeGraph' ||
+    'life_graph' => _graphFromJson(Map<Object?, Object?>.from(raw)),
     'actions' || 'actionRow' => ChatActions(actionsOf()),
     _ => ChatText(type),
   };
@@ -589,11 +585,7 @@ List<ChatMapMarker> _markersOf(Map<Object?, Object?> raw) {
     if (lat == null || lng == null) continue;
     final title = item['title'] ?? item['name'] ?? '';
     markers.add(
-      ChatMapMarker(
-        lat: lat,
-        lng: lng,
-        title: title is String ? title : '',
-      ),
+      ChatMapMarker(lat: lat, lng: lng, title: title is String ? title : ''),
     );
   }
   return markers;
@@ -624,6 +616,21 @@ List<String> spokenLinesOf(String content) {
   if (spoken.isNotEmpty) return spoken;
   final fallback = _spokenFallback(prose ?? '');
   return fallback.isEmpty ? const [] : [fallback];
+}
+
+/// The part of [content] that already ends on a sentence.
+/// An open tail stays unspoken until the next delta or the final message.
+String finishedSpeech(String content) {
+  final joined = spokenLinesOf(content).join(' ').trim();
+  if (joined.isEmpty) return '';
+  final done = <String>[];
+  for (final part in joined.split(RegExp(r'(?<=[.!?])\s+'))) {
+    final line = part.trim();
+    if (line.isEmpty) continue;
+    if (!RegExp(r'[.!?]$').hasMatch(line)) break;
+    done.add(line);
+  }
+  return done.join(' ');
 }
 
 /// Types and titles of the GenUI the last assistant turn drew.
@@ -677,7 +684,9 @@ String screenNoteOf(String content) {
         }
         for (final edge in edges.take(6)) {
           final status = edge.status.isEmpty ? 'proposed' : edge.status;
-          lines.add('edge: ${edge.source} ${edge.kind} ${edge.target} ($status)');
+          lines.add(
+            'edge: ${edge.source} ${edge.kind} ${edge.target} ($status)',
+          );
         }
       case ChatColumn(:final children) ||
           ChatRow(:final children) ||
@@ -700,7 +709,8 @@ String screenNoteOf(String content) {
 /// Screen note from the newest assistant message in the open chat.
 String screenNoteOfMessages(List<ChatMessage> messages) {
   for (var i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role == 'assistant') return screenNoteOf(messages[i].content);
+    if (messages[i].role == 'assistant')
+      return screenNoteOf(messages[i].content);
   }
   return '';
 }
