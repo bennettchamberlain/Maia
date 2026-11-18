@@ -2,6 +2,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:maia_app/chat/bloc/chat_bloc.dart';
 import 'package:maia_app/chat/day_groups.dart';
 import 'package:maia_app/ui/chrome.dart';
+import 'package:maia_app/ui/company_logo.dart';
 import 'package:maia_models/maia_models.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -221,6 +222,11 @@ class _Card extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (entry.platform != null &&
+                        entry.platform!.isNotEmpty) ...[
+                      CompanyLogo(slug: entry.platform, size: 22),
+                      const SizedBox(width: 8),
+                    ],
                     Expanded(
                       child: Text(
                         entry.title ?? 'New chat',

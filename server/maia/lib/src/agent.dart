@@ -159,6 +159,11 @@ class AgentClient {
     }
 
     var res = await send(withTools: tools != null && tools.isNotEmpty);
+    if (res.statusCode == 429 || res.statusCode >= 500) {
+      await res.stream.drain<void>();
+      await Future<void>.delayed(const Duration(seconds: 1));
+      res = await send(withTools: tools != null && tools.isNotEmpty);
+    }
     if (res.statusCode == 400 && tools != null && tools.isNotEmpty) {
       final body = await res.stream.bytesToString();
       if (body.toLowerCase().contains('tool')) {

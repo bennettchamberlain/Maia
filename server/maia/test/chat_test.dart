@@ -205,6 +205,27 @@ data: [DONE]
       final auth = (_SseClient.lastRequest?.headers['authorization']);
       expect(auth, 'Bearer test-key');
     });
+
+    test('a 503 is tried once more', () async {
+      const sse = '''
+data: {"choices":[{"delta":{"content":"pong"}}]}
+
+data: {"choices":[{"finish_reason":"stop"}]}
+
+data: [DONE]
+''';
+      _Flaky.sends = 0;
+      final client = AgentClient(
+        baseUrl: Uri.parse('https://openrouter.ai/api/v1'),
+        model: 'google/gemini-2.5-flash-lite',
+        httpClient: _Flaky(sse),
+      );
+      final events = await client.stream(const [
+        {'role': 'user', 'content': 'hi'},
+      ]).toList();
+      expect(events.whereType<AgentText>().single.text, 'pong');
+      expect(_Flaky.sends, 2);
+    });
   });
 
   test('OpenRouter citations become link cards without a You.com key', () {
@@ -266,15 +287,11 @@ data: [DONE]
     );
     expect(box.webAvailable, isTrue);
     expect(
-      box.definitions.any(
-        (tool) => tool['function']['name'] == 'web_search',
-      ),
+      box.definitions.any((tool) => tool['function']['name'] == 'web_search'),
       isTrue,
     );
     expect(
-      box.definitions.any(
-        (tool) => tool['function']['name'] == 'connector',
-      ),
+      box.definitions.any((tool) => tool['function']['name'] == 'connector'),
       isFalse,
     );
     final wired = ChatToolbox(
@@ -286,12 +303,31 @@ data: [DONE]
       connector: (args) async => '{"ok":true,"platform":"${args['platform']}"}',
     );
     expect(
-      wired.definitions.any(
-        (tool) => tool['function']['name'] == 'connector',
-      ),
+      wired.definitions.any((tool) => tool['function']['name'] == 'connector'),
       isTrue,
     );
   });
+}
+
+class _Flaky extends http.BaseClient {
+  _Flaky(this.payload);
+  final String payload;
+  static var sends = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    sends++;
+    if (sends == 1) {
+      return http.StreamedResponse(
+        Stream<List<int>>.value(utf8.encode('no')),
+        503,
+      );
+    }
+    return http.StreamedResponse(
+      Stream<List<int>>.value(utf8.encode(payload)),
+      200,
+    );
+  }
 }
 
 class _SseClient extends http.BaseClient {

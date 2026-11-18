@@ -3,6 +3,7 @@ import 'package:maia_api_client/maia_api_client.dart';
 import 'package:maia_app/chat/day_groups.dart';
 import 'package:maia_app/memory/memory.dart';
 import 'package:maia_app/ui/chrome.dart';
+import 'package:maia_app/ui/company_logo.dart';
 import 'package:maia_models/maia_models.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -316,7 +317,17 @@ class _TimelineBadge extends StatelessWidget {
       context.read<MemoryBloc>().add(MemoryTimelineSelected(timeline.id));
     }
 
-    final child = Text(label);
+    final platform = timeline.platform;
+    final child = platform == null || platform.isEmpty
+        ? Text(label)
+        : Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CompanyLogo(slug: platform, size: 16),
+              const SizedBox(width: 6),
+              Text(label),
+            ],
+          );
     if (selected) {
       return ShadBadge.secondary(
         key: Key('memory_timeline_${timeline.id}'),
@@ -358,11 +369,7 @@ class _EventTile extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  _iconFor(entry.kind),
-                  size: 16,
-                  color: theme.colorScheme.mutedForeground,
-                ),
+                _EventMark(entry: entry),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -401,15 +408,34 @@ class _EventTile extends StatelessWidget {
     );
   }
 
-  static IconData _iconFor(String kind) => switch (kind) {
-    'note' => LucideIcons.stickyNote,
-    'session' => LucideIcons.messageCircle,
-    'mail' => LucideIcons.mail,
-    'calendar' => LucideIcons.calendar,
-    'file' => LucideIcons.file,
-    'ontology' => LucideIcons.brain,
-    _ => LucideIcons.circle,
-  };
+}
+
+class _EventMark extends StatelessWidget {
+  const _EventMark({required this.entry});
+
+  final TimelineEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final platform = entry.platform;
+    if (platform != null && platform.isNotEmpty) {
+      return CompanyLogo(slug: platform);
+    }
+    final theme = ShadTheme.of(context);
+    return Icon(
+      switch (entry.kind) {
+        'note' => LucideIcons.stickyNote,
+        'session' => LucideIcons.messageCircle,
+        'mail' => LucideIcons.mail,
+        'calendar' => LucideIcons.calendar,
+        'file' => LucideIcons.file,
+        'ontology' => LucideIcons.brain,
+        _ => LucideIcons.circle,
+      },
+      size: 16,
+      color: theme.colorScheme.mutedForeground,
+    );
+  }
 }
 
 class _EventDialog extends StatelessWidget {

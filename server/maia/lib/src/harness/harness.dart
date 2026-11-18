@@ -10,6 +10,37 @@ const nativeToolCorrection =
 /// Result for a tool that had not started when the person spoke again.
 const skippedToolResult = 'Skipped to process an incoming message.';
 
+/// Result for a tool the model asked for beside the one this step runs.
+const heldStepResult =
+    'Not run yet. Call it on a later step if you still need it.';
+
+/// Model rounds one reply may spend. Each round is one next step.
+/// Eight covers a search, a follow-up, and an answer without letting
+/// one turn grow until the context cannot hold it.
+const chatStepBudget = 8;
+
+/// Names from an OpenAI `tools` array, in the order they were offered.
+List<String> toolNames(List<Map<String, dynamic>> definitions) {
+  final names = <String>[];
+  for (final tool in definitions) {
+    final fn = tool['function'];
+    if (fn is Map && fn['name'] is String) names.add(fn['name'] as String);
+  }
+  return names;
+}
+
+/// What this step may call, and that the model should do only that step.
+String nextStepNote({
+  required List<String> tools,
+  required int step,
+  required int budget,
+}) {
+  final named = tools.isEmpty ? 'none' : tools.join(', ');
+  return 'Step ${step + 1} of $budget. Tools you can call now: $named. '
+      'Take only the next step. Call one tool, or answer in prose if '
+      'you can. Do not call a tool you do not need.';
+}
+
 /// Memory and library hits in the session that followed a proposal.
 /// The number does not install the proposal.
 int proposalScore(Iterable<Map<String, dynamic>> toolCalls) {
@@ -64,7 +95,7 @@ String stableVoice({required String name, required String handle}) =>
     'Catalog (type + fields): '
     'text(text), heading(text), divider, column(children), row(children), '
     'list(children), card(title,subtitle,children,detail), '
-    'link(title,url,snippet,detail), image(url,alt), '
+    'link(title,url,snippet,image,detail), image(url,alt), '
     'webSearch(query), speech(text), '
     'memory(id,title,kind,when,body,place), '
     'place(name,city,region,country,lat,lng), '

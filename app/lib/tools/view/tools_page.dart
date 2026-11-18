@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:maia_api_client/maia_api_client.dart';
 import 'package:maia_app/one/callback_forwarder.dart';
 import 'package:maia_app/ui/chrome.dart';
+import 'package:maia_app/ui/company_logo.dart';
 import 'package:maia_app/ui/fault.dart';
 import 'package:maia_models/maia_models.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -389,8 +390,6 @@ class _Connector {
     this.title,
     this.category,
     this.description, {
-    this.icon = LucideIcons.link,
-    this.color = const Color(0xFF111111),
     this.image,
   });
 
@@ -398,8 +397,6 @@ class _Connector {
   final String title;
   final String category;
   final String description;
-  final IconData icon;
-  final Color color;
   final String? image;
 }
 
@@ -525,30 +522,7 @@ class _AppGlyph extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: item.color,
-        borderRadius: BorderRadius.circular(size * 0.28),
-      ),
-      child: item.image == null
-          ? Icon(item.icon, size: size * 0.5, color: Colors.white)
-          : ClipRRect(
-              borderRadius: BorderRadius.circular(size * 0.28),
-              child: Image.network(
-                item.image!,
-                width: size,
-                height: size,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => Icon(
-                  item.icon,
-                  size: size * 0.5,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-    );
+    return CompanyLogo(image: item.image, slug: item.slug, size: size);
   }
 }
 

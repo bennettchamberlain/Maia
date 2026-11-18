@@ -9,6 +9,7 @@ import 'package:maia_app/chat/parts/chat_part.dart';
 import 'package:maia_app/chat/parts/you_search.dart';
 import 'package:maia_app/chat/voice_cubit.dart';
 import 'package:maia_app/ui/chrome.dart';
+import 'package:maia_app/ui/company_logo.dart';
 import 'package:maia_app/ui/fault.dart';
 import 'package:maia_models/maia_models.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -696,14 +697,23 @@ class _LinkView extends StatelessWidget {
         children: [
           GestureDetector(
             onTap: () => _open(link.url),
-            child: Text(
-              link.title.isEmpty ? link.url : link.title,
-              softWrap: true,
-              style: theme.textTheme.p.copyWith(
-                color: theme.colorScheme.primary,
-                decoration: TextDecoration.underline,
-                decorationColor: theme.colorScheme.primary,
-              ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CompanyLogo(image: link.image, link: link.url),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    link.title.isEmpty ? link.url : link.title,
+                    softWrap: true,
+                    style: theme.textTheme.p.copyWith(
+                      color: theme.colorScheme.primary,
+                      decoration: TextDecoration.underline,
+                      decorationColor: theme.colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           if (link.snippet.isNotEmpty)

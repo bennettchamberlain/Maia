@@ -3,9 +3,9 @@ import 'package:maia_api/src/agent.dart';
 import 'package:maia_api/src/chat/tools.dart';
 import 'package:maia_api/src/harness/harness.dart';
 
-/// One model round-trip plus tool calls, streamed to the client as SSE
-/// payloads (`delta`, `tool`). OpenClaw keeps its own tools; host tools
-/// run only for Parasail / Ollama.
+/// One reply: a short loop of next steps. Each step reads the tools that
+/// are available right then, runs at most one of them, then looks again.
+/// OpenClaw keeps its own tools; host tools run for the other providers.
 Future<({String text, List<Map<String, dynamic>> tools, String? model})>
 runChatTurn({
   required AgentClient harness,
@@ -21,14 +21,30 @@ runChatTurn({
   final text = StringBuffer();
   var model = harness.model;
   var corrected = false;
-  final tools = toolbox == null || harness.keepsOwnHistory
-      ? null
-      : toolbox.definitions;
+  String? lastKey;
 
-  for (var round = 0; round < 6; round++) {
+  for (var round = 0; round < chatStepBudget; round++) {
+    final hostTools = toolbox != null && !harness.keepsOwnHistory;
+    final offered = hostTools ? toolbox.definitions : null;
+    final names = offered == null ? const <String>[] : toolNames(offered);
+    final request = [for (final m in messages) Map<String, dynamic>.from(m)];
+    if (hostTools) {
+      request.add({
+        'role': 'user',
+        'content': nextStepNote(
+          tools: names,
+          step: round,
+          budget: chatStepBudget,
+        ),
+      });
+    }
     final calls = <AgentToolCall>[];
     final roundText = StringBuffer();
-    await for (final ev in harness.stream(messages, user: user, tools: tools)) {
+    await for (final ev in harness.stream(
+      request,
+      user: user,
+      tools: offered != null && offered.isNotEmpty ? offered : null,
+    )) {
       switch (ev) {
         case AgentText(text: final t):
           roundText.write(t);
@@ -62,70 +78,55 @@ runChatTurn({
 
     messages.add({
       'role': 'assistant',
-      'content': text.isEmpty ? null : text.toString(),
+      'content': roundText.isEmpty ? null : roundText.toString(),
       'tool_calls': [for (final c in calls) c.toWire()],
     });
-    var steered = false;
-    for (var i = 0; i < calls.length; i++) {
-      if (i > 0) {
-        final incoming = steer?.call();
-        if (incoming != null) {
-          for (final call in calls.skip(i)) {
-            _skipped(messages, used, emit, call);
-          }
-          messages.add({'role': 'user', 'content': incoming});
-          steered = true;
-          break;
-        }
+    final spoken = steer?.call();
+    if (spoken != null) {
+      for (final pending in calls) {
+        _record(messages, used, emit, pending, skippedToolResult);
       }
-      final call = calls[i];
-      final result = await toolbox.run(db, call.name, call.arguments);
-      used.add({
-        'name': call.name,
-        'arguments': call.arguments,
-        'result': result,
-      });
-      emit('tool', {
-        'name': call.name,
-        'arguments': call.arguments,
-        'result': result,
-      });
-      messages.add({
-        'role': 'tool',
-        'tool_call_id': call.id,
-        'tool_name': call.name,
-        'content': result,
-      });
+      messages.add({'role': 'user', 'content': spoken});
+      continue;
     }
-    final after = steered ? null : steer?.call();
-    if (after != null) {
-      messages.add({'role': 'user', 'content': after});
+    final call = calls.first;
+    final key = '${call.name}\n${call.arguments}';
+    if (key == lastKey) break;
+    lastKey = key;
+    final result = names.contains(call.name)
+        ? await toolbox.run(db, call.name, call.arguments)
+        : 'Tool ${call.name} is not available. '
+              'Tools now: ${names.isEmpty ? 'none' : names.join(', ')}.';
+    _record(messages, used, emit, call, result);
+    for (final extra in calls.skip(1)) {
+      _record(messages, used, emit, extra, heldStepResult);
+    }
+    final incoming = steer?.call();
+    if (incoming != null) {
+      messages.add({'role': 'user', 'content': incoming});
     }
   }
 
   return (text: text.toString(), tools: used, model: model);
 }
 
-void _skipped(
+void _record(
   List<Map<String, dynamic>> messages,
   List<Map<String, dynamic>> used,
   void Function(String event, Object data) emit,
   AgentToolCall call,
+  String result,
 ) {
-  used.add({
-    'name': call.name,
-    'arguments': call.arguments,
-    'result': skippedToolResult,
-  });
+  used.add({'name': call.name, 'arguments': call.arguments, 'result': result});
   emit('tool', {
     'name': call.name,
     'arguments': call.arguments,
-    'result': skippedToolResult,
+    'result': result,
   });
   messages.add({
     'role': 'tool',
     'tool_call_id': call.id,
     'tool_name': call.name,
-    'content': skippedToolResult,
+    'content': result,
   });
 }

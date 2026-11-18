@@ -2,6 +2,22 @@ import 'package:maia_models/maia_models.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('a connector logo uses One, and a link uses its domain', () {
+    expect(
+      companyLogoUrl(slug: 'gmail'),
+      'https://assets.withone.ai/connectors/gmail.svg',
+    );
+    expect(
+      companyLogoUrl(image: 'https://assets.withone.ai/connectors/slack.svg'),
+      'https://assets.withone.ai/connectors/slack.svg',
+    );
+    expect(
+      companyLogoUrl(link: 'https://www.nytimes.com/section'),
+      'https://www.google.com/s2/favicons?domain=nytimes.com&sz=128',
+    );
+    expect(companyLogoUrl(), isNull);
+  });
+
   test('MemoryItem round-trips', () {
     final json = {
       'id': 'a',

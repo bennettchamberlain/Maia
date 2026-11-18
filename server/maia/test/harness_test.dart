@@ -186,6 +186,21 @@ void main() {
     );
   });
 
+  test('a step names only the tools that are available', () {
+    final note = nextStepNote(
+      tools: const ['now', 'web_search'],
+      step: 0,
+      budget: chatStepBudget,
+    );
+    expect(note, startsWith('Step 1 of $chatStepBudget'));
+    expect(note, contains('now, web_search'));
+    expect(note, contains('only the next step'));
+    expect(
+      nextStepNote(tools: const [], step: 2, budget: 8),
+      contains('Tools you can call now: none'),
+    );
+  });
+
   test('a harness line is the title and the topics', () {
     expect(
       harnessWording('Shipped the build', ['rollback', '']),

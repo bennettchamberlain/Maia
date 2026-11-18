@@ -83,16 +83,20 @@ final class ChatLink extends ChatPart {
     required this.title,
     required this.url,
     this.snippet = '',
+    this.image,
     this.detail,
   });
 
   final String title;
   final String url;
   final String snippet;
+
+  /// Company logo. When empty, the view uses the logo for [url]'s domain.
+  final String? image;
   final ChatPart? detail;
 
   @override
-  List<Object?> get props => [title, url, snippet, detail];
+  List<Object?> get props => [title, url, snippet, image, detail];
 }
 
 final class ChatImage extends ChatPart {
@@ -476,6 +480,7 @@ ChatPart? partFromJson(Object? raw) {
       title: textOf('title'),
       url: textOf('url'),
       snippet: textOf('snippet'),
+      image: textOf('image').isEmpty ? null : textOf('image'),
       detail: detail,
     ),
     'image' => ChatImage(url: textOf('url'), alt: textOf('alt')),
