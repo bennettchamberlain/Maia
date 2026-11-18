@@ -45,3 +45,15 @@ final class ChatMessageSent extends ChatEvent {
 final class ChatBackToList extends ChatEvent {
   const new();
 }
+
+/// A transcript quote or a picked file. It sits in the thread and is not
+/// sent as a prompt.
+final class ChatAsideAdded extends ChatEvent {
+  const new({required this.role, required this.content});
+
+  final String role;
+  final String content;
+
+  @override
+  List<Object?> get props => [role, content];
+}

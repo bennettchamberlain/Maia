@@ -38,7 +38,14 @@ void main() {
     blocTest<ChatBloc, ChatState>(
       'send streams a reply into draftReply, then stores the message',
       build: () {
-        when(() => api.chatSend('s1', 'hi')).thenAnswer(
+        when(
+          () => api.chatSend(
+            's1',
+            'hi',
+            provider: any(named: 'provider'),
+            screen: any(named: 'screen'),
+          ),
+        ).thenAnswer(
           (_) => Stream.fromIterable([
             ChatUserStored(msg('u1', 'user', 'hi', 1)),
             const ChatDelta('Hel'),
@@ -64,9 +71,28 @@ void main() {
     );
 
     blocTest<ChatBloc, ChatState>(
+      'a quote sits in the thread and is not sent',
+      build: () => ChatBloc(api: api),
+      seed: () => ChatState(status: ChatStatus.ready, open: session),
+      act: (b) =>
+          b.add(const ChatAsideAdded(role: 'quote', content: '"hello"')),
+      verify: (b) {
+        expect(b.state.messages.single.role, 'quote');
+        expect(b.state.messages.single.content, '"hello"');
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
       'a server-side failure surfaces as error and stops sending',
       build: () {
-        when(() => api.chatSend('s1', 'hi')).thenAnswer(
+        when(
+          () => api.chatSend(
+            's1',
+            'hi',
+            provider: any(named: 'provider'),
+            screen: any(named: 'screen'),
+          ),
+        ).thenAnswer(
           (_) => Stream.fromIterable([
             ChatUserStored(msg('u1', 'user', 'hi', 1)),
             const ChatFailed('agent 503'),

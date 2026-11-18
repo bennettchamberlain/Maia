@@ -4,6 +4,12 @@ import 'dart:convert';
 ///
 /// Plain text is included, capped so a huge file does not become the whole
 /// prompt. Anything that is not text is named and sized instead.
+/// Name from an [attachmentNote], for the file row in the thread.
+String fileLabel(String note) {
+  final match = RegExp(r'^\[file: ([^,\]]+)').firstMatch(note.trim());
+  return match?.group(1)?.trim() ?? note.trim();
+}
+
 String attachmentNote({
   required String name,
   required int length,

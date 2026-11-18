@@ -15,5 +15,7 @@ void main() {
       attachmentNote(name: 'big.bin', length: 90000),
       '[file: big.bin, 90000 bytes]',
     );
+    expect(fileLabel('[file: note.txt]\nhello'), 'note.txt');
+    expect(fileLabel('[file: pic.png, 4 bytes]'), 'pic.png');
   });
 }

@@ -7,6 +7,9 @@ import 'package:maia_api_client/maia_api_client.dart';
 import 'package:maia_app/chat/attach.dart';
 import 'package:maia_app/chat/chat.dart';
 import 'package:maia_app/chat/parts/chat_part_view.dart';
+import 'package:maia_app/chat/quote.dart';
+import 'package:maia_app/chat/view/composer.dart';
+import 'package:maia_app/chat/view/file_chip.dart';
 import 'package:maia_app/config/chat_settings_cubit.dart';
 import 'package:maia_app/ui/chrome.dart';
 import 'package:maia_models/maia_models.dart';
@@ -204,39 +207,25 @@ class _Conversation extends StatefulWidget {
 }
 
 class _ConversationState extends State<_Conversation> {
-  final _controller = TextEditingController();
+  final _composer = GlobalKey<ChatComposerState>();
   final _scroll = ScrollController();
 
   @override
   void dispose() {
-    _controller.dispose();
     _scroll.dispose();
     super.dispose();
   }
 
   void _send() {
-    final text = _controller.text.trim();
-    if (text.isEmpty) return;
+    final text = _composer.currentState?.take();
+    if (text == null) return;
     context.read<ChatBloc>().add(ChatMessageSent(text));
-    _controller.clear();
-  }
-
-  void _insert(String text) {
-    final current = _controller.text.trim();
-    final next = current.isEmpty ? text : '$current\n\n$text';
-    _controller.value = TextEditingValue(
-      text: next,
-      selection: TextSelection.collapsed(offset: next.length),
-    );
   }
 
   Future<void> _pickFile() async {
     final file = await openFile();
     if (file == null || !mounted) return;
-    final length = await file.length();
-    final bytes = length > 48000 ? null : await file.readAsBytes();
-    if (!mounted) return;
-    _insert(attachmentNote(name: file.name, length: length, bytes: bytes));
+    await _composer.currentState?.addPicked(file);
   }
 
   void _scrollToEnd() {
@@ -261,7 +250,13 @@ class _ConversationState extends State<_Conversation> {
           listenWhen: (p, c) =>
               p.transcriptSeq != c.transcriptSeq &&
               (c.transcript ?? '').isNotEmpty,
-          listener: (context, voice) => _insert(voice.transcript!),
+          listener: (context, voice) {
+            final quoted = quotedSpeech(voice.transcript!);
+            if (quoted.isEmpty) return;
+            context.read<ChatBloc>().add(
+              ChatAsideAdded(role: 'quote', content: quoted),
+            );
+          },
         ),
       ],
       child: BlocConsumer<ChatBloc, ChatState>(
@@ -325,9 +320,9 @@ class _ConversationState extends State<_Conversation> {
                       ),
                     ),
                   const _VoiceStatusLine(),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
-                    child: _ComposerActions(onFile: _pickFile),
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(12, 0, 12, 0),
+                    child: _ComposerActions(),
                   ),
                   SafeArea(
                     top: false,
@@ -336,25 +331,28 @@ class _ConversationState extends State<_Conversation> {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
+                          ShadIconButton.ghost(
+                            key: const Key('chat_file_button'),
+                            icon: const Icon(LucideIcons.file, size: 16),
+                            onPressed: () => unawaited(_pickFile()),
+                          ),
+                          const SizedBox(width: 4),
                           Expanded(
-                            child: ShadInput(
-                              key: const Key('chat_composer'),
-                              controller: _controller,
-                              minLines: 1,
-                              maxLines: 5,
-                              textInputAction: TextInputAction.send,
-                              onSubmitted: (_) => _send(),
-                              placeholder: Text(
-                                context.select<VoiceCubit, String>((v) {
-                                  if (v.state.listening) {
-                                    final partial = v.state.partial.trim();
-                                    return partial.isEmpty
-                                        ? 'Listening…'
-                                        : partial;
-                                  }
-                                  return 'Ask Maia…';
-                                }),
-                              ),
+                            child: ChatComposer(
+                              key: _composer,
+                              enabled: !state.sending,
+                              onSubmit: _send,
+                              placeholder: context.select<VoiceCubit, String>((
+                                v,
+                              ) {
+                                if (v.state.listening) {
+                                  final partial = v.state.partial.trim();
+                                  return partial.isEmpty
+                                      ? 'Listening…'
+                                      : partial;
+                                }
+                                return 'Ask Maia…';
+                              }),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -438,9 +436,7 @@ class _VoiceStatusLine extends StatelessWidget {
 }
 
 class _ComposerActions extends StatelessWidget {
-  const _ComposerActions({required this.onFile});
-
-  final Future<void> Function() onFile;
+  const _ComposerActions();
 
   @override
   Widget build(BuildContext context) {
@@ -468,11 +464,6 @@ class _ComposerActions extends StatelessWidget {
               : () => unawaited(
                   context.read<VoiceCubit>().begin(VoiceCapture.talk),
                 ),
-        ),
-        _Action(
-          key: const Key('chat_file_button'),
-          label: 'File',
-          onPressed: () => unawaited(onFile()),
         ),
       ],
     );
@@ -514,6 +505,34 @@ class _Bubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
+    if (role == 'quote') {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: SelectableText(text, style: theme.textTheme.p),
+        ),
+      );
+    }
+    if (role == 'file') {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            children: [
+              Icon(
+                LucideIcons.file,
+                size: 16,
+                color: theme.colorScheme.mutedForeground,
+              ),
+              const SizedBox(width: 8),
+              Expanded(child: Text(fileLabel(text), style: theme.textTheme.p)),
+            ],
+          ),
+        ),
+      );
+    }
     final mine = role == 'user';
     final background = mine
         ? theme.colorScheme.primary
@@ -538,8 +557,8 @@ class _Bubble extends StatelessWidget {
             border: mine ? null : Border.all(color: theme.colorScheme.border),
           ),
           child: mine
-              ? SelectableText(
-                  text,
+              ? FileAwareText(
+                  text: text,
                   style: theme.textTheme.p.copyWith(color: foreground),
                 )
               : ChatMessageBody(
@@ -561,9 +580,9 @@ class _Hint extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.all(24),
     child: Text(
-      'Ask about a memory, a place, or the web. Transcribe types what you '
-      'say. Talk sends it and speaks the reply. File attaches something '
-      'you pick. The reply comes from the server.',
+      'Ask about a memory, a place, or the web. Transcribe puts what you '
+      'said in the chat, in quotes. Talk sends it and speaks the reply. '
+      'The file icon attaches something you pick.',
       textAlign: TextAlign.center,
       style: ShadTheme.of(context).textTheme.muted,
     ),

@@ -19,6 +19,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     on<ChatNewSessionRequested>(_onNew);
     on<ChatSessionDeleted>(_onDeleted);
     on<ChatMessageSent>(_onSent, transformer: _sequential());
+    on<ChatAsideAdded>(_onAside);
     on<ChatBackToList>((e, emit) => emit(state.copyWith(clearOpen: true)));
   }
 
@@ -82,6 +83,40 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         state.copyWith(
           sessions: state.sessions.where((s) => s.id != e.session.id).toList(),
           clearOpen: state.open?.id == e.session.id,
+        ),
+      );
+    } on Exception catch (err) {
+      emit(state.copyWith(error: _msg(err)));
+    }
+  }
+
+  Future<void> _onAside(ChatAsideAdded e, Emitter<ChatState> emit) async {
+    final text = e.content.trim();
+    if (text.isEmpty) return;
+    if (e.role != 'quote' && e.role != 'file') return;
+    var open = state.open;
+    try {
+      if (open == null) {
+        open = await _api.chatCreate();
+        emit(
+          state.copyWith(
+            sessions: [open, ...state.sessions],
+            open: open,
+            messages: const [],
+            status: ChatStatus.ready,
+            clearError: true,
+          ),
+        );
+      }
+      emit(
+        state.copyWith(
+          open: open,
+          status: ChatStatus.ready,
+          messages: [
+            ...state.messages,
+            _local(role: e.role, content: text, seq: state.messages.length + 1),
+          ],
+          clearError: true,
         ),
       );
     } on Exception catch (err) {
