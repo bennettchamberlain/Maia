@@ -19,6 +19,11 @@ class ChatToolbox {
     this.openRouterModel = 'google/gemini-2.5-flash-lite',
     this.disabled = const {},
     this.connector,
+    this.allow,
+    this.sessionSearch,
+    this.proposeSkill,
+    this.createIntent,
+    this.readLibrary,
     http.Client? httpClient,
   }) : _http = httpClient ?? http.Client();
 
@@ -45,6 +50,24 @@ class ChatToolbox {
 
   /// Runs a granted One connector. Null when this person has none.
   final Future<String> Function(Map<String, dynamic> args)? connector;
+
+  /// Null means every tool. `memory` and `work` are the two planes.
+  final Set<String>? allow;
+  final Future<List<Map<String, dynamic>>> Function(
+    gel.Client c,
+    String query,
+    int limit,
+  )?
+  sessionSearch;
+  final Future<String> Function(gel.Client c, String name, String body)?
+  proposeSkill;
+  final Future<String> Function(
+    gel.Client c,
+    String phrase,
+    String instruction,
+  )?
+  createIntent;
+  final Future<String?> Function(String kind, String id)? readLibrary;
   final http.Client _http;
 
   bool get youConfigured => youApiKey != null && youApiKey!.isNotEmpty;
@@ -56,7 +79,8 @@ class ChatToolbox {
 
   bool get connectorsAvailable => connector != null;
 
-  bool isOn(String name) => !disabled.contains(name);
+  bool isOn(String name) =>
+      !disabled.contains(name) && (allow == null || allow!.contains(name));
 
   List<Map<String, dynamic>> get catalog => [
     _info(
@@ -73,6 +97,11 @@ class ChatToolbox {
       available: webAvailable,
     ),
     _info('now', 'Current local date and time.'),
+    _info(
+      'library_read',
+      'Open one skill, file, or turn from the person\'s directory.',
+      available: readLibrary != null,
+    ),
     _info(
       'connector',
       'Use a connected app such as Gmail, Calendar, or Slack.',
@@ -134,8 +163,8 @@ class ChatToolbox {
       _fn(
         'connector',
         'Use one connected app to complete work. Call with platform and '
-        'intent first. The result names an action_id and the fields it '
-        'needs. Call again with action_id plus path_params, query, or body.',
+            'intent first. The result names an action_id and the fields it '
+            'needs. Call again with action_id plus path_params, query, or body.',
         {
           'platform': {
             'type': 'string',
@@ -151,6 +180,45 @@ class ChatToolbox {
           'body': {'type': 'object'},
         },
         const ['platform'],
+      ),
+    if (sessionSearch != null && isOn('session_search'))
+      _fn(
+        'session_search',
+        'Search earlier chats for what the user said.',
+        {
+          'query': {'type': 'string'},
+        },
+        const ['query'],
+      ),
+    if (proposeSkill != null && isOn('skill_propose'))
+      _fn(
+        'skill_propose',
+        'Propose a procedure. It stays inactive until the person confirms.',
+        {
+          'name': {'type': 'string'},
+          'body': {'type': 'string'},
+        },
+        const ['name', 'body'],
+      ),
+    if (readLibrary != null && isOn('library_read'))
+      _fn(
+        'library_read',
+        'Open one skill, file, or turn by id. The index lists the ids.',
+        {
+          'kind': {'type': 'string', 'description': 'skills, files, or turns'},
+          'id': {'type': 'string'},
+        },
+        const ['kind', 'id'],
+      ),
+    if (createIntent != null && isOn('intent_create'))
+      _fn(
+        'intent_create',
+        'Remember an instruction for when a phrase shows up later.',
+        {
+          'phrase': {'type': 'string'},
+          'instruction': {'type': 'string'},
+        },
+        const ['phrase', 'instruction'],
       ),
   ];
 
@@ -174,30 +242,79 @@ class ChatToolbox {
           'value': DateTime.now().toIso8601String(),
         }),
         'memory_search' => formatMemories(
-          await searchMemory(c, '${args['query'] ?? ''}', _int(args['limit'], 8)),
+          await searchMemory(
+            c,
+            '${args['query'] ?? ''}',
+            _int(args['limit'], 8),
+          ),
         ),
         'memory_recent' => formatMemories(
           await recentMemory(c, _int(args['limit'], 10)),
         ),
         'memory_get' => formatMemory(await getMemory(c, '${args['id'] ?? ''}')),
         'remember' => formatRemember(
-          await remember(c, '${args['title'] ?? 'note'}', args['body'] as String?),
+          await remember(
+            c,
+            '${args['title'] ?? 'note'}',
+            args['body'] as String?,
+          ),
           '${args['title'] ?? 'note'}',
           args['body'] as String?,
         ),
         'life_graph' => formatGraph(await lifeGraph(c)),
         'web_search' => await _webSearch('${args['query'] ?? ''}'),
-        'connector' => connector == null
-            ? jsonEncode({
-                'type': 'text',
-                'text': 'no connected apps',
-              })
-            : await connector!(args),
+        'connector' =>
+          connector == null
+              ? jsonEncode({'type': 'text', 'text': 'no connected apps'})
+              : await connector!(args),
+        'session_search' =>
+          sessionSearch == null
+              ? 'session search is off'
+              : jsonEncode(
+                  await sessionSearch!(c, '${args['query'] ?? ''}', 8),
+                ),
+        'skill_propose' =>
+          proposeSkill == null
+              ? 'skills are off'
+              : jsonEncode({
+                  'id': await proposeSkill!(
+                    c,
+                    '${args['name'] ?? 'procedure'}',
+                    '${args['body'] ?? ''}',
+                  ),
+                  'status': 'proposed',
+                }),
+        'library_read' =>
+          readLibrary == null
+              ? 'library is off'
+              : await _readLibrary(
+                  '${args['kind'] ?? ''}',
+                  '${args['id'] ?? ''}',
+                ),
+        'intent_create' =>
+          createIntent == null
+              ? 'intents are off'
+              : jsonEncode({
+                  'id': await createIntent!(
+                    c,
+                    '${args['phrase'] ?? ''}',
+                    '${args['instruction'] ?? ''}',
+                  ),
+                  'status': 'active',
+                }),
         _ => 'unknown tool $name',
       };
     } on Object catch (e) {
       return 'error: $e';
     }
+  }
+
+  Future<String> _readLibrary(String kind, String id) async {
+    final body = await readLibrary!(kind, id);
+    if (body == null) {
+      return jsonEncode({'type': 'text', 'text': 'not in the library'});
+    }
+    return jsonEncode({'type': 'text', 'text': body});
   }
 
   Future<String> _webSearch(String query) async {
@@ -214,10 +331,7 @@ class ChatToolbox {
     if (!youConfigured) return _openRouterSearch(q);
     final r = await _http.post(
       Uri.parse('https://ydc-index.io/v1/search'),
-      headers: {
-        'X-API-Key': youApiKey!,
-        'content-type': 'application/json',
-      },
+      headers: {'X-API-Key': youApiKey!, 'content-type': 'application/json'},
       body: jsonEncode({'query': q, 'count': 5}),
     );
     if (r.statusCode >= 400) {
@@ -303,10 +417,7 @@ class ChatToolbox {
     final links = linksFromOpenRouter(decoded);
     if (links.isEmpty) {
       final text = answerFromOpenRouter(decoded);
-      return jsonEncode({
-        'type': 'text',
-        'text': text ?? 'no results',
-      });
+      return jsonEncode({'type': 'text', 'text': text ?? 'no results'});
     }
     return jsonEncode({
       'type': 'column',
@@ -421,9 +532,9 @@ class ChatToolbox {
       'entities': listOf('entities'),
       'edges': listOf('edges'),
     };
-    final empty = payload.values
-        .whereType<List<dynamic>>()
-        .every((rows) => rows.isEmpty);
+    final empty = payload.values.whereType<List<dynamic>>().every(
+      (rows) => rows.isEmpty,
+    );
     if (empty) {
       return jsonEncode({'type': 'text', 'text': 'empty graph'});
     }
@@ -440,11 +551,7 @@ class ChatToolbox {
     String name,
     String description, {
     bool available = true,
-  }) => {
-    'name': name,
-    'description': description,
-    'available': available,
-  };
+  }) => {'name': name, 'description': description, 'available': available};
 
   List<Map<String, dynamic>> catalogFor() => [
     for (final t in catalog)
