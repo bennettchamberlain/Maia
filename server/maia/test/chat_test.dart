@@ -56,7 +56,12 @@ void main() {
 
   group('ChatToolbox formatting', () {
     test('memories and graph collapse to GenUI JSON', () {
+      expect(
+        readableClock(DateTime(2026, 11, 18, 1, 51)),
+        'Wednesday, November 18, 2026, 1:51 AM',
+      );
       expect(ChatToolbox.formatMemories(const []), contains('no memories'));
+      expect(ChatToolbox.formatGraph(const {}), contains('Nothing stored yet'));
       expect(
         ChatToolbox.formatMemoryRow({
           'id': 'abc',
@@ -226,6 +231,43 @@ data: [DONE]
       expect(events.whereType<AgentText>().single.text, 'pong');
       expect(_Flaky.sends, 2);
     });
+
+    test('a rate limit rolls to the next cheap model', () async {
+      const sse = '''
+data: {"choices":[{"delta":{"content":"ok"}}]}
+
+data: {"choices":[{"finish_reason":"stop"}]}
+
+data: [DONE]
+''';
+      final httpClient = _Rollover(sse);
+      final client = AgentClient(
+        baseUrl: Uri.parse('https://openrouter.ai/api/v1'),
+        model: 'google/gemini-2.5-flash-lite',
+        cheapFallbacks: true,
+        httpClient: httpClient,
+      );
+      final events = await client.stream(const [
+        {'role': 'user', 'content': 'hi'},
+      ]).toList();
+      expect(events.whereType<AgentText>().single.text, 'ok');
+      expect(httpClient.bodies, hasLength(2));
+      expect(httpClient.bodies.first['model'], 'google/gemini-2.5-flash-lite');
+      expect(httpClient.bodies.first['models'], [
+        'google/gemini-2.5-flash-lite',
+        'google/gemini-3.1-flash-lite',
+        'openai/gpt-4.1-mini',
+      ]);
+      expect(httpClient.bodies.last['model'], 'google/gemini-3.1-flash-lite');
+    });
+  });
+
+  test('the value ladder starts with the chosen model', () {
+    expect(valueLadder('openai/gpt-4.1-mini'), [
+      'openai/gpt-4.1-mini',
+      'google/gemini-3.1-flash-lite',
+      'google/gemini-2.5-flash-lite',
+    ]);
   });
 
   test('OpenRouter citations become link cards without a You.com key', () {
@@ -307,6 +349,29 @@ data: [DONE]
       isTrue,
     );
   });
+}
+
+class _Rollover extends http.BaseClient {
+  _Rollover(this.payload);
+  final String payload;
+  final bodies = <Map<String, dynamic>>[];
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    bodies.add(
+      jsonDecode((request as http.Request).body) as Map<String, dynamic>,
+    );
+    if (bodies.length == 1) {
+      return http.StreamedResponse(
+        Stream<List<int>>.value(utf8.encode('limited')),
+        429,
+      );
+    }
+    return http.StreamedResponse(
+      Stream<List<int>>.value(utf8.encode(payload)),
+      200,
+    );
+  }
 }
 
 class _Flaky extends http.BaseClient {

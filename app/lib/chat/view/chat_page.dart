@@ -109,9 +109,7 @@ class _ConversationState extends State<_Conversation> {
     final text = _composer.currentState?.take();
     if (text == null) return;
     final bloc = context.read<ChatBloc>();
-    bloc.add(
-      bloc.state.sending ? ChatSteered(text) : ChatMessageSent(text),
-    );
+    bloc.add(bloc.state.sending ? ChatSteered(text) : ChatMessageSent(text));
   }
 
   Future<void> _pickFile() async {
@@ -512,9 +510,6 @@ class _Bubble extends StatelessWidget {
       );
     }
     final mine = role == 'user';
-    final background = mine
-        ? theme.colorScheme.primary
-        : theme.colorScheme.muted;
     final foreground = mine
         ? theme.colorScheme.primaryForeground
         : theme.colorScheme.foreground;
@@ -527,18 +522,19 @@ class _Bubble extends StatelessWidget {
           alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
           child: ConstrainedBox(
             constraints: BoxConstraints(
-              maxWidth: mine ? available * 0.72 : available,
+              maxWidth: mine ? available * 0.72 : math.min(available, 560),
             ),
             child: Container(
-              margin: const EdgeInsets.symmetric(vertical: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: background,
-                borderRadius: const BorderRadius.all(Radius.circular(8)),
-                border: mine
-                    ? null
-                    : Border.all(color: theme.colorScheme.border),
-              ),
+              margin: EdgeInsets.symmetric(vertical: mine ? 4 : 10),
+              padding: mine
+                  ? const EdgeInsets.symmetric(horizontal: 14, vertical: 10)
+                  : EdgeInsets.zero,
+              decoration: mine
+                  ? BoxDecoration(
+                      color: theme.colorScheme.primary,
+                      borderRadius: const BorderRadius.all(Radius.circular(8)),
+                    )
+                  : null,
               child: mine
                   ? FileAwareText(
                       text: text,

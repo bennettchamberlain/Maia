@@ -72,6 +72,31 @@ final class AgentDone extends AgentEvent {
   final String? finishReason;
 }
 
+/// Cheap models that can carry a chat turn, strongest value first.
+/// A rate limit or outage rolls to the next one. None of these is a
+/// large frontier model.
+const cheapValueModels = <String>[
+  'google/gemini-3.1-flash-lite',
+  'google/gemini-2.5-flash-lite',
+  'openai/gpt-4.1-mini',
+];
+
+/// [primary] first, then [cheapValueModels], with duplicates removed.
+List<String> valueLadder(String primary) {
+  final seen = <String>{};
+  final ladder = <String>[];
+  for (final name in [primary, ...cheapValueModels]) {
+    final id = name.trim();
+    if (id.isEmpty || !seen.add(id)) continue;
+    ladder.add(id);
+  }
+  return ladder;
+}
+
+/// True when another model should take the request.
+bool modelUnavailable(int status) =>
+    status == 408 || status == 429 || status == 529 || status >= 500;
+
 /// Client for an OpenAI-compatible `/v1/chat/completions` endpoint.
 ///
 /// Parasail (`https://api.parasail.io/v1`), Ollama (`http://127.0.0.1:11434`),
@@ -84,6 +109,7 @@ class AgentClient {
     String? token,
     Map<String, String>? extraHeaders,
     this.maxTokens,
+    this.cheapFallbacks = false,
     http.Client? httpClient,
     this.timeout = const Duration(minutes: 5),
   }) : _baseUrl = baseUrl,
@@ -93,6 +119,9 @@ class AgentClient {
 
   final Uri _baseUrl;
   final String model;
+
+  /// When set, a rate limit or outage rolls through [valueLadder].
+  final bool cheapFallbacks;
   final String? _token;
   final Map<String, String> _extraHeaders;
   final int? maxTokens;
@@ -144,11 +173,18 @@ class AgentClient {
     String? user,
     List<Map<String, dynamic>>? tools,
   }) async* {
-    Future<http.StreamedResponse> send({required bool withTools}) {
+    final route = cheapFallbacks ? valueLadder(model) : <String>[model];
+
+    Future<http.StreamedResponse> send({
+      required bool withTools,
+      required int index,
+    }) {
+      final from = route.sublist(index);
       final req = http.Request('POST', completionsUri(_baseUrl))
         ..headers.addAll(_headers)
         ..body = jsonEncode({
-          'model': model,
+          'model': from.first,
+          if (from.length > 1) 'models': from,
           'messages': messages,
           'stream': true,
           if (maxTokens != null) 'max_tokens': maxTokens,
@@ -158,16 +194,30 @@ class AgentClient {
       return _http.send(req).timeout(timeout);
     }
 
-    var res = await send(withTools: tools != null && tools.isNotEmpty);
-    if (res.statusCode == 429 || res.statusCode >= 500) {
-      await res.stream.drain<void>();
-      await Future<void>.delayed(const Duration(seconds: 1));
-      res = await send(withTools: tools != null && tools.isNotEmpty);
+    final hasTools = tools != null && tools.isNotEmpty;
+    var index = 0;
+    var retried = false;
+    var res = await send(withTools: hasTools, index: index);
+    while (modelUnavailable(res.statusCode)) {
+      if (index + 1 < route.length) {
+        await res.stream.drain<void>();
+        index++;
+        res = await send(withTools: hasTools, index: index);
+        continue;
+      }
+      if (!retried) {
+        retried = true;
+        await res.stream.drain<void>();
+        await Future<void>.delayed(const Duration(seconds: 1));
+        res = await send(withTools: hasTools, index: index);
+        continue;
+      }
+      break;
     }
-    if (res.statusCode == 400 && tools != null && tools.isNotEmpty) {
+    if (res.statusCode == 400 && hasTools) {
       final body = await res.stream.bytesToString();
       if (body.toLowerCase().contains('tool')) {
-        res = await send(withTools: false);
+        res = await send(withTools: false, index: index);
       } else {
         throw AgentException(res.statusCode, body);
       }

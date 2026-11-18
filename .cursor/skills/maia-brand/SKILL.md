@@ -31,6 +31,8 @@ The only chromatic colors are Felipe Pantone's diffraction sunset, warm on one s
 
 Lines are 1px. Dots are 1 to 2px. No fills, no glossy orbs, no bouncing bars, no drop shadows on the mark. A circle, if one is needed, is a tick ring like a scientific plate.
 
+The cloud is a shallow arch. Grains sit dense on the spine and thin toward the ends, with a few points off the curve. It is not a sphere and not a face.
+
 Rest moves slowly. A cloud tumbles over many seconds. An event is a fast spike that eases back. Attack is sharp. Decay is short.
 
 Mimic a signal. Do not analyze audio or run a transform. A few sines at different rates, raised to a high power, make sparse spikes that read as amplitude and frequency.
@@ -41,7 +43,7 @@ One mark at a time. Do not decorate empty states, toasts, or navigation.
 
 Use these when that surface is actually being built. Leave the rest of the app alone until then.
 
-- Talk, on: `MaiaCloud` tumbles slowly above the composer. While speaking, points spike outward along their own radius. Quiet points stay ink. Spiking points take the sunset.
+- Talk, on: `MaiaCloud` drifts slowly above the composer. While speaking, points kick off the arch. Quiet points stay ink. Spiking points take the sunset.
 - Thinking, a tool call: the same cloud, no spikes, one meridian sweeping.
 - A finished grant: the world ring. Black and white instrument, sunset only on the evening limb. See `server/maia/lib/src/one/done_page.html`.
 - Streaming prose: do not animate the letters. A 1px rule may grow.

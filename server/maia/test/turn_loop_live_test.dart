@@ -30,6 +30,7 @@ void main() {
       ),
       model: model,
       token: key,
+      cheapFallbacks: true,
       maxTokens: 300,
       extraHeaders: const {
         'HTTP-Referer': 'http://127.0.0.1:8090',

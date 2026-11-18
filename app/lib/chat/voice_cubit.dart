@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
@@ -325,10 +326,66 @@ class VoiceCubit extends Cubit<VoiceState> {
     }
   }
 
+  /// True when this process was started by `flutter run`. Speech prompts
+  /// from that process are charged to the editor, and macOS aborts us.
+  bool get _editorSpawned =>
+      Platform.isMacOS &&
+      Platform.environment.containsKey('FLUTTER_ENGINE_SWITCHES');
+
+  /// Asks for speech as Maia, not as the editor. Returns when the grant
+  /// lands, or when the wait ends without one.
+  Future<bool> _grantSpeechOutsideEditor(SpeechToText stt) async {
+    emit(
+      state.copyWith(
+        error:
+            'Allow speech and the microphone. '
+            'macOS asks outside the editor.',
+      ),
+    );
+    final exe = Platform.resolvedExecutable;
+    final cut = exe.indexOf('/Contents/MacOS/');
+    if (cut < 0) {
+      emit(
+        state.copyWith(
+          sttAvailable: false,
+          error:
+              'Speech is off. Turn on Speech Recognition and the '
+              'Microphone for Maia in System Settings.',
+        ),
+      );
+      return false;
+    }
+    final bundle = exe.substring(0, cut);
+    await Process.run('open', [
+      '-n',
+      bundle,
+      '--args',
+      '--maia-speech-prompt',
+    ]);
+    for (var i = 0; i < 90; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (isClosed) return false;
+      if (await stt.hasPermission) return true;
+    }
+    emit(
+      state.copyWith(
+        sttAvailable: false,
+        error:
+            'Speech is still off. Turn on Speech Recognition and the '
+            'Microphone for Maia in System Settings.',
+      ),
+    );
+    return false;
+  }
+
   Future<bool> prepareListen() async {
     if (state.sttAvailable) return true;
     try {
       final stt = SpeechToText();
+      if (_editorSpawned && !await stt.hasPermission) {
+        final granted = await _grantSpeechOutsideEditor(stt);
+        if (!granted) return false;
+      }
       final ok = await stt.initialize(
         onError: (e) {
           if (_holdTranscribe && _benignListenError(e.errorMsg)) {

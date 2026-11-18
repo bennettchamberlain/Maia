@@ -36,14 +36,7 @@ class ChatMessageBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
     final segments = parseChatSegments(text, tools: tools);
-    final otherTools = [
-      for (final tool in tools)
-        if (tool.name != 'web_search' &&
-            tool.name != 'you_search' &&
-            tool.name != 'you_web_search')
-          tool,
-    ];
-    if (segments.isEmpty && otherTools.isEmpty && streaming) {
+    if (segments.isEmpty && streaming) {
       return const SizedBox(width: 72, child: ShadProgress(minHeight: 6));
     }
     return LayoutBuilder(
@@ -60,23 +53,6 @@ class ChatMessageBody extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (otherTools.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        for (final tool in otherTools)
-                          Tooltip(
-                            message: tool.result ?? tool.arguments,
-                            child: ShadBadge.outline(
-                              child: Text(tool.name, softWrap: true),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
                 for (final segment in segments) ...[
                   switch (segment) {
                     ChatProse(:final text) => SelectableText(
@@ -126,10 +102,7 @@ class ChatPartView extends StatelessWidget {
         style: ShadTheme.of(context).textTheme.h4,
       ),
       ChatDivider() => const MaiaDivider.horizontal(),
-      ChatColumn(:final children) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [for (final child in children) ChatPartView(child)],
-      ),
+      ChatColumn(:final children) => _ColumnView(children),
       ChatRow(:final children) => SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
@@ -149,7 +122,7 @@ class ChatPartView extends StatelessWidget {
         ],
       ),
       final ChatCard card => _CardView(card),
-      final ChatLink link => _LinkView(link),
+      final ChatLink link => _SourceChip(link),
       final ChatImage image => _ImageView(image),
       ChatWebSearch(:final query) => _YouSearchView(
         query: query,
@@ -224,48 +197,34 @@ class _MemoryView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    return _Disclosure(
-      detail: memory.body.length > 160 ? ChatText(memory.body) : null,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: theme.colorScheme.background,
-          borderRadius: const BorderRadius.all(Radius.circular(8)),
-          border: Border.all(color: theme.colorScheme.border),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    final title = memory.title.isEmpty ? memory.kind : memory.title;
+    final meta = [
+      if (memory.kind.isNotEmpty && memory.title.isNotEmpty) memory.kind,
+      if (memory.when.isNotEmpty) memory.when,
+    ].join(' · ');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text.rich(
+          TextSpan(
             children: [
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  if (memory.kind.isNotEmpty)
-                    ShadBadge.outline(child: Text(memory.kind)),
-                  if (memory.when.isNotEmpty)
-                    Text(memory.when, style: theme.textTheme.muted),
-                ],
-              ),
-              if (memory.title.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(memory.title, style: theme.textTheme.p),
-              ],
-              if (memory.body.isNotEmpty)
-                Text(
-                  memory.body.length > 160
-                      ? '${memory.body.substring(0, 157)}…'
-                      : memory.body,
-                  style: theme.textTheme.muted,
-                ),
-              if (memory.place != null) ...[
-                const SizedBox(height: 6),
-                _PlaceView(memory.place!),
-              ],
+              TextSpan(text: title),
+              if (meta.isNotEmpty)
+                TextSpan(text: '  $meta', style: theme.textTheme.muted),
             ],
           ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
-      ),
+        if (memory.body.isNotEmpty)
+          Text(
+            memory.body,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.muted,
+          ),
+        if (memory.place != null) _PlaceView(memory.place!),
+      ],
     );
   }
 }
@@ -466,23 +425,15 @@ class _MetricView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: const BorderRadius.all(Radius.circular(8)),
-        border: Border.all(color: theme.colorScheme.border),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (metric.label.isNotEmpty)
-              Text(metric.label, style: theme.textTheme.muted),
-            Text(metric.value, style: theme.textTheme.h4),
-            if (metric.detail.isNotEmpty)
-              Text(metric.detail, style: theme.textTheme.muted),
-          ],
-        ),
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(text: metric.value),
+          if (metric.label.isNotEmpty)
+            TextSpan(text: '  ${metric.label}', style: theme.textTheme.muted),
+          if (metric.detail.isNotEmpty)
+            TextSpan(text: '  ${metric.detail}', style: theme.textTheme.muted),
+        ],
       ),
     );
   }
@@ -501,13 +452,14 @@ class _TimelineView extends StatelessWidget {
       children: [
         if (timeline.title.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text(timeline.title, style: theme.textTheme.h4),
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(timeline.title, style: theme.textTheme.muted),
           ),
-        for (final child in timeline.children) ...[
-          ChatPartView(child),
-          const SizedBox(height: 8),
-        ],
+        for (final child in timeline.children)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: ChatPartView(child),
+          ),
       ],
     );
   }
@@ -682,46 +634,111 @@ class _CardView extends StatelessWidget {
   }
 }
 
-class _LinkView extends StatelessWidget {
-  const new(this.link);
+class _ColumnView extends StatelessWidget {
+  const _ColumnView(this.children);
+
+  final List<ChatPart> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final links = <ChatLink>[
+      for (final child in children)
+        if (child is ChatLink) child,
+    ];
+    final other = [
+      for (final child in children)
+        if (child is! ChatLink && child is! ChatHeading) child,
+    ];
+    if (links.isNotEmpty && other.isEmpty) return _SourcesView(links);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final child in children) ...[
+          ChatPartView(child),
+          const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+}
+
+class _SourcesView extends StatelessWidget {
+  const _SourcesView(this.links);
+
+  final List<ChatLink> links;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Sources', style: ShadTheme.of(context).textTheme.muted),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [for (final link in links) _SourceChip(link)],
+        ),
+      ],
+    );
+  }
+}
+
+class _SourceChip extends StatelessWidget {
+  const _SourceChip(this.link);
 
   final ChatLink link;
 
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    return _Disclosure(
-      detail: link.detail,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          GestureDetector(
-            onTap: () => _open(link.url),
+    final host = _sourceHost(link.url);
+    final label = host.isNotEmpty
+        ? host
+        : (link.title.isEmpty ? link.url : link.title);
+    final tip = [
+      if (link.title.isNotEmpty && link.title != label) link.title,
+      if (link.snippet.isNotEmpty) link.snippet,
+    ].join('\n');
+    final chip = GestureDetector(
+      onTap: () => _open(link.url),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 220),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: const BorderRadius.all(Radius.circular(6)),
+            border: Border.all(color: theme.colorScheme.border),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(6, 4, 8, 4),
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                CompanyLogo(image: link.image, link: link.url),
-                const SizedBox(width: 10),
-                Expanded(
+                CompanyLogo(image: link.image, link: link.url, size: 16),
+                const SizedBox(width: 6),
+                Flexible(
                   child: Text(
-                    link.title.isEmpty ? link.url : link.title,
-                    softWrap: true,
-                    style: theme.textTheme.p.copyWith(
-                      color: theme.colorScheme.primary,
-                      decoration: TextDecoration.underline,
-                      decorationColor: theme.colorScheme.primary,
-                    ),
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.small,
                   ),
                 ),
               ],
             ),
           ),
-          if (link.snippet.isNotEmpty)
-            Text(link.snippet, softWrap: true, style: theme.textTheme.muted),
-        ],
+        ),
       ),
     );
+    if (tip.isEmpty) return chip;
+    return Tooltip(message: tip, child: chip);
   }
+}
+
+String _sourceHost(String url) {
+  final host = Uri.tryParse(url)?.host.toLowerCase() ?? '';
+  if (host.startsWith('www.')) return host.substring(4);
+  return host;
 }
 
 class _ImageView extends StatelessWidget {
@@ -837,19 +854,8 @@ class _YouSearchViewState extends State<_YouSearchView> {
     }
     return ChatPartView(
       ChatColumn([
-        ChatHeading(widget.query),
         for (final hit in hits)
-          ChatLink(
-            title: hit.title,
-            url: hit.url,
-            snippet: hit.description,
-            detail: ChatColumn([
-              if (hit.pageAge != null) ChatText(hit.pageAge!),
-              for (final snippet in hit.snippets) ChatText(snippet),
-              if (hit.snippets.isEmpty && hit.description.isNotEmpty)
-                ChatText(hit.description),
-            ]),
-          ),
+          ChatLink(title: hit.title, url: hit.url, snippet: hit.description),
       ]),
     );
   }

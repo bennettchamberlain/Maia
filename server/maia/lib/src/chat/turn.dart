@@ -28,15 +28,8 @@ runChatTurn({
     final offered = hostTools ? toolbox.definitions : null;
     final names = offered == null ? const <String>[] : toolNames(offered);
     final request = [for (final m in messages) Map<String, dynamic>.from(m)];
-    if (hostTools) {
-      request.add({
-        'role': 'user',
-        'content': nextStepNote(
-          tools: names,
-          step: round,
-          budget: chatStepBudget,
-        ),
-      });
+    if (hostTools && used.isNotEmpty) {
+      request.add({'role': 'system', 'content': answerCue});
     }
     final calls = <AgentToolCall>[];
     final roundText = StringBuffer();
@@ -104,6 +97,28 @@ runChatTurn({
     final incoming = steer?.call();
     if (incoming != null) {
       messages.add({'role': 'user', 'content': incoming});
+    }
+  }
+
+  if (toolbox != null &&
+      !harness.keepsOwnHistory &&
+      used.isNotEmpty &&
+      text.toString().trim().isEmpty) {
+    final request = [
+      for (final m in messages) Map<String, dynamic>.from(m),
+      {'role': 'system', 'content': answerCue},
+    ];
+    await for (final ev in harness.stream(request, user: user)) {
+      switch (ev) {
+        case AgentText(text: final t):
+          text.write(t);
+          emit('delta', {'text': t});
+        case AgentToolCall():
+          break;
+        case AgentDone(model: final usedModel, :final finishReason):
+          model = usedModel ?? model;
+          emit('finish', {'model': model, 'reason': finishReason});
+      }
     }
   }
 

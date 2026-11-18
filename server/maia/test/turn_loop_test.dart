@@ -13,16 +13,16 @@ void main() {
   test('fifty turns each read the tools for that step', () async {
     final box = _box();
     final script = _Script((body) {
-      final note = (body['messages'] as List).last as Map<String, dynamic>;
-      expect('${note['content']}', startsWith('Step '));
-      final offered = _offered(body);
-      if (offered.isEmpty) {
-        expect(note['content'], contains('Tools you can call now: none'));
-      } else {
-        expect(note['content'], contains(offered.join(', ')));
-      }
+      final last = (body['messages'] as List).last as Map<String, dynamic>;
       final task = _task(body);
       final ran = _toolMessages(body);
+      if (ran == 0) {
+        expect('${last['content']}', task);
+      } else {
+        expect(last['role'], 'system');
+        expect('${last['content']}', contains('latest message'));
+        expect('${last['content']}', isNot(contains('Step ')));
+      }
       if (task.startsWith('clock') && ran == 0) {
         return _call('now', '{}', 'c$task');
       }
@@ -53,7 +53,7 @@ void main() {
     final script = _Script((_) => _call('now', '{}', 'spin'));
     final used = await _run(script, 'spin');
     expect(used.where((call) => call['name'] == 'now'), hasLength(1));
-    expect(script.requests, 2);
+    expect(script.requests, 3);
   });
 
   test('a turn stops at the step budget', () async {
@@ -63,7 +63,7 @@ void main() {
     });
     final used = await _run(script, 'keep going');
     expect(used, hasLength(chatStepBudget));
-    expect(script.requests, chatStepBudget);
+    expect(script.requests, chatStepBudget + 1);
   });
 
   test('a tool that is off is not run', () async {

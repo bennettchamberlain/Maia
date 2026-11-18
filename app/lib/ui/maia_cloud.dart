@@ -27,9 +27,7 @@ class _MaiaCloudState extends State<MaiaCloud>
       vsync: this,
       duration: const Duration(seconds: 24),
     )..repeat();
-    _grains = [
-      for (var i = 0; i < 48; i++) _Grain.sphere(i, 48),
-    ];
+    _grains = _arch();
   }
 
   @override
@@ -61,23 +59,53 @@ class _MaiaCloudState extends State<MaiaCloud>
 }
 
 class _Grain {
-  const _Grain(this.x, this.y, this.z, this.i);
-
-  factory _Grain.sphere(int i, int count) {
-    final y = 1 - (i / (count - 1)) * 2;
-    final ring = math.sqrt(math.max(0, 1 - y * y));
-    final theta = math.pi * (1 + math.sqrt(5)) * i;
-    return _Grain(math.cos(theta) * ring, y, math.sin(theta) * ring, i);
-  }
+  const new(this.x, this.off, this.i, this.core);
 
   final double x;
-  final double y;
-  final double z;
+  final double off;
   final int i;
+  final double core;
+}
+
+/// A shallow arch. Dense on the spine, thin at the ends, a few points off
+/// the curve. Same drawing as the app icon.
+List<_Grain> _arch() {
+  final random = math.Random(11);
+  double gauss() {
+    final u = math.max(1e-9, random.nextDouble());
+    final v = random.nextDouble();
+    return math.sqrt(-2 * math.log(u)) * math.cos(2 * math.pi * v);
+  }
+
+  final grains = <_Grain>[];
+  var i = 0;
+  void add(double x, double off, double spread) {
+    final y = 0.24 * math.pow(x / 0.92, 2) + off;
+    if (x.abs() > 0.96 || y < -0.32 || y > 0.58) return;
+    final core = math.exp(-(off * off) / (2 * spread * spread + 1e-6));
+    grains.add(_Grain(x, off, i, core));
+    i++;
+  }
+
+  for (var n = 0; n < 36; n++) {
+    final x = -0.88 + (1.76 * n / 35);
+    add(x, gauss() * 0.016, 0.016);
+  }
+  for (var n = 0; n < 180; n++) {
+    final sign = random.nextBool() ? -1.0 : 1.0;
+    final x = sign * math.pow(random.nextDouble(), 1.35) * 0.92;
+    final spread = 0.022 + 0.06 * (x.abs() / 0.92);
+    var off = gauss() * spread;
+    if (random.nextDouble() < 0.1) {
+      off += (random.nextBool() ? 1 : -1) * (0.05 + random.nextDouble() * 0.16);
+    }
+    add(x, off, spread);
+  }
+  return grains;
 }
 
 class _CloudPainter extends CustomPainter {
-  const _CloudPainter({
+  const new({
     required this.seconds,
     required this.speaking,
     required this.ink,
@@ -101,37 +129,22 @@ class _CloudPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final c = Offset(size.width / 2, size.height / 2);
-    final radius = size.shortestSide * 0.30;
-    canvas.drawCircle(
-      c,
-      radius * 1.35,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1
-        ..color = ink.withValues(alpha: 0.28),
-    );
-    final yaw = seconds * 0.35;
-    final drawn = <({double z, Offset at, double spike})>[];
+    final span = size.shortestSide * 0.42;
+    final origin = Offset(size.width / 2, size.height * 0.46);
+    final drift = math.sin(seconds * 0.2) * 0.03;
     for (final grain in grains) {
       final spike = speaking ? _spike(seconds, grain.i) : 0.0;
-      final reach = radius * (0.72 + spike * 0.7);
-      final x = grain.x * math.cos(yaw) + grain.z * math.sin(yaw);
-      final z = -grain.x * math.sin(yaw) + grain.z * math.cos(yaw);
-      drawn.add((
-        z: z,
-        at: Offset(c.dx + x * reach, c.dy + grain.y * reach),
-        spike: spike,
-      ));
-    }
-    drawn.sort((a, b) => a.z.compareTo(b.z));
-    for (final dot in drawn) {
-      final depth = (dot.z + 1) / 2;
-      final color = dot.spike > 0.08
-          ? _band(dot.spike).withValues(alpha: 0.95)
-          : ink.withValues(alpha: 0.22 + depth * 0.55);
+      final wobble = math.sin(seconds * 0.45 + grain.i * 0.17) * 0.012;
+      final kick = spike * 0.28 * (grain.off >= 0 ? 1 : -1);
+      final x = grain.x + drift;
+      final y = 0.24 * math.pow(x / 0.92, 2) + grain.off * (1 + wobble) + kick;
+      final at = Offset(origin.dx + x * span, origin.dy + y * span);
+      final color = spike > 0.08
+          ? _band(spike).withValues(alpha: 0.95)
+          : ink.withValues(alpha: 0.28 + grain.core * 0.62);
+      final dot = 1.1 + grain.core * 0.9;
       canvas.drawRect(
-        Rect.fromCenter(center: dot.at, width: 1.6, height: 1.6),
+        Rect.fromCenter(center: at, width: dot, height: dot),
         Paint()..color = color,
       );
     }
@@ -156,8 +169,6 @@ class _CloudPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _CloudPainter old) {
-    return old.seconds != seconds ||
-        old.speaking != speaking ||
-        old.ink != ink;
+    return old.seconds != seconds || old.speaking != speaking || old.ink != ink;
   }
 }

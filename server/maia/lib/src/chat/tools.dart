@@ -114,7 +114,8 @@ class ChatToolbox {
     if (isOn('memory_search'))
       _fn(
         'memory_search',
-        "Search the user's personal memory.",
+        "Search this person's memory. If nothing there answers the "
+            'question, say you do not have it.',
         {
           'query': {'type': 'string'},
           'limit': {'type': 'integer'},
@@ -137,7 +138,7 @@ class ChatToolbox {
     if (isOn('remember'))
       _fn(
         'remember',
-        'Save a note to memory.',
+        'Save a note only when the person asked you to save or remember it.',
         {
           'title': {'type': 'string'},
           'body': {'type': 'string'},
@@ -152,13 +153,18 @@ class ChatToolbox {
     if (webAvailable && isOn('web_search'))
       _fn(
         'web_search',
-        'Search the public web. Returns titles, URLs and snippets.',
+        'Search the public web for news or a fact that changes. '
+            'Not for arithmetic, spelling, translation, or a list you know.',
         {
           'query': {'type': 'string'},
         },
         const ['query'],
       ),
-    if (isOn('now')) _fn('now', 'Current local date and time.'),
+    if (isOn('now'))
+      _fn(
+        'now',
+        'Local date and weekday, when they ask for the time or the day.',
+      ),
     if (connectorsAvailable && isOn('connector'))
       _fn(
         'connector',
@@ -237,9 +243,8 @@ class ChatToolbox {
     try {
       return switch (name) {
         'now' => jsonEncode({
-          'type': 'metric',
-          'label': 'now',
-          'value': DateTime.now().toIso8601String(),
+          'type': 'text',
+          'text': readableClock(DateTime.now()),
         }),
         'memory_search' => formatMemories(
           await searchMemory(
@@ -350,13 +355,7 @@ class ChatToolbox {
     if (hits.isEmpty) {
       return jsonEncode({'type': 'text', 'text': 'no results'});
     }
-    return jsonEncode({
-      'type': 'column',
-      'children': [
-        {'type': 'heading', 'text': q},
-        ...hits,
-      ],
-    });
+    return jsonEncode({'type': 'column', 'children': hits});
   }
 
   Future<String> _openRouterSearch(String query) async {
@@ -419,25 +418,20 @@ class ChatToolbox {
       final text = answerFromOpenRouter(decoded);
       return jsonEncode({'type': 'text', 'text': text ?? 'no results'});
     }
-    return jsonEncode({
-      'type': 'column',
-      'children': [
-        {'type': 'heading', 'text': query},
-        ...links,
-      ],
-    });
+    return jsonEncode({'type': 'column', 'children': links});
   }
 
   static String formatMemories(List<Map<String, dynamic>> rows) {
     if (rows.isEmpty) {
       return jsonEncode({'type': 'text', 'text': 'no memories'});
     }
+    final shown = rows.take(4);
     final timeline = {
       'type': 'timeline',
       'title': 'Memory',
-      'children': [for (final row in rows) memoryPart(row)],
+      'children': [for (final row in shown) memoryPart(row)],
     };
-    final markers = _markers(rows);
+    final markers = _markers(shown.toList());
     if (markers.isEmpty) return jsonEncode(timeline);
     return jsonEncode({
       'type': 'column',
@@ -473,9 +467,7 @@ class ChatToolbox {
       'title': '${row['title'] ?? row['kind'] ?? 'memory'}',
       'kind': '${row['kind'] ?? 'note'}',
       'when': '${row['occurred_at'] ?? row['created_at'] ?? ''}',
-      'body': row['body'] == null
-          ? ''
-          : row['body'].toString().replaceAll(RegExp(r'\s+'), ' '),
+      'body': clipSentence('${row['body'] ?? ''}'),
       if (place is Map)
         'place': {
           'type': 'place',
@@ -520,7 +512,7 @@ class ChatToolbox {
 
   static String formatGraph(Map<String, dynamic>? g) {
     if (g == null) {
-      return jsonEncode({'type': 'text', 'text': 'empty graph'});
+      return jsonEncode({'type': 'text', 'text': 'Nothing stored yet.'});
     }
     List<dynamic> listOf(String key) =>
         g[key] is List ? g[key]! as List<dynamic> : const [];
@@ -536,7 +528,7 @@ class ChatToolbox {
       (rows) => rows.isEmpty,
     );
     if (empty) {
-      return jsonEncode({'type': 'text', 'text': 'empty graph'});
+      return jsonEncode({'type': 'text', 'text': 'Nothing stored yet.'});
     }
     return jsonEncode(payload);
   }
@@ -577,6 +569,46 @@ class ChatToolbox {
   };
 }
 
+/// A clock phrase a person can read. Weekday first, then the date and time.
+String readableClock(DateTime time) {
+  const weekdays = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+  ];
+  const months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+  final hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
+  final minute = time.minute.toString().padLeft(2, '0');
+  final suffix = time.hour < 12 ? 'AM' : 'PM';
+  final day = weekdays[time.weekday - 1];
+  final month = months[time.month - 1];
+  return '$day, $month ${time.day}, ${time.year}, $hour:$minute $suffix';
+}
+
+/// One line, clipped so a source does not become the reply.
+String clipSentence(String text, {int max = 140}) {
+  final flat = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (flat.length <= max) return flat;
+  return '${flat.substring(0, max - 1).trimRight()}…';
+}
+
 /// Link cards from a You.com `/v1/search` body (`results.web` and news).
 List<Map<String, dynamic>> youWebHits(Object? decoded) {
   if (decoded is! Map) return const [];
@@ -597,9 +629,9 @@ List<Map<String, dynamic>> youWebHits(Object? decoded) {
             ? title.trim()
             : url,
         'url': url,
-        'snippet': _youSnippet(row),
+        'snippet': clipSentence(_youSnippet(row)),
       });
-      if (links.length == 5) return links;
+      if (links.length == 3) return links;
     }
   }
   return links;
@@ -641,9 +673,9 @@ List<Map<String, dynamic>> linksFromOpenRouter(Object? decoded) {
       'type': 'link',
       'title': title is String && title.trim().isNotEmpty ? title.trim() : url,
       'url': url,
-      'snippet': content is String ? content : '',
+      'snippet': clipSentence(content is String ? content : ''),
     });
-    if (links.length == 5) break;
+    if (links.length == 3) break;
   }
   return links;
 }

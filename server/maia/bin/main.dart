@@ -135,6 +135,7 @@ Future<void> main() async {
           baseUrl: Uri.parse(config.openrouterBaseUrl),
           token: config.openrouterApiKey,
           model: config.openrouterChatModel,
+          cheapFallbacks: true,
           extraHeaders: const {
             'HTTP-Referer': 'http://127.0.0.1:8090',
             'X-Title': 'Maia',

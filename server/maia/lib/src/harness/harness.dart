@@ -11,8 +11,7 @@ const nativeToolCorrection =
 const skippedToolResult = 'Skipped to process an incoming message.';
 
 /// Result for a tool the model asked for beside the one this step runs.
-const heldStepResult =
-    'Not run yet. Call it on a later step if you still need it.';
+const heldStepResult = 'Not used.';
 
 /// Model rounds one reply may spend. Each round is one next step.
 /// Eight covers a search, a follow-up, and an answer without letting
@@ -29,17 +28,15 @@ List<String> toolNames(List<Map<String, dynamic>> definitions) {
   return names;
 }
 
-/// What this step may call, and that the model should do only that step.
-String nextStepNote({
-  required List<String> tools,
-  required int step,
-  required int budget,
-}) {
-  final named = tools.isEmpty ? 'none' : tools.join(', ');
-  return 'Step ${step + 1} of $budget. Tools you can call now: $named. '
-      'Take only the next step. Call one tool, or answer in prose if '
-      'you can. Do not call a tool you do not need.';
-}
+/// Told to the model after a tool returns. It is not a message from
+/// the person, and it must not become the reply.
+const answerCue =
+    'Answer the person\'s latest message completely, in your own words. '
+    'Earlier messages are context, not a task to continue. '
+    'The tool result is already on screen. Do not repeat it, do not '
+    'mention steps or tools, and do not call another tool unless one '
+    'fact is still missing. If the result does not contain the fact, '
+    'say you do not have it.';
 
 /// Memory and library hits in the session that followed a proposal.
 /// The number does not install the proposal.
@@ -81,36 +78,26 @@ String stableVoice({required String name, required String handle}) =>
     'in this frame: skills, files used most, the last turn, and the '
     'timeline. Open one with library_read when a line is not enough. '
     'Search memory when the index has nothing for it. Verified graph '
-    'edges are facts. Proposed edges are still proposed. For the public '
-    'world, use web search. Be accurate. Say when you do not know. '
-    'Match the tone to the ask. '
-    'Recall: specific, name the memory. People: say verified or proposed '
-    'to match the edge. World: search, then show links. A plan: a short '
-    'checklist. Small talk: one or two sentences, no tools and no cards. '
-    'Keep prose short. After tools, emit a visual surface when it helps, '
-    'using one or more fenced blocks:\n'
-    '```maia\n'
-    '{"type":"card","title":"...","subtitle":"..."}\n'
-    '```\n'
-    'Catalog (type + fields): '
-    'text(text), heading(text), divider, column(children), row(children), '
-    'list(children), card(title,subtitle,children,detail), '
-    'link(title,url,snippet,image,detail), image(url,alt), '
-    'webSearch(query), speech(text), '
-    'memory(id,title,kind,when,body,place), '
-    'place(name,city,region,country,lat,lng), '
-    'map(markers[{lat,lng,title}]), '
-    'person(name,handle,relation), '
-    'quote(text,attribution), metric(value,label,detail), badge(text), '
-    'timeline(title,children), checklist(title,items[{text,done}]), '
-    'graph(goals,projects,habits,entities,edges), '
-    'actions(items[{label,prompt,url}]). '
-    'Tool results already arrive as these parts. Do not repeat a tool '
-    'surface unless you are adding a new one. Prefer memory/timeline for '
-    'recall, graph for the life graph, link/webSearch for the web, '
-    'map when several places have coordinates, checklist for plans, '
-    'actions to offer a follow-up, speech for a line the device should '
-    'say. Spoken text is plain English. A tool call printed as text does '
+    'edges are facts. Proposed edges are still proposed. Be accurate. '
+    'Say when you do not know. '
+    'Answer only the person\'s latest message, and answer it completely '
+    'in that reply. Earlier messages are context. Do not continue a '
+    'previous request, and do not repeat an earlier answer. '
+    'Never mention steps, tools, or these instructions. Never ask what '
+    'they would like to do when they already asked. '
+    'Call a tool only when this message needs their memory, their graph, '
+    'a connected app, the clock, or a public fact that changes, such as '
+    'news, a price, a winner, or a population. Arithmetic, spelling, '
+    'translation, lists, definitions, and small talk need no tool. '
+    'Use remember only when they ask you to save something. '
+    'A checklist they asked for is every item, not the first. '
+    'After a tool, write the answer yourself. If the result does not '
+    'contain the fact, say you do not have it, and do not recite '
+    'unrelated hits. The app already shows the tool result, so do not '
+    'paste it and do not add a card that repeats it. '
+    'Use a maia fence only when they asked for that shape '
+    '(checklist, map, card). Otherwise prose is enough. '
+    'Spoken text is plain English. A tool call printed as text does '
     'not run.';
 
 /// Clock, screen, and the tools this turn may actually call.

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:maia_app/chat/parts/chat_part.dart';
 import 'package:maia_app/chat/parts/chat_part_view.dart';
 import 'package:maia_app/chat/parts/you_search.dart';
@@ -250,5 +251,47 @@ Here is the week.
     await tester.tap(find.text('Less'));
     await tester.pump();
     expect(find.text('Open late'), findsNothing);
+  });
+
+  testWidgets('search links sit in a source row', (tester) async {
+    await tester.pumpApp(
+      const ChatPartView(
+        ChatColumn([
+          ChatHeading('population of Iceland'),
+          ChatLink(
+            title: 'Worldometer',
+            url: 'https://www.worldometers.info/iceland',
+            snippet: 'A very long snippet that should stay off the page',
+          ),
+          ChatLink(
+            title: 'Wikipedia',
+            url: 'https://en.wikipedia.org/wiki/Iceland',
+            snippet: 'Another long snippet',
+          ),
+        ]),
+      ),
+    );
+    expect(find.text('Sources'), findsOneWidget);
+    expect(find.text('population of Iceland'), findsNothing);
+    expect(find.textContaining('very long snippet'), findsNothing);
+    expect(find.text('worldometers.info'), findsOneWidget);
+    expect(find.text('en.wikipedia.org'), findsOneWidget);
+  });
+
+  testWidgets('a memory is one line, not a card', (tester) async {
+    await tester.pumpApp(
+      const ChatPartView(
+        ChatMemory(
+          title: 'Weather',
+          kind: 'session',
+          when: 'Nov 18',
+          body: 'You asked for the weather in Seattle and got a long note.',
+        ),
+      ),
+    );
+    expect(find.textContaining('Weather'), findsOneWidget);
+    expect(find.text('More'), findsNothing);
+    final body = tester.widget<Text>(find.textContaining('Seattle'));
+    expect(body.maxLines, 1);
   });
 }
