@@ -25,7 +25,7 @@ class Config {
     this.geminiChatModel = 'gemini-3-flash-preview',
     this.openrouterApiKey,
     this.openrouterBaseUrl = 'https://openrouter.ai/api/v1',
-    this.openrouterChatModel = 'anthropic/claude-sonnet-4.5',
+    this.openrouterChatModel = 'google/gemini-2.5-flash-lite',
     this.openrouterMaxTokens = 2048,
     this.youApiKey,
     this.connectPublicUrl = 'http://127.0.0.1:8788',
@@ -85,7 +85,7 @@ class Config {
       ),
       openrouterBaseUrl: e['OPENROUTER_BASE_URL'] ?? 'https://openrouter.ai/api/v1',
       openrouterChatModel:
-          e['OPENROUTER_MODEL'] ?? 'anthropic/claude-sonnet-4.5',
+          e['OPENROUTER_MODEL'] ?? 'google/gemini-2.5-flash-lite',
       openrouterMaxTokens:
           int.tryParse(e['OPENROUTER_MAX_TOKENS'] ?? '') ?? 2048,
       youApiKey: _blankToNull(e['YDC_API_KEY'] ?? e['YOU_WEB_SEARCH_TOKEN']),

@@ -4,7 +4,7 @@ import 'package:maia_api/src/db.dart';
 
 /// Stores the raw failure. The caller shows the summary and the ref.
 class FaultLog {
-  new(this.db);
+  FaultLog(this.db);
 
   final Db db;
   final _random = Random.secure();
