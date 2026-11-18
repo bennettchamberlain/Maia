@@ -14,11 +14,20 @@ class AppDelegate: FlutterAppDelegate {
     let args = ProcessInfo.processInfo.arguments
     if args.contains(Self.speechPromptArgument) {
       NSApp.setActivationPolicy(.regular)
-      NSApp.activate(ignoringOtherApps: true)
-      SFSpeechRecognizer.requestAuthorization { _ in
-        AVCaptureDevice.requestAccess(for: .audio) { _ in
-          DispatchQueue.main.async {
-            NSApp.terminate(nil)
+      // The prompt does not present during didFinishLaunching. Ask on the
+      // next turn, once AppKit is up.
+      DispatchQueue.main.async {
+        NSApp.activate(ignoringOtherApps: true)
+        SFSpeechRecognizer.requestAuthorization { status in
+          AVCaptureDevice.requestAccess(for: .audio) { granted in
+            NSLog(
+              "maia-speech-prompt speech=%ld mic=%d",
+              status.rawValue,
+              granted ? 1 : 0
+            )
+            DispatchQueue.main.async {
+              NSApp.terminate(nil)
+            }
           }
         }
       }
