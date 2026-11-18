@@ -1,6 +1,35 @@
+/// A quiet gap this long, before a phrase that does not continue the
+/// last one, is a new thought.
+const thoughtPause = Duration(milliseconds: 1200);
+
+/// True when [next] should start a new line after [previous].
+/// A phrase that keeps growing is the same thought, even if a result
+/// was slow to arrive. A long run with only a short gap stays one line.
+bool newThought({
+  required String previous,
+  required String next,
+  required Duration gap,
+}) {
+  final prior = previous.trim();
+  final incoming = next.trim();
+  if (prior.isEmpty || incoming.isEmpty) return false;
+  if (incoming.startsWith(prior)) return false;
+  return gap >= thoughtPause;
+}
+
+/// Adds [next] to [said]. [newLine] puts it under the previous thought.
+String joinThought(String said, String next, {required bool newLine}) {
+  final incoming = next.trim();
+  if (incoming.isEmpty) return said.trim();
+  final prior = said.trim();
+  if (prior.isEmpty) return incoming;
+  if (newLine) return '$prior\n$incoming';
+  return '$prior $incoming';
+}
+
 /// Turns a transcript into quoted lines for the chat.
 ///
-/// The on-device recognizer is one voice, so the whole turn is one quote.
+/// Each thought is its own quote. One continuous run stays one quote.
 /// A later diarizer can pass `Name: words` lines. Two or more speakers
 /// become one quoted line each.
 String quotedSpeech(String raw) {
@@ -16,7 +45,8 @@ String quotedSpeech(String raw) {
   if (turns.every((turn) => turn != null) && speakers.length >= 2) {
     return turns.map((turn) => _wrap(turn!.words)).join('\n');
   }
-  return _wrap(lines.join(' '));
+  if (lines.length > 1) return lines.map(_wrap).join('\n');
+  return _wrap(lines.single);
 }
 
 final _label = RegExp(r'^([^:]{1,32}):\s+(\S.*)$');

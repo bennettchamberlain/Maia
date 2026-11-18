@@ -6,6 +6,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:maia_api_client/maia_api_client.dart';
 import 'package:maia_models/maia_models.dart';
 import 'package:maia_app/chat/parts/chat_part.dart';
+import 'package:maia_app/chat/quote.dart';
 import 'package:maia_app/ui/fault.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart';
@@ -29,6 +30,7 @@ class VoiceState extends Equatable {
     this.keepUntil,
     this.capture,
     this.partial = '',
+    this.liveLine = '',
     this.lastHeard,
     this.heardSeq = 0,
     this.transcript,
@@ -52,6 +54,9 @@ class VoiceState extends Equatable {
   final DateTime? keepUntil;
   final VoiceCapture? capture;
   final String partial;
+
+  /// Words heard so far in this transcribe session. Grows with each partial.
+  final String liveLine;
   final String? lastHeard;
   final int heardSeq;
   final String? transcript;
@@ -74,6 +79,7 @@ class VoiceState extends Equatable {
     DateTime? keepUntil,
     VoiceCapture? capture,
     String? partial,
+    String? liveLine,
     String? lastHeard,
     int? heardSeq,
     String? transcript,
@@ -102,6 +108,7 @@ class VoiceState extends Equatable {
       keepUntil: keepUntil ?? this.keepUntil,
       capture: clearCapture ? null : capture ?? this.capture,
       partial: partial ?? this.partial,
+      liveLine: liveLine ?? this.liveLine,
       lastHeard: clearHeard ? null : lastHeard ?? this.lastHeard,
       heardSeq: heardSeq ?? this.heardSeq,
       transcript: transcript ?? this.transcript,
@@ -127,6 +134,7 @@ class VoiceState extends Equatable {
     keepUntil,
     capture,
     partial,
+    liveLine,
     lastHeard,
     heardSeq,
     transcript,
@@ -146,13 +154,20 @@ class VoiceCubit extends Cubit<VoiceState> {
   static const _enabledKey = 'maia.voice.enabled';
 
   final MaiaApiClient _api;
+  final SharedPreferences? _prefs;
+  bool _wantListen = false;
+  bool _relistening = false;
+  String _said = '';
+  String _lastFinal = '';
+  String _hypothesis = '';
+  DateTime? _lastWordsAt;
+  bool _breakBefore = false;
+  SpeechToText? _stt;
+  FlutterTts? _tts;
 
   void _note(String action, Object detail) {
     unawaited(_api.reportFault(action: action, detail: '$detail'));
   }
-  final SharedPreferences? _prefs;
-  SpeechToText? _stt;
-  FlutterTts? _tts;
 
   Future<void> setEnabled({required bool on}) async {
     emit(state.copyWith(enabled: on, clearError: true));
@@ -276,6 +291,10 @@ class VoiceCubit extends Cubit<VoiceState> {
       final stt = SpeechToText();
       final ok = await stt.initialize(
         onError: (e) {
+          if (_holdTranscribe && _benignListenError(e.errorMsg)) {
+            unawaited(_relisten());
+            return;
+          }
           if (_benignListenError(e.errorMsg)) {
             emit(state.copyWith(listening: false, clearError: true));
             return;
@@ -289,9 +308,12 @@ class VoiceCubit extends Cubit<VoiceState> {
           );
         },
         onStatus: (status) {
-          if (status == 'done' || status == 'notListening') {
-            emit(state.copyWith(listening: false));
+          if (status != 'done' && status != 'notListening') return;
+          if (_holdTranscribe) {
+            unawaited(_relisten());
+            return;
           }
+          emit(state.copyWith(listening: false));
         },
       );
       if (!ok) {
@@ -314,10 +336,14 @@ class VoiceCubit extends Cubit<VoiceState> {
     }
   }
 
+  bool get _holdTranscribe =>
+      _wantListen && state.capture == VoiceCapture.transcribe;
+
   /// Opens the microphone for [next]. The same button again stops it.
-  /// Talk turns spoken replies on. Transcribe only fills the composer.
+  /// Talk sends one phrase. Transcribe keeps the recognizer open and
+  /// writes each word into the chat as it arrives.
   Future<void> begin(VoiceCapture next) async {
-    if (state.listening) {
+    if (state.listening || _wantListen) {
       final same = state.capture == next;
       await stopListen();
       if (same) return;
@@ -326,34 +352,120 @@ class VoiceCubit extends Cubit<VoiceState> {
       await setEnabled(on: true);
     }
     if (!await prepareListen()) return;
+    _wantListen = true;
+    _said = '';
+    _lastFinal = '';
+    _hypothesis = '';
+    _lastWordsAt = null;
+    _breakBefore = false;
     emit(
       state.copyWith(
         listening: true,
         capture: next,
         partial: '',
+        liveLine: '',
         clearError: true,
       ),
     );
     try {
-      await _stt!.listen(
-        onResult: (result) {
-          final words = result.recognizedWords;
-          if (!result.finalResult) {
-            emit(state.copyWith(partial: words));
-            return;
-          }
-          _keepWords(words.trim());
-        },
-        listenOptions: SpeechListenOptions(
-          listenFor: const Duration(seconds: 20),
-          pauseFor: const Duration(seconds: 3),
-          cancelOnError: false,
-          partialResults: true,
+      await _listen(next);
+    } on Object catch (e) {
+      _wantListen = false;
+      _note('transcribe', e);
+      emit(state.copyWith(listening: false, error: shownFault(e)));
+    }
+  }
+
+  Future<void> _listen(VoiceCapture next) {
+    final holding = next == VoiceCapture.transcribe;
+    return _stt!.listen(
+      onResult: (result) {
+        final words = result.recognizedWords.trim();
+        if (holding) {
+          _showLive(words, finalResult: result.finalResult);
+          return;
+        }
+        if (!result.finalResult) {
+          emit(state.copyWith(partial: words));
+          return;
+        }
+        _keepWords(words);
+      },
+      listenOptions: SpeechListenOptions(
+        partialResults: true,
+        cancelOnError: false,
+        listenMode: holding ? ListenMode.dictation : ListenMode.confirmation,
+        pauseFor: holding ? null : const Duration(seconds: 3),
+        listenFor: holding ? null : const Duration(seconds: 20),
+      ),
+    );
+  }
+
+  /// A platform listen ends on its own. Open another so transcribe stays up
+  /// until the button is pressed again.
+  Future<void> _relisten() async {
+    if (!_holdTranscribe || _relistening) return;
+    _relistening = true;
+    try {
+      await Future<void>.delayed(Duration.zero);
+      if (!_holdTranscribe) return;
+      if (_stt?.isListening ?? false) return;
+      await _listen(VoiceCapture.transcribe);
+      emit(
+        state.copyWith(
+          listening: true,
+          capture: VoiceCapture.transcribe,
         ),
       );
     } on Object catch (e) {
       _note('transcribe', e);
-      emit(state.copyWith(listening: false, error: shownFault(e)));
+    } finally {
+      _relistening = false;
+    }
+  }
+
+  void _showLive(String words, {required bool finalResult}) {
+    _noticeThought(words);
+    if (finalResult) {
+      if (words.isNotEmpty && words != _lastFinal) {
+        _said = joinThought(_said, words, newLine: _breakBefore);
+        _lastFinal = words;
+        _breakBefore = false;
+      }
+      emit(
+        state.copyWith(
+          partial: '',
+          liveLine: _said,
+          listening: true,
+          capture: VoiceCapture.transcribe,
+        ),
+      );
+      return;
+    }
+    final line = joinThought(_said, words, newLine: _breakBefore);
+    emit(
+      state.copyWith(
+        partial: words,
+        liveLine: line,
+        listening: true,
+        capture: VoiceCapture.transcribe,
+      ),
+    );
+  }
+
+  /// A pause before words that do not continue the last phrase is a new line.
+  /// Words that keep extending the same phrase stay on that line.
+  void _noticeThought(String words) {
+    final now = DateTime.now();
+    final gap = _lastWordsAt == null
+        ? Duration.zero
+        : now.difference(_lastWordsAt!);
+    if (newThought(previous: _hypothesis, next: words, gap: gap)) {
+      _breakBefore = true;
+    }
+    if (words.isNotEmpty) {
+      _hypothesis = words;
+      _lastWordsAt = now;
     }
   }
 
@@ -386,17 +498,48 @@ class VoiceCubit extends Cubit<VoiceState> {
   }
 
   Future<void> stopListen() async {
+    final transcribing = state.capture == VoiceCapture.transcribe;
+    final line = state.liveLine.trim().isNotEmpty
+        ? state.liveLine.trim()
+        : state.partial.trim();
+    _wantListen = false;
     try {
       await _stt?.stop();
     } on Object {
       // Plugin already idle.
     }
-    final leftover = state.partial.trim();
-    if (leftover.isEmpty) {
-      emit(state.copyWith(listening: false, partial: '', clearCapture: true));
+    if (transcribing) {
+      _said = '';
+      _lastFinal = '';
+      _hypothesis = '';
+      _lastWordsAt = null;
+      _breakBefore = false;
+      emit(
+        state.copyWith(
+          listening: false,
+          partial: '',
+          liveLine: '',
+          transcript: line.isEmpty ? state.transcript : line,
+          transcriptSeq: line.isEmpty
+              ? state.transcriptSeq
+              : state.transcriptSeq + 1,
+          clearCapture: true,
+        ),
+      );
       return;
     }
-    _keepWords(leftover);
+    if (line.isEmpty) {
+      emit(
+        state.copyWith(
+          listening: false,
+          partial: '',
+          liveLine: '',
+          clearCapture: true,
+        ),
+      );
+      return;
+    }
+    _keepWords(line);
   }
 
   Future<void> speak(String text) async {

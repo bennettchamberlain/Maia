@@ -147,6 +147,11 @@ class _ConversationState extends State<_Conversation> {
         ),
         BlocListener<VoiceCubit, VoiceState>(
           listenWhen: (p, c) =>
+              p.liveLine != c.liveLine && c.liveLine.isNotEmpty,
+          listener: (context, voice) => _scrollToEnd(),
+        ),
+        BlocListener<VoiceCubit, VoiceState>(
+          listenWhen: (p, c) =>
               p.transcriptSeq != c.transcriptSeq &&
               (c.transcript ?? '').isNotEmpty,
           listener: (context, voice) {
@@ -214,6 +219,15 @@ class _ConversationState extends State<_Conversation> {
                             state.draftReply,
                             tools: state.draftTools,
                           ),
+                        Builder(
+                          builder: (context) {
+                            final line = context.select<VoiceCubit, String>(
+                              (v) => v.state.liveLine,
+                            );
+                            if (line.isEmpty) return const SizedBox.shrink();
+                            return _Bubble.live(quotedSpeech(line));
+                          },
+                        ),
                       ],
                     ),
               footer: Column(
@@ -257,13 +271,12 @@ class _ConversationState extends State<_Conversation> {
                               placeholder: context.select<VoiceCubit, String>((
                                 v,
                               ) {
-                                if (v.state.listening) {
-                                  final partial = v.state.partial.trim();
-                                  return partial.isEmpty
-                                      ? 'Listening…'
-                                      : partial;
-                                }
-                                return 'Ask Maia…';
+                                final talk =
+                                    v.state.listening &&
+                                    v.state.capture == VoiceCapture.talk;
+                                if (!talk) return 'Ask Maia…';
+                                final partial = v.state.partial.trim();
+                                return partial.isEmpty ? 'Listening…' : partial;
                               }),
                             ),
                           ),
@@ -417,6 +430,12 @@ class _Bubble extends StatelessWidget {
   const new draft(this.text, {this.tools = const []})
     : messageId = null,
       role = 'assistant',
+      streaming = true;
+
+  const new live(this.text)
+    : messageId = null,
+      role = 'quote',
+      tools = const [],
       streaming = true;
 
   final String? messageId;
