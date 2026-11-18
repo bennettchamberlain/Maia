@@ -106,6 +106,18 @@ Future<void> main() async {
     await runner.start();
   }
 
+  final openrouterChat = config.openrouterApiKey == null
+      ? null
+      : AgentClient(
+          baseUrl: Uri.parse(config.openrouterBaseUrl),
+          token: config.openrouterApiKey,
+          model: config.openrouterChatModel,
+          extraHeaders: const {
+            'HTTP-Referer': 'http://127.0.0.1:8090',
+            'X-Title': 'Maia',
+          },
+          maxTokens: config.openrouterMaxTokens,
+        );
   final geminiChat = config.geminiApiKey == null
       ? null
       : AgentClient(
@@ -141,6 +153,7 @@ Future<void> main() async {
     jobs: jobs,
     embeddings: local,
     cloudEmbeddings: cloud,
+    openrouterChat: openrouterChat,
     geminiChat: geminiChat,
     parasailChat: parasailChat,
     ollamaChat: ollamaChat,

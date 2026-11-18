@@ -32,9 +32,9 @@ import 'package:shelf_router/shelf_router.dart';
 /// Three kinds of caller reach this process:
 /// - the Flutter app with a session token (`/auth/signin`);
 /// - machines with an API key (`sk_…`): the OpenClaw memory plugin, scripts;
-/// - `/chat`, which talks to Gemini, Parasail, or local Ollama
-///   (OpenClaw optional) and runs host tools (memory, graph, You.com)
-///   on this process.
+/// - `/chat`, which talks to OpenRouter, Gemini, Parasail, or local
+///   Ollama (OpenClaw optional) and runs host tools (memory, graph,
+///   You.com) on this process.
 class MaiaApp {
   MaiaApp({
     required this.config,
@@ -44,6 +44,7 @@ class MaiaApp {
     this.embeddings,
     this.cloudEmbeddings,
     this.agent,
+    this.openrouterChat,
     this.geminiChat,
     this.parasailChat,
     this.ollamaChat,
@@ -66,6 +67,7 @@ class MaiaApp {
   final Embeddings? embeddings;
   final ParasailEmbeddings? cloudEmbeddings;
   final AgentClient? agent;
+  final AgentClient? openrouterChat;
   final AgentClient? geminiChat;
   final AgentClient? parasailChat;
   final AgentClient? ollamaChat;
@@ -228,6 +230,7 @@ class MaiaApp {
       'chat': {
         'provider': defaultChatLabel,
         'model': chat?.model,
+        'openrouter': openrouterChat != null,
         'gemini': geminiChat != null,
         'parasail': parasailChat != null,
         'ollama': ollamaChat != null,
@@ -243,6 +246,7 @@ class MaiaApp {
 
   String get defaultChatLabel {
     final c = _resolveChat();
+    if (identical(c, openrouterChat)) return 'openrouter';
     if (identical(c, geminiChat)) return 'gemini';
     if (identical(c, parasailChat)) return 'parasail';
     if (identical(c, ollamaChat)) return 'ollama';
@@ -821,11 +825,13 @@ class MaiaApp {
   AgentClient? _resolveChat([String? want]) {
     final pick = (want ?? config.chatProvider).trim().toLowerCase();
     return switch (pick) {
+      'openrouter' => openrouterChat,
       'gemini' => geminiChat,
       'parasail' => parasailChat,
       'ollama' => ollamaChat,
       'agent' => agent,
-      _ => geminiChat ?? parasailChat ?? ollamaChat ?? agent,
+      _ =>
+        openrouterChat ?? geminiChat ?? parasailChat ?? ollamaChat ?? agent,
     };
   }
 
@@ -902,6 +908,10 @@ class MaiaApp {
     return _json({
       'default_provider': defaultChatLabel,
       'providers': {
+        'openrouter': {
+          'available': openrouterChat != null,
+          'model': openrouterChat?.model,
+        },
         'gemini': {
           'available': geminiChat != null,
           'model': geminiChat?.model,
@@ -955,6 +965,15 @@ class MaiaApp {
                     'other app. Maia only lists accounts you actually grant.',
         },
         {
+          'id': 'openrouter',
+          'label': 'OpenRouter',
+          'kind': 'inference',
+          'connected': openrouterChat != null,
+          'model': openrouterChat?.model,
+          'description':
+              'OpenRouter for chat. Set OPENROUTER_API_KEY on the server.',
+        },
+        {
           'id': 'gemini',
           'label': 'Gemini',
           'kind': 'inference',
@@ -1002,6 +1021,7 @@ class MaiaApp {
         prefs = _setEnabled(prefs, 'web_search', b['enabled'] as bool);
       }
     } else if (id == 'one' ||
+        id == 'openrouter' ||
         id == 'gemini' ||
         id == 'parasail' ||
         id == 'ollama' ||
@@ -1499,7 +1519,7 @@ class MaiaApp {
       return _error(
         503,
         'agent_unavailable',
-        'No chat model. Set GOOGLE_GEMINI_API_KEY, PARASAIL_API_KEY, or OLLAMA_URL.',
+        'No chat model. Set OPENROUTER_API_KEY, GOOGLE_GEMINI_API_KEY, PARASAIL_API_KEY, or OLLAMA_URL.',
       );
     }
     final sessionId = r.params['id']!;

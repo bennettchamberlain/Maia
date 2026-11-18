@@ -23,6 +23,10 @@ class Config {
     this.geminiBaseUrl =
         'https://generativelanguage.googleapis.com/v1beta/openai',
     this.geminiChatModel = 'gemini-3-flash-preview',
+    this.openrouterApiKey,
+    this.openrouterBaseUrl = 'https://openrouter.ai/api/v1',
+    this.openrouterChatModel = 'anthropic/claude-sonnet-4.5',
+    this.openrouterMaxTokens = 2048,
     this.youApiKey,
     this.connectPublicUrl = 'http://127.0.0.1:8788',
     this.connectSidecarUrl = 'http://127.0.0.1:8788',
@@ -76,6 +80,14 @@ class Config {
           e['GEMINI_BASE_URL'] ??
           'https://generativelanguage.googleapis.com/v1beta/openai',
       geminiChatModel: e['GEMINI_MODEL'] ?? 'gemini-3-flash-preview',
+      openrouterApiKey: _blankToNull(
+        e['OPENROUTER_API_KEY'] ?? e['OPEN_ROUTER_API_KEY'],
+      ),
+      openrouterBaseUrl: e['OPENROUTER_BASE_URL'] ?? 'https://openrouter.ai/api/v1',
+      openrouterChatModel:
+          e['OPENROUTER_MODEL'] ?? 'anthropic/claude-sonnet-4.5',
+      openrouterMaxTokens:
+          int.tryParse(e['OPENROUTER_MAX_TOKENS'] ?? '') ?? 2048,
       youApiKey: _blankToNull(e['YDC_API_KEY'] ?? e['YOU_WEB_SEARCH_TOKEN']),
       connectPublicUrl:
           e['CONNECT_PUBLIC_URL'] ??
@@ -135,8 +147,8 @@ class Config {
   /// Agent target. For OpenClaw this is an agent id, not a provider model.
   final String agentModel;
 
-  /// `auto` | `gemini` | `parasail` | `ollama` | `agent`. Auto prefers
-  /// Gemini, then Parasail, then local Ollama, then OpenClaw.
+  /// `auto` | `openrouter` | `gemini` | `parasail` | `ollama` | `agent`.
+  /// Auto prefers OpenRouter, then Gemini, then Parasail, then Ollama.
   final String chatProvider;
   final String parasailChatModel;
   final String ollamaChatModel;
@@ -145,6 +157,12 @@ class Config {
   final String? geminiApiKey;
   final String geminiBaseUrl;
   final String geminiChatModel;
+
+  /// OpenRouter OpenAI-compat (`https://openrouter.ai/api/v1`).
+  final String? openrouterApiKey;
+  final String openrouterBaseUrl;
+  final String openrouterChatModel;
+  final int openrouterMaxTokens;
 
   /// You.com search key for the `web_search` chat tool.
   final String? youApiKey;

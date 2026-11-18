@@ -8,18 +8,17 @@ import 'package:maia_api/src/timeline/summary.dart';
 class TimelineWriter {
   const TimelineWriter._();
 
-  static Future<String> ensureUser(gel.Client c) => _id(
+  static Future<String> ensureUser(gel.Client c) => _ensure(
     c,
-    r'''
-    select (
-      insert UserTimeline {
+    lookup: r'''
+      select (select UserTimeline filter .key = 'user' limit 1) { id }
+    ''',
+    insert: r'''
+      select (insert UserTimeline {
         owner := assert_exists(global current_person),
         key := 'user',
         name := 'Memory',
-      }
-      unless conflict on ((.owner, .key))
-      else (select UserTimeline filter .key = 'user')
-    ) { id }
+      }) { id }
     ''',
   );
 
@@ -27,63 +26,62 @@ class TimelineWriter {
     gel.Client c, {
     required String thingId,
     required String name,
-  }) => _id(
+  }) => _ensure(
     c,
-    r'''
-    select (
-      insert EntityTimeline {
+    lookup: r'''
+      select (select EntityTimeline filter .key = <str>$key limit 1) { id }
+    ''',
+    insert: r'''
+      select (insert EntityTimeline {
         owner := assert_exists(global current_person),
         key := <str>$key,
         name := <str>$name,
         subject := assert_single((select Thing filter .id = <uuid>$thing)),
-      }
-      unless conflict on ((.owner, .key))
-      else (select EntityTimeline filter .key = <str>$key)
-    ) { id }
+      }) { id }
     ''',
-    {'key': 'entity:$thingId', 'name': name, 'thing': thingId},
+    args: {'key': 'entity:$thingId', 'name': name, 'thing': thingId},
   );
 
   static Future<String> ensurePerson(
     gel.Client c, {
     required String personId,
     required String name,
-  }) => _id(
+  }) => _ensure(
     c,
-    r'''
-    select (
-      insert PersonTimeline {
+    lookup: r'''
+      select (select PersonTimeline filter .key = <str>$key limit 1) { id }
+    ''',
+    insert: r'''
+      select (insert PersonTimeline {
         owner := assert_exists(global current_person),
         key := <str>$key,
         name := <str>$name,
         subject := assert_single((select Person filter .id = <uuid>$person)),
-      }
-      unless conflict on ((.owner, .key))
-      else (select PersonTimeline filter .key = <str>$key)
-    ) { id }
+      }) { id }
     ''',
-    {'key': 'person:$personId', 'name': name, 'person': personId},
+    args: {'key': 'person:$personId', 'name': name, 'person': personId},
   );
 
   static Future<String> ensureConnection(
     gel.Client c,
     ConnectorSpec spec,
-  ) => _id(
+  ) => _ensure(
     c,
-    r'''
-    select (
-      insert ConnectionTimeline {
+    lookup: r'''
+      select (
+        select ConnectionTimeline filter .key = <str>$key limit 1
+      ) { id }
+    ''',
+    insert: r'''
+      select (insert ConnectionTimeline {
         owner := assert_exists(global current_person),
         key := <str>$key,
         name := <str>$name,
         platform := <str>$platform,
         account := <str>$account,
-      }
-      unless conflict on ((.owner, .key))
-      else (select ConnectionTimeline filter .key = <str>$key)
-    ) { id }
+      }) { id }
     ''',
-    {
+    args: {
       'key': spec.timelineKey,
       'name': spec.timelineName,
       'platform': spec.platform,
@@ -491,16 +489,35 @@ class TimelineWriter {
     );
   }
 
+  static Future<String> _ensure(
+    gel.Client c, {
+    required String lookup,
+    required String insert,
+    Map<String, dynamic>? args,
+  }) async {
+    final existing = _idOf(await c.querySingleJSON(lookup, args));
+    if (existing != null) return existing;
+    try {
+      return await _id(c, insert, args);
+    } on Object {
+      return _id(c, lookup, args);
+    }
+  }
+
   static Future<String> _id(
     gel.Client c,
     String query, [
     Map<String, dynamic>? args,
   ]) async {
-    final raw = jsonDecode(await c.querySingleJSON(query, args));
-    if (raw is! Map || raw['id'] is! String) {
-      throw StateError('timeline row was not stored');
-    }
-    return raw['id'] as String;
+    final id = _idOf(await c.querySingleJSON(query, args));
+    if (id == null) throw StateError('timeline row was not stored');
+    return id;
+  }
+
+  static String? _idOf(String json) {
+    final raw = jsonDecode(json);
+    if (raw is Map && raw['id'] is String) return raw['id'] as String;
+    return null;
   }
 
   static List<String> _strings(Object? raw) {

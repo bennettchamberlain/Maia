@@ -82,15 +82,20 @@ class AgentClient {
     required Uri baseUrl,
     required this.model,
     String? token,
+    Map<String, String>? extraHeaders,
+    this.maxTokens,
     http.Client? httpClient,
     this.timeout = const Duration(minutes: 5),
   }) : _baseUrl = baseUrl,
        _token = token,
+       _extraHeaders = extraHeaders ?? const {},
        _http = httpClient ?? http.Client();
 
   final Uri _baseUrl;
   final String model;
   final String? _token;
+  final Map<String, String> _extraHeaders;
+  final int? maxTokens;
   final http.Client _http;
   final Duration timeout;
 
@@ -98,6 +103,7 @@ class AgentClient {
     'content-type': 'application/json',
     'accept': 'text/event-stream',
     if (_token != null) 'authorization': 'Bearer $_token',
+    ..._extraHeaders,
   };
 
   /// True when the harness keeps its own transcript per `user` (OpenClaw
@@ -145,6 +151,7 @@ class AgentClient {
           'model': model,
           'messages': messages,
           'stream': true,
+          if (maxTokens != null) 'max_tokens': maxTokens,
           if (user != null) 'user': user,
           if (withTools && tools != null && tools.isNotEmpty) 'tools': tools,
         });
@@ -241,7 +248,10 @@ class AgentClient {
       final r = await _http
           .get(
             modelsUri(_baseUrl),
-            headers: {if (_token != null) 'authorization': 'Bearer $_token'},
+            headers: {
+              if (_token != null) 'authorization': 'Bearer $_token',
+              ..._extraHeaders,
+            },
           )
           .timeout(const Duration(seconds: 3));
       return r.statusCode == 200;

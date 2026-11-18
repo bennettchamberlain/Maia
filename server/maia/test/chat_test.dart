@@ -27,6 +27,18 @@ void main() {
       );
     });
 
+    test('OpenRouter /api/v1 base does not double the version', () {
+      final base = Uri.parse('https://openrouter.ai/api/v1');
+      expect(
+        AgentClient.completionsUri(base).toString(),
+        'https://openrouter.ai/api/v1/chat/completions',
+      );
+      expect(
+        AgentClient.modelsUri(base).toString(),
+        'https://openrouter.ai/api/v1/models',
+      );
+    });
+
     test('Gemini OpenAI-compat base keeps /v1beta/openai', () {
       final base = Uri.parse(
         'https://generativelanguage.googleapis.com/v1beta/openai',
@@ -140,6 +152,20 @@ void main() {
         c.geminiBaseUrl,
         'https://generativelanguage.googleapis.com/v1beta/openai',
       );
+    });
+
+    test('reads OpenRouter key, model, and provider', () {
+      final c = Config.fromEnv({
+        'MAIA_SESSION_SECRET': 'a-very-long-secret-at-least-32-chars!!',
+        'OPENROUTER_API_KEY': 'sk-or-v1-test',
+        'OPENROUTER_MODEL': 'anthropic/claude-sonnet-4.5',
+        'MAIA_CHAT_PROVIDER': 'openrouter',
+      });
+      expect(c.openrouterApiKey, 'sk-or-v1-test');
+      expect(c.openrouterChatModel, 'anthropic/claude-sonnet-4.5');
+      expect(c.chatProvider, 'openrouter');
+      expect(c.openrouterBaseUrl, 'https://openrouter.ai/api/v1');
+      expect(c.openrouterMaxTokens, 2048);
     });
   });
 
