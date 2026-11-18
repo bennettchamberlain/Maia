@@ -239,8 +239,8 @@ class _ConversationState extends State<_Conversation> {
                             ) {
                               final heard = v.state.liveLine.trim();
                               if (heard.isEmpty) return '';
-                              if (v.state.capture == VoiceCapture.talk) {
-                                return heard;
+                              if (v.state.capture != VoiceCapture.transcribe) {
+                                return '';
                               }
                               return quotedSpeech(heard);
                             });
@@ -375,25 +375,23 @@ class _ComposerActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final voice = context.watch<VoiceCubit>().state;
-    final transcribing =
-        voice.listening && voice.capture == VoiceCapture.transcribe;
+    final cubit = context.read<VoiceCubit>();
     return Wrap(
       spacing: 8,
       runSpacing: 8,
       children: [
         _Action(
           key: const Key('chat_transcribe_button'),
-          label: transcribing ? 'Stop' : 'Transcribe',
-          onPressed: () => unawaited(
-            context.read<VoiceCubit>().begin(VoiceCapture.transcribe),
-          ),
+          label: 'Transcribe',
+          selected:
+              voice.listening && voice.capture == VoiceCapture.transcribe,
+          onPressed: () => unawaited(cubit.begin(VoiceCapture.transcribe)),
         ),
         _Action(
           key: const Key('chat_talk_button'),
           label: 'Talk',
-          selected: voice.enabled,
-          onPressed: () =>
-              unawaited(context.read<VoiceCubit>().setTalk(on: !voice.enabled)),
+          selected: voice.listening && voice.capture == VoiceCapture.talk,
+          onPressed: () => unawaited(cubit.begin(VoiceCapture.talk)),
         ),
       ],
     );
@@ -436,10 +434,13 @@ class _TalkingBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final voice = context.watch<VoiceCubit>().state;
-    if (!voice.enabled) return const SizedBox.shrink();
+    final talking = voice.capture == VoiceCapture.talk || voice.speaking;
+    if (!talking) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Center(child: MaiaCloud(speaking: voice.speaking)),
+      child: Center(
+        child: MaiaCloud(speaking: voice.speaking),
+      ),
     );
   }
 }
@@ -573,8 +574,8 @@ class _Hint extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.all(24),
     child: Text(
-      'Ask about a memory, a place, or the web. Transcribe puts what you '
-      'said in the chat, in quotes. Talk stays on and reads replies aloud. '
+      'Ask about a memory, a place, or the web. Transcribe writes what you '
+      'say, in quotes. Talk keeps the microphone and the ring moves. '
       'The file icon attaches something you pick.',
       textAlign: TextAlign.center,
       style: ShadTheme.of(context).textTheme.muted,

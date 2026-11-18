@@ -188,16 +188,17 @@ class VoiceCubit extends Cubit<VoiceState> {
     }
   }
 
-  /// Talk stays on until it is pressed again. Off means nothing is read aloud.
+  /// Talk is the other capture. On hands the open microphone to it.
   Future<void> setTalk({required bool on}) async {
-    if (!on) {
-      await setEnabled(on: false);
+    if (on) {
+      await begin(VoiceCapture.talk);
       return;
     }
-    if (!state.enabled) await setEnabled(on: true);
-    if (isClosed) return;
-    if (state.listening && state.capture == VoiceCapture.talk) return;
-    await begin(VoiceCapture.talk);
+    if (state.capture == VoiceCapture.talk &&
+        (_wantListen || state.listening)) {
+      await stopListen();
+    }
+    await _talkOff();
   }
 
   void applyStatus(VoiceStatus status) {
@@ -388,7 +389,7 @@ class VoiceCubit extends Cubit<VoiceState> {
       }
       final ok = await stt.initialize(
         onError: (e) {
-          if (_holdTranscribe && _benignListenError(e.errorMsg)) {
+          if (_hold && _benignListenError(e.errorMsg)) {
             unawaited(_relisten());
             return;
           }
@@ -406,7 +407,7 @@ class VoiceCubit extends Cubit<VoiceState> {
         },
         onStatus: (status) {
           if (status != 'done' && status != 'notListening') return;
-          if (_holdTranscribe) {
+          if (_hold) {
             unawaited(_relisten());
             return;
           }
@@ -433,29 +434,49 @@ class VoiceCubit extends Cubit<VoiceState> {
     }
   }
 
-  bool get _holdTranscribe =>
-      _wantListen && state.capture == VoiceCapture.transcribe;
+  bool get _hold => _wantListen && state.capture != null;
 
-  /// Opens the microphone for [next]. The same button again stops it.
-  /// Talk sends one phrase. Transcribe keeps the recognizer open and
-  /// writes each word into the chat as it arrives.
+  /// The same button again stops. The other button keeps the microphone
+  /// and only changes where the words go.
   Future<void> begin(VoiceCapture next) async {
-    if (state.listening || _wantListen) {
-      final same = state.capture == next;
+    final active = _wantListen || state.listening;
+    if (active && state.capture == next) {
       await stopListen();
-      if (same) return;
+      if (next == VoiceCapture.talk) await _talkOff();
+      return;
     }
-    if (next == VoiceCapture.talk) await prepareSpeak();
-    if (!await prepareListen()) return;
+    final quote = state.capture == VoiceCapture.transcribe ? _heardLine() : '';
+    if (active) await _quietMic();
+    if (quote.isNotEmpty) _storeQuote(quote);
+    if (next == VoiceCapture.talk) {
+      unawaited(_prefs?.setBool(_enabledKey, true));
+      unawaited(prepareSpeak());
+      unawaited(startSidecar());
+    } else {
+      await _talkOff();
+    }
+    if (isClosed) return;
+    emit(
+      state.copyWith(
+        enabled: next == VoiceCapture.talk,
+        capture: next,
+        partial: '',
+        liveLine: '',
+        clearError: true,
+      ),
+    );
+    if (!await prepareListen()) {
+      if (!isClosed) {
+        emit(state.copyWith(listening: false, clearCapture: true));
+      }
+      return;
+    }
     _wantListen = true;
-    _said = '';
-    _lastFinal = '';
-    _hypothesis = '';
-    _lastWordsAt = null;
-    _breakBefore = false;
+    _resetPhrase();
     emit(
       state.copyWith(
         listening: true,
+        enabled: next == VoiceCapture.talk,
         capture: next,
         partial: '',
         liveLine: '',
@@ -471,42 +492,100 @@ class VoiceCubit extends Cubit<VoiceState> {
     }
   }
 
-  Future<void> _listen(VoiceCapture next) {
-    final holding = next == VoiceCapture.transcribe;
-    return _stt!.listen(
-      onResult: (result) {
-        final words = result.recognizedWords.trim();
-        if (holding) {
-          _showLive(words, finalResult: result.finalResult);
-          return;
-        }
-        if (!result.finalResult) {
-          emit(state.copyWith(partial: words, liveLine: words));
-          return;
-        }
-        _keepWords(words);
-      },
-      listenOptions: SpeechListenOptions(
-        partialResults: true,
-        cancelOnError: false,
-        listenMode: holding ? ListenMode.dictation : ListenMode.confirmation,
-        pauseFor: holding ? null : const Duration(seconds: 3),
-        listenFor: holding ? null : const Duration(seconds: 20),
+  Future<void> _talkOff() async {
+    interruptSpeech();
+    if (!isClosed) {
+      emit(state.copyWith(enabled: false, speaking: false));
+    }
+    await _prefs?.setBool(_enabledKey, false);
+  }
+
+  Future<void> _quietMic() async {
+    _wantListen = false;
+    try {
+      await _stt?.stop();
+    } on Object {
+      // Plugin already idle.
+    }
+  }
+
+  void _resetPhrase() {
+    _said = '';
+    _lastFinal = '';
+    _hypothesis = '';
+    _lastWordsAt = null;
+    _breakBefore = false;
+  }
+
+  String _heardLine() {
+    final live = state.liveLine.trim();
+    if (live.isNotEmpty) return live;
+    return state.partial.trim();
+  }
+
+  void _storeQuote(String line) {
+    _resetPhrase();
+    emit(
+      state.copyWith(
+        partial: '',
+        liveLine: '',
+        transcript: line,
+        transcriptSeq: state.transcriptSeq + 1,
       ),
     );
   }
 
-  /// A platform listen ends on its own. Open another so transcribe stays up
-  /// until the button is pressed again.
+  Future<void> _listen(VoiceCapture next) {
+    return _stt!.listen(
+      onResult: (result) {
+        if (!_wantListen || state.capture != next) return;
+        final words = result.recognizedWords.trim();
+        if (next == VoiceCapture.transcribe) {
+          _showLive(words, finalResult: result.finalResult);
+          return;
+        }
+        if (!result.finalResult) {
+          emit(
+            state.copyWith(
+              partial: words,
+              liveLine: words,
+              listening: true,
+              capture: VoiceCapture.talk,
+            ),
+          );
+          return;
+        }
+        if (words.isEmpty) return;
+        emit(
+          state.copyWith(
+            listening: true,
+            capture: VoiceCapture.talk,
+            lastHeard: words,
+            heardSeq: state.heardSeq + 1,
+            partial: '',
+            liveLine: '',
+          ),
+        );
+      },
+      listenOptions: SpeechListenOptions(
+        partialResults: true,
+        cancelOnError: false,
+        listenMode: ListenMode.dictation,
+      ),
+    );
+  }
+
+  /// A platform listen ends on its own. Open another in the same mode.
   Future<void> _relisten() async {
-    if (!_holdTranscribe || _relistening) return;
+    final mode = state.capture;
+    if (!_hold || _relistening || mode == null) return;
     _relistening = true;
     try {
       await Future<void>.delayed(Duration.zero);
-      if (!_holdTranscribe) return;
+      if (!_hold || state.capture != mode) return;
       if (_stt?.isListening ?? false) return;
-      await _listen(VoiceCapture.transcribe);
-      emit(state.copyWith(listening: true, capture: VoiceCapture.transcribe));
+      await _listen(mode);
+      emit(state.copyWith(listening: true, capture: mode));
     } on Object catch (e) {
       _note('transcribe', e);
     } finally {
@@ -559,35 +638,6 @@ class VoiceCubit extends Cubit<VoiceState> {
     }
   }
 
-  void _keepWords(String text) {
-    if (text.isEmpty) {
-      emit(state.copyWith(listening: false, partial: '', clearCapture: true));
-      return;
-    }
-    if (state.capture == VoiceCapture.transcribe) {
-      emit(
-        state.copyWith(
-          listening: false,
-          transcript: text,
-          transcriptSeq: state.transcriptSeq + 1,
-          partial: '',
-          clearCapture: true,
-        ),
-      );
-      return;
-    }
-    emit(
-      state.copyWith(
-        listening: false,
-        lastHeard: text,
-        heardSeq: state.heardSeq + 1,
-        partial: '',
-        liveLine: '',
-        clearCapture: true,
-      ),
-    );
-  }
-
   Future<void> stopListen() async {
     final transcribing = state.capture == VoiceCapture.transcribe;
     final line = state.liveLine.trim().isNotEmpty
@@ -599,38 +649,29 @@ class VoiceCubit extends Cubit<VoiceState> {
     } on Object {
       // Plugin already idle.
     }
-    if (transcribing) {
-      _said = '';
-      _lastFinal = '';
-      _hypothesis = '';
-      _lastWordsAt = null;
-      _breakBefore = false;
+    if (transcribing && line.isNotEmpty) {
+      _resetPhrase();
       emit(
         state.copyWith(
           listening: false,
           partial: '',
           liveLine: '',
-          transcript: line.isEmpty ? state.transcript : line,
-          transcriptSeq: line.isEmpty
-              ? state.transcriptSeq
-              : state.transcriptSeq + 1,
+          transcript: line,
+          transcriptSeq: state.transcriptSeq + 1,
           clearCapture: true,
         ),
       );
       return;
     }
-    if (line.isEmpty) {
-      emit(
-        state.copyWith(
-          listening: false,
-          partial: '',
-          liveLine: '',
-          clearCapture: true,
-        ),
-      );
-      return;
-    }
-    _keepWords(line);
+    _resetPhrase();
+    emit(
+      state.copyWith(
+        listening: false,
+        partial: '',
+        liveLine: '',
+        clearCapture: true,
+      ),
+    );
   }
 
   Future<void> speak(String text) async {
