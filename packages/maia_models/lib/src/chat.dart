@@ -340,6 +340,12 @@ final class ChatToolUsed extends ChatStreamEvent {
   final ChatToolCall call;
 }
 
+/// The model finished one round. A tool turn emits this before the follow-up.
+final class ChatFinished extends ChatStreamEvent {
+  const ChatFinished({this.reason});
+  final String? reason;
+}
+
 /// The full stored assistant message.
 final class ChatDone extends ChatStreamEvent {
   const ChatDone(this.message);

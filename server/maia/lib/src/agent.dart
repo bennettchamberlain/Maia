@@ -17,20 +17,35 @@ final class AgentText extends AgentEvent {
 /// A tool the model invoked.
 ///
 /// [extra] is everything on the tool-call object besides `index`, `id`,
-/// `type`, and `function`. Gemini puts `thought_signature` under
-/// `extra_content.google` and rejects the follow-up request if it is dropped.
+/// `type`, and `function`. [functionExtra] is everything on `function`
+/// besides `name` and `arguments`. Gemini's OpenAI stream puts
+/// `thought_signature` at `extra_content.google` on the tool call. The same
+/// object also arrives as a sibling of `tool_calls` (a thought part, or the
+/// chunk after the call). The follow-up request is rejected if the first
+/// function call does not carry it back.
 final class AgentToolCall extends AgentEvent {
-  const AgentToolCall(this.id, this.name, this.arguments, {this.extra});
+  const AgentToolCall(
+    this.id,
+    this.name,
+    this.arguments, {
+    this.extra,
+    this.functionExtra,
+  });
   final String id;
   final String name;
   final String arguments;
   final Map<String, dynamic>? extra;
+  final Map<String, dynamic>? functionExtra;
 
   /// OpenAI tool-call object, including provider fields such as a signature.
   Map<String, dynamic> toWire() => {
     'id': id,
     'type': 'function',
-    'function': {'name': name, 'arguments': arguments},
+    'function': {
+      'name': name,
+      'arguments': arguments,
+      if (functionExtra != null) ...functionExtra!,
+    },
     if (extra != null) ...extra!,
   };
 }
@@ -40,7 +55,64 @@ typedef _PendingTool = ({
   String name,
   StringBuffer args,
   Map<String, dynamic> extra,
+  Map<String, dynamic> functionExtra,
 });
+
+const _deltaOwn = {'role', 'content', 'tool_calls', 'refusal', 'function_call'};
+
+/// Copies [from] into [into] only for keys [into] does not already have.
+void _fillMissing(Map<String, dynamic> into, Map<String, dynamic> from) {
+  for (final entry in from.entries) {
+    if (entry.value == null || into.containsKey(entry.key)) continue;
+    into[entry.key] = entry.value;
+  }
+}
+
+int _toolSlot(Map<String, dynamic> call, Map<int, _PendingTool> buffers) {
+  final raw = call['index'];
+  if (raw is int) return raw;
+  if (raw is num) return raw.toInt();
+  final id = call['id'] as String?;
+  if (id != null) {
+    for (final entry in buffers.entries) {
+      if (entry.value.id == id) return entry.key;
+    }
+    if (buffers.length == 1) {
+      final only = buffers.entries.first;
+      final pending = only.value;
+      final placeholder =
+          pending.id == 'call_${only.key}' && pending.name.isEmpty;
+      if (placeholder) return only.key;
+    }
+    if (buffers.isEmpty) return 0;
+    var maxIndex = 0;
+    for (final key in buffers.keys) {
+      if (key > maxIndex) maxIndex = key;
+    }
+    return maxIndex + 1;
+  }
+  if (buffers.isEmpty) return 0;
+  var maxIndex = 0;
+  for (final key in buffers.keys) {
+    if (key > maxIndex) maxIndex = key;
+  }
+  return maxIndex;
+}
+
+/// Puts a signature that arrived outside `tool_calls` onto the first call
+/// that does not already have that field. Gemini validates the first
+/// function call in the step.
+void _attachCarriedSignature(
+  Map<int, _PendingTool> buffers,
+  Map<String, dynamic> carried,
+) {
+  if (carried.isEmpty || buffers.isEmpty) return;
+  var firstKey = buffers.keys.first;
+  for (final key in buffers.keys) {
+    if (key < firstKey) firstKey = key;
+  }
+  _fillMissing(buffers[firstKey]!.extra, carried);
+}
 
 /// Copies provider fields from one streamed tool-call chunk onto [into].
 /// Nested maps merge. `index`, `id`, `type`, and `function` are not extra.
@@ -154,7 +226,15 @@ class AgentClient {
     var res = await send(withTools: tools != null && tools.isNotEmpty);
     if (res.statusCode == 400 && tools != null && tools.isNotEmpty) {
       final body = await res.stream.bytesToString();
-      if (body.toLowerCase().contains('tool')) {
+      final lower = body.toLowerCase();
+      // A missing thought_signature mentions "tools" but is not "this
+      // model has no tools". Retrying without tools sends the same
+      // unsigned function call again.
+      if (lower.contains('thought_signature') ||
+          lower.contains('thought signature')) {
+        throw AgentException(res.statusCode, body);
+      }
+      if (lower.contains('tool')) {
         res = await send(withTools: false);
       } else {
         throw AgentException(res.statusCode, body);
@@ -165,6 +245,7 @@ class AgentClient {
       throw AgentException(res.statusCode, body);
     }
     final toolBuffers = <int, _PendingTool>{};
+    final carried = <String, dynamic>{};
     String? modelUsed;
     String? finish;
     await for (final line
@@ -194,30 +275,53 @@ class AgentClient {
         if (content is String && content.isNotEmpty) {
           yield AgentText(content);
         }
+        final aside = <String, dynamic>{};
+        mergeToolExtra(aside, {
+          for (final entry in delta.entries)
+            if (!_deltaOwn.contains(entry.key)) entry.key: entry.value,
+        });
+        if (aside.isNotEmpty) mergeToolExtra(carried, aside);
         final calls = delta['tool_calls'] as List<dynamic>?;
         if (calls != null) {
           for (final tc in calls) {
             final call = tc as Map<String, dynamic>;
-            final idx = call['index'] as int? ?? 0;
+            final idx = _toolSlot(call, toolBuffers);
             final fn = call['function'] as Map<String, dynamic>? ?? const {};
             final existing = toolBuffers[idx];
             final id = call['id'] as String? ?? existing?.id ?? 'call_$idx';
             final name = fn['name'] as String? ?? existing?.name ?? '';
             final buf = existing?.args ?? StringBuffer();
-            buf.write(fn['arguments'] as String? ?? '');
+            final args = fn['arguments'];
+            if (args is String) buf.write(args);
             final extra = existing?.extra ?? <String, dynamic>{};
-            mergeToolExtra(extra, call.cast<String, dynamic>());
-            toolBuffers[idx] = (id: id, name: name, args: buf, extra: extra);
+            mergeToolExtra(extra, call);
+            final functionExtra =
+                existing?.functionExtra ?? <String, dynamic>{};
+            mergeToolExtra(functionExtra, {
+              for (final entry in fn.entries)
+                if (entry.key != 'name' && entry.key != 'arguments')
+                  entry.key: entry.value,
+            });
+            toolBuffers[idx] = (
+              id: id,
+              name: name,
+              args: buf,
+              extra: extra,
+              functionExtra: functionExtra,
+            );
           }
         }
+        _attachCarriedSignature(toolBuffers, carried);
       }
     }
+    _attachCarriedSignature(toolBuffers, carried);
     for (final b in toolBuffers.values) {
       yield AgentToolCall(
         b.id,
         b.name,
         b.args.toString(),
         extra: b.extra.isEmpty ? null : b.extra,
+        functionExtra: b.functionExtra.isEmpty ? null : b.functionExtra,
       );
     }
     yield AgentDone(model: modelUsed, finishReason: finish);

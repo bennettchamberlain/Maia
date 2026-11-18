@@ -27,7 +27,9 @@ Future<void> main(List<String> args) async {
         }
         await _send(flags, text);
       default:
-        stderr.writeln('use: chat_eval setup [--url URI] | send [--url URI] <message>');
+        stderr.writeln(
+          'use: chat_eval setup [--url URI] | send [--url URI] <message>',
+        );
         exitCode = 64;
     }
   } on MaiaApiException catch (e) {
@@ -39,15 +41,17 @@ Future<void> main(List<String> args) async {
 final _local = File('evals/chat/client.local');
 
 class _Flags {
-  _Flags(this.url, this.handle, this.rest);
+  _Flags(this.url, this.handle, this.session, this.rest);
 
   final String? url;
   final String handle;
+  final String? session;
   final List<String> rest;
 }
 
 _Flags _flags(List<String> args) {
   String? url;
+  String? session;
   var handle = 'eval';
   final rest = <String>[];
   for (var i = 0; i < args.length; i++) {
@@ -56,18 +60,24 @@ _Flags _flags(List<String> args) {
       url = args[++i];
     } else if (a == '--handle' && i + 1 < args.length) {
       handle = args[++i];
+    } else if (a == '--session' && i + 1 < args.length) {
+      session = args[++i];
     } else {
       rest.add(a);
     }
   }
-  return _Flags(url, handle, rest);
+  return _Flags(url, handle, session, rest);
 }
 
 Future<void> _setup(_Flags flags) async {
   final saved = _readLocal();
-  final url = _normalise(flags.url ?? saved['MAIA_EVAL_URL'] ?? await _desktopUrl());
+  final url = _normalise(
+    flags.url ?? saved['MAIA_EVAL_URL'] ?? await _desktopUrl(),
+  );
   if (url == null) {
-    stderr.writeln('No server URL. Pass --url, or sign the desktop app into one.');
+    stderr.writeln(
+      'No server URL. Pass --url, or sign the desktop app into one.',
+    );
     exitCode = 64;
     return;
   }
@@ -97,11 +107,16 @@ Future<void> _setup(_Flags flags) async {
   final probe = await first.api.chatCreate(title: 'eval-probe');
   final seen = await second.api.chatSessions();
   if (!seen.any((s) => s.id == probe.id)) {
-    throw StateError('Second client did not see the session the first created.');
+    throw StateError(
+      'Second client did not see the session the first created.',
+    );
   }
 
   final desktop = _client(url);
-  final owner = await desktop.api.signIn(handle: 'maia', password: 'maia-admin');
+  final owner = await desktop.api.signIn(
+    handle: 'maia',
+    password: 'maia-admin',
+  );
   desktop.token = owner.token;
   final theirs = await desktop.api.chatSessions();
   if (theirs.any((s) => s.id == probe.id)) {
@@ -132,18 +147,28 @@ Future<void> _send(_Flags flags, String text) async {
   final client = _client(url);
   final session = await client.api.signIn(handle: handle, password: password);
   client.token = session.token;
-  final chat = await client.api.chatCreate();
+  final chatId = flags.session ?? (await client.api.chatCreate()).id;
   final events = <String>[];
   String? failed;
-  await for (final ev in client.api.chatSend(chat.id, text)) {
+  await for (final ev in client.api.chatSend(chatId, text)) {
     switch (ev) {
       case ChatUserStored():
         events.add('user');
       case ChatDelta(:final text):
         events.add('delta');
         stdout.write(text);
+      case ChatFinished():
+        events.add('finish');
       case ChatToolUsed(:final call):
-        events.add('tool ${call.name}');
+        final result = call.result ?? '';
+        final bad =
+            result.startsWith('error:') ||
+            result.contains('web search failed') ||
+            result.contains('web search is not configured') ||
+            result.contains('INVALID_ARGUMENT') ||
+            result.contains('thought_signature');
+        events.add(bad ? 'tool ${call.name} error' : 'tool ${call.name}');
+        if (bad && failed == null) failed = result;
       case ChatDone():
         events.add('done');
       case ChatFailed(:final message):
@@ -152,6 +177,8 @@ Future<void> _send(_Flags flags, String text) async {
     }
   }
   stdout.writeln();
+  stdout.writeln('http 200');
+  stdout.writeln('session $chatId');
   stdout.writeln('wire ${events.join(' ')}');
   if (failed != null) {
     stderr.writeln(failed);
@@ -161,10 +188,7 @@ Future<void> _send(_Flags flags, String text) async {
 
 class _Held {
   _Held(String url) {
-    api = MaiaApiClient(
-      baseUrl: Uri.parse(url),
-      tokenProvider: () => token,
-    );
+    api = MaiaApiClient(baseUrl: Uri.parse(url), tokenProvider: () => token);
   }
 
   late final MaiaApiClient api;
@@ -187,7 +211,10 @@ Future<Map<String, dynamic>> _health(String url) async {
 
 Future<void> _createPerson(String url, String handle, String password) async {
   final admin = _client(url);
-  final session = await admin.api.signIn(handle: 'maia', password: 'maia-admin');
+  final session = await admin.api.signIn(
+    handle: 'maia',
+    password: 'maia-admin',
+  );
   admin.token = session.token;
   final res = await http.post(
     Uri.parse('${url}admin/people'),

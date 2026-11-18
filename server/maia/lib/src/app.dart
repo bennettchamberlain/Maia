@@ -1096,11 +1096,7 @@ class MaiaApp {
           'limit': 60,
         }),
       ) as List<dynamic>;
-      for (final m in history.cast<Map<String, dynamic>>()) {
-        if (m['role'] == 'user' || m['role'] == 'assistant') {
-          frame.add({'role': m['role'], 'content': m['content']});
-        }
-      }
+      frame.addAll(replayChatHistory(history.cast<Map<String, dynamic>>()));
     }
 
     final out = StreamController<List<int>>();
