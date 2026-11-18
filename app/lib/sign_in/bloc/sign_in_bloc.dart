@@ -1,6 +1,7 @@
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:maia_api_client/maia_api_client.dart';
+import 'package:maia_app/ui/fault.dart';
 import 'package:maia_models/maia_models.dart';
 
 part 'sign_in_event.dart';
@@ -35,11 +36,13 @@ class SignInBloc extends Bloc<SignInEvent, SignInState> {
       emit(
         state.copyWith(
           status: SignInStatus.failure,
-          error: e.statusCode == 401 ? 'Wrong handle or password' : e.message,
+          error: e.statusCode == 401 ? 'Wrong handle or password' : e.shown,
         ),
       );
     } on Exception catch (e) {
-      emit(state.copyWith(status: SignInStatus.failure, error: '$e'));
+      emit(
+        state.copyWith(status: SignInStatus.failure, error: shownFault(e)),
+      );
     }
   }
 }

@@ -1,6 +1,7 @@
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:maia_api_client/maia_api_client.dart';
+import 'package:maia_app/ui/fault.dart';
 import 'package:maia_models/maia_models.dart';
 
 part 'memory_event.dart';
@@ -60,7 +61,7 @@ class MemoryBloc extends Bloc<MemoryEvent, MemoryState> {
         ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
       emit(state.copyWith(items: items, status: MemoryStatus.success));
     } on MaiaApiException catch (err) {
-      emit(state.copyWith(error: err.message));
+      emit(state.copyWith(error: err.shown));
     }
   }
 
@@ -77,9 +78,15 @@ class MemoryBloc extends Bloc<MemoryEvent, MemoryState> {
         ),
       );
     } on MaiaApiException catch (err) {
-      emit(state.copyWith(status: MemoryStatus.failure, error: err.message));
+      emit(state.copyWith(status: MemoryStatus.failure, error: err.shown));
     } on Exception catch (err) {
-      emit(state.copyWith(status: MemoryStatus.failure, error: '$err'));
+      rememberFault(_api, 'memory', err);
+      emit(
+        state.copyWith(
+          status: MemoryStatus.failure,
+          error: shownFault(err),
+        ),
+      );
     }
   }
 }

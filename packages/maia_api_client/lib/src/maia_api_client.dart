@@ -340,6 +340,7 @@ class MaiaApiClient {
             ? err['message'] as String? ?? 'chat failed'
             : 'chat failed',
         code: err is Map<String, dynamic> ? err['code'] as String? : null,
+        ref: err is Map<String, dynamic> ? err['ref'] as String? : null,
       );
     }
     String? event;
@@ -404,6 +405,26 @@ class MaiaApiClient {
     return _decode(await _http.get(uri, headers: _headers));
   }
 
+  /// Stores a client-side failure. Returns the reference, or null when
+  /// the report itself could not be saved.
+  Future<String?> reportFault({
+    required String action,
+    required String detail,
+    String client = 'maia',
+  }) async {
+    try {
+      final json = await _post('/faults', {
+        'action': action,
+        'detail': detail,
+        'client': client,
+      });
+      if (json is Map<String, dynamic>) return json['ref'] as String?;
+    } on Object {
+      return null;
+    }
+    return null;
+  }
+
   Future<Object?> _post(String path, Object body) async {
     final uri = _baseUrl.resolve(path.substring(1));
     return _decode(
@@ -456,6 +477,7 @@ class MaiaApiClient {
       r.statusCode,
       err['message'] as String? ?? r.reasonPhrase ?? 'request failed',
       code: err['code'] as String?,
+      ref: err['ref'] as String?,
     );
   }
 

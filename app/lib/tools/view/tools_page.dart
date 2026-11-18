@@ -4,6 +4,7 @@ import 'package:maia_api_client/maia_api_client.dart';
 import 'package:maia_app/chat/voice_cubit.dart';
 import 'package:maia_app/config/chat_settings_cubit.dart';
 import 'package:maia_app/ui/chrome.dart';
+import 'package:maia_app/ui/fault.dart';
 import 'package:maia_models/maia_models.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -62,8 +63,9 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
       });
     } on Exception catch (e) {
       if (!mounted) return;
+      rememberFault(_api, 'tools', e);
       setState(() {
-        _error = '$e';
+        _error = shownFault(e);
         _loading = false;
       });
     }
@@ -121,10 +123,11 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
     } on Exception catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
+      rememberFault(_api, 'tools', e);
       ShadToaster.of(context).show(
         ShadToast.destructive(
           title: const Text('Connect'),
-          description: Text('$e'),
+          description: Text(shownFault(e)),
         ),
       );
     }
@@ -137,10 +140,11 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
       await _load();
     } on Exception catch (e) {
       if (!mounted) return;
+      rememberFault(_api, 'tools', e);
       ShadToaster.of(context).show(
         ShadToast.destructive(
           title: const Text('Disconnect'),
-          description: Text('$e'),
+          description: Text(shownFault(e)),
         ),
       );
     } finally {
@@ -161,10 +165,11 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
       );
     } on Exception catch (e) {
       if (!mounted) return;
+      rememberFault(_api, 'tools', e);
       ShadToaster.of(context).show(
         ShadToast.destructive(
           title: const Text('Sync'),
-          description: Text('$e'),
+          description: Text(shownFault(e)),
         ),
       );
     } finally {
@@ -189,10 +194,11 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
     } on Exception catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
+      rememberFault(_api, 'tools', e);
       ShadToaster.of(context).show(
         ShadToast.destructive(
           title: const Text('You.com'),
-          description: Text('$e'),
+          description: Text(shownFault(e)),
         ),
       );
     }
@@ -391,10 +397,11 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
                       } on Exception catch (e) {
                         if (!mounted) return;
                         setState(() => _busy = false);
+                        rememberFault(_api, 'tools', e);
                         ShadToaster.of(context).show(
                           ShadToast.destructive(
                             title: const Text('You.com'),
-                            description: Text('$e'),
+                            description: Text(shownFault(e)),
                           ),
                         );
                       }

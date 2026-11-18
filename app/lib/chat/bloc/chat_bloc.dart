@@ -4,6 +4,7 @@ import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:maia_api_client/maia_api_client.dart';
 import 'package:maia_app/chat/parts/chat_part.dart';
+import 'package:maia_app/ui/fault.dart';
 import 'package:maia_models/maia_models.dart';
 
 part 'chat_event.dart';
@@ -47,7 +48,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         ),
       );
     } on Exception catch (err) {
-      emit(state.copyWith(status: ChatStatus.failure, error: _msg(err)));
+      emit(state.copyWith(status: ChatStatus.failure, error: _msg('chat', err)));
     }
   }
 
@@ -68,7 +69,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       final messages = await _api.chatMessages(e.session.id);
       emit(state.copyWith(status: ChatStatus.ready, messages: messages));
     } on Exception catch (err) {
-      emit(state.copyWith(status: ChatStatus.failure, error: _msg(err)));
+      emit(state.copyWith(status: ChatStatus.failure, error: _msg('chat', err)));
     }
   }
 
@@ -98,7 +99,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         ),
       );
     } on Exception catch (err) {
-      emit(state.copyWith(error: _msg(err)));
+      emit(state.copyWith(error: _msg('chat', err)));
     }
   }
 
@@ -133,7 +134,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         ),
       );
     } on Exception catch (err) {
-      emit(state.copyWith(error: _msg(err)));
+      emit(state.copyWith(error: _msg('chat', err)));
     }
   }
 
@@ -157,7 +158,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         ),
       );
     } on Exception catch (err) {
-      emit(state.copyWith(error: _msg(err)));
+      emit(state.copyWith(error: _msg('chat', err)));
     }
   }
 
@@ -182,7 +183,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       final entries = await _entriesFor(state.sessions);
       emit(state.copyWith(entries: entries, clearError: true));
     } on Exception catch (err) {
-      emit(state.copyWith(error: _msg(err)));
+      emit(state.copyWith(error: _msg('chat', err)));
     }
   }
 
@@ -199,7 +200,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         ),
       );
     } on Exception catch (err) {
-      emit(state.copyWith(error: _msg(err)));
+      emit(state.copyWith(error: _msg('chat', err)));
     }
   }
 
@@ -233,7 +234,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         ),
       );
     } on Exception catch (err) {
-      emit(state.copyWith(error: _msg(err)));
+      emit(state.copyWith(error: _msg('chat', err)));
     }
   }
 
@@ -309,7 +310,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
           sending: false,
           draftReply: '',
           draftTools: const [],
-          error: _msg(err),
+          error: _msg('chat', err),
           messages: _localSearchTurn(
             messages: state.messages,
             query: text,
@@ -320,10 +321,11 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     }
     if (state.sending) {
       // Stream ended without a terminal event (connection dropped).
+      rememberFault(_api, 'chat send', 'connection lost');
       emit(
         state.copyWith(
           sending: false,
-          error: 'connection lost',
+          error: 'The reply did not finish. Try again.',
           draftReply: '',
           messages: _localSearchTurn(
             messages: state.messages,
@@ -468,11 +470,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     return oneLine.length <= 60 ? oneLine : '${oneLine.substring(0, 57)}…';
   }
 
-  static String _msg(Exception e) => switch (e) {
-    MaiaApiException(:final statusCode, :final message) =>
-      statusCode == 503
-          ? 'No chat model. Set PARASAIL_API_KEY or start Ollama.'
-          : message,
-    _ => '$e',
-  };
+  String _msg(String action, Object error) {
+    rememberFault(_api, action, error);
+    return shownFault(error);
+  }
 }

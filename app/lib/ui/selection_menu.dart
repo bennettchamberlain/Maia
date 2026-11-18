@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:maia_api_client/maia_api_client.dart';
 import 'package:maia_app/chat/bloc/chat_bloc.dart';
+import 'package:maia_app/ui/fault.dart';
 import 'package:maia_models/maia_models.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -154,7 +155,8 @@ class _AddToFileDialogState extends State<_AddToFileDialog> {
       setState(() => _files = files);
     } on Exception catch (e) {
       if (!mounted) return;
-      setState(() => _error = '$e');
+      setState(() => _error = shownFault(e));
+      rememberFault(widget.api, 'add to file', e);
     }
   }
 

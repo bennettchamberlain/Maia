@@ -15,6 +15,7 @@ import 'package:maia_api/src/auth/session_token.dart';
 import 'package:maia_api/src/config.dart';
 import 'package:maia_api/src/db.dart';
 import 'package:maia_api/src/embeddings.dart';
+import 'package:maia_api/src/faults.dart';
 import 'package:maia_api/src/geocoder.dart';
 import 'package:maia_api/src/parasail_embeddings.dart';
 import 'package:maia_api/src/graph/graph_block.dart';
@@ -52,6 +53,7 @@ class MaiaApp {
     Password? password,
   }) : _password = password ?? const Password(),
        _tokens = SessionToken(config.sessionSecret),
+       faults = FaultLog(db),
        voice = VoiceSupervisor(config),
        geocoder =
            geocoder ??
@@ -62,6 +64,7 @@ class MaiaApp {
 
   final Config config;
   final Db db;
+  final FaultLog faults;
   final NamedQueries queries;
   final PgBossQueue? jobs;
   final Embeddings? embeddings;
@@ -137,7 +140,7 @@ class MaiaApp {
   Handler get handler => const Pipeline()
       .addMiddleware(logRequests())
       .addMiddleware(_cors)
-      .addMiddleware(_errors)
+      .addMiddleware(_guard)
       .addHandler(_router.call);
 
   static const _corsHeaders = {
@@ -158,6 +161,7 @@ class MaiaApp {
   Router get _router => Router()
     ..get('/health', _health)
     ..post('/auth/signin', _signIn)
+    ..post('/faults', _authed(_faultReport))
     ..get('/me', _authed((r, c) => _one(c, 'me')))
     ..get('/me/api-keys', _authed(_apiKeysList))
     ..post('/me/api-keys', _authed(_apiKeysCreate))
@@ -1603,8 +1607,21 @@ class MaiaApp {
         );
         emit('done', {'message': assistant});
         await _touchChat(c, sessionId);
-      } on Object catch (e) {
-        emit('error', {'message': e.toString()});
+      } on Object catch (e, st) {
+        final person = await _personId(c);
+        final summary = 'The reply did not finish. Try again.';
+        final ref = await faults.write(
+          kind: 'server',
+          action: 'chat send',
+          summary: summary,
+          detail: '$e\n$st',
+          route: r.requestedUri.path,
+          client: r.headers['user-agent'],
+          personId: person,
+        );
+        emit('error', {
+          'message': ref == null ? summary : '$summary Reference $ref.',
+        });
       } finally {
         await out.close();
       }
@@ -2753,11 +2770,90 @@ class MaiaApp {
   static Response _json(Object body) =>
       Response.ok(jsonEncode(body), headers: _jsonHeaders);
 
-  static Response _error(int status, String code, String message) => Response(
+  static Response _error(
+    int status,
+    String code,
+    String message, {
+    String? ref,
+  }) => Response(
     status,
-    body: jsonEncode({'code': code, 'message': message}),
+    body: jsonEncode({
+      'code': code,
+      'message': message,
+      if (ref != null) 'ref': ref,
+    }),
     headers: _jsonHeaders,
   );
+
+  /// Caught failures: short line back, raw error in ClientFault.
+  Handler _guard(Handler inner) => (Request r) async {
+    try {
+      return await inner(r);
+    } on gel.AccessPolicyError catch (e, st) {
+      return _recorded(r, 403, 'forbidden', e, st);
+    } on gel.ConstraintViolationError catch (e, st) {
+      return _recorded(r, 409, 'conflict', e, st);
+    } on gel.InvalidArgumentError catch (e, st) {
+      return _recorded(r, 400, 'bad_request', e, st);
+    } on gel.CardinalityViolationError catch (e, st) {
+      return _recorded(r, 404, 'not_found', e, st);
+    } on FormatException catch (e, st) {
+      return _recorded(r, 400, 'bad_request', e, st);
+    } on Object catch (e, st) {
+      return _recorded(r, 500, 'server_error', e, st);
+    }
+  };
+
+  Future<Response> _recorded(
+    Request r,
+    int status,
+    String code,
+    Object error,
+    StackTrace stack,
+  ) async {
+    final summary = friendlyFault(status);
+    final ref = await faults.write(
+      kind: 'server',
+      action: '${r.method} ${r.requestedUri.path}',
+      summary: summary,
+      detail: '$error\n$stack',
+      route: r.requestedUri.path,
+      client: r.headers['user-agent'],
+      personId: await _callerId(r),
+    );
+    return _error(status, code, summary, ref: ref);
+  }
+
+  Future<Response> _faultReport(Request r, gel.Client c) async {
+    final body = await _body(r);
+    final action = (body['action'] as String?)?.trim() ?? '';
+    final detail = (body['detail'] as String?)?.trim() ?? '';
+    if (action.isEmpty || detail.isEmpty) {
+      return _error(400, 'bad_request', 'action and detail required');
+    }
+    final summary = 'Something went wrong. Try again.';
+    final ref = await faults.write(
+      kind: 'client',
+      action: action,
+      summary: summary,
+      detail: detail,
+      route: r.requestedUri.path,
+      client: (body['client'] as String?) ?? r.headers['user-agent'],
+      personId: await _personId(c),
+    );
+    return _json({'ref': ref, 'message': summary});
+  }
+
+  Future<String?> _callerId(Request r) async {
+    final auth = r.headers['authorization'];
+    var token = auth != null && auth.startsWith('Bearer ')
+        ? auth.substring(7)
+        : null;
+    token ??= r.headers['x-api-key'];
+    if (token == null) return null;
+    if (ApiKeys.looksLikeKey(token)) return _resolveApiKey(token);
+    return _tokens.verify(token);
+  }
 
   static Future<Map<String, dynamic>> _body(Request r) async {
     final text = await r.readAsString();
@@ -2766,19 +2862,4 @@ class MaiaApp {
     return decoded is Map<String, dynamic> ? decoded : const {};
   }
 
-  static Handler _errors(Handler inner) => (Request r) async {
-    try {
-      return await inner(r);
-    } on gel.AccessPolicyError catch (e) {
-      return _error(403, 'forbidden', e.message);
-    } on gel.ConstraintViolationError catch (e) {
-      return _error(409, 'conflict', e.message);
-    } on gel.InvalidArgumentError catch (e) {
-      return _error(400, 'bad_request', e.message);
-    } on gel.CardinalityViolationError catch (e) {
-      return _error(404, 'not_found', e.message);
-    } on FormatException catch (e) {
-      return _error(400, 'bad_request', e.message);
-    }
-  };
 }

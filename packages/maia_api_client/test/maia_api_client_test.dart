@@ -35,6 +35,21 @@ void main() {
     expect(feed.single.kind, 'note');
   });
 
+  test('hides a raw error and keeps the reference', () {
+    const raw = MaiaApiException(
+      400,
+      'Function call is missing a thought_signature',
+      code: 'bad_request',
+      ref: 'ab12cd34',
+    );
+    expect(
+      raw.shown,
+      'Something went wrong. Try again. Reference ab12cd34.',
+    );
+    const plain = MaiaApiException(400, 'content required');
+    expect(plain.shown, 'content required');
+  });
+
   test('maps errors to MaiaApiException', () async {
     final c = client(
       MockClient(

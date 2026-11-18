@@ -1,6 +1,7 @@
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:maia_api_client/maia_api_client.dart';
+import 'package:maia_app/ui/fault.dart';
 import 'package:maia_models/maia_models.dart';
 
 part 'jobs_event.dart';
@@ -54,15 +55,16 @@ class JobsBloc extends Bloc<JobsEvent, JobsState> {
         state.copyWith(
           status: JobsStatus.failure,
           refreshing: false,
-          error: err.message,
+          error: err.shown,
         ),
       );
     } on Exception catch (err) {
+      rememberFault(_api, 'jobs', err);
       emit(
         state.copyWith(
           status: JobsStatus.failure,
           refreshing: false,
-          error: '$err',
+          error: shownFault(err),
         ),
       );
     }

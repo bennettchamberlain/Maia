@@ -13,6 +13,7 @@ import 'package:maia_app/chat/view/file_chip.dart';
 import 'package:maia_app/chat/view/timeline_column.dart';
 import 'package:maia_app/config/chat_settings_cubit.dart';
 import 'package:maia_app/ui/chrome.dart';
+import 'package:maia_app/ui/fault.dart';
 import 'package:maia_app/ui/selection_menu.dart';
 import 'package:maia_models/maia_models.dart';
 import 'package:material_ui/material_ui.dart';
@@ -95,6 +96,7 @@ class _ConversationState extends State<_Conversation> {
   final _composer = GlobalKey<ChatComposerState>();
   final _scroll = ScrollController();
   var _picking = false;
+  String? _notice;
 
   @override
   void dispose() {
@@ -115,6 +117,11 @@ class _ConversationState extends State<_Conversation> {
       final file = await openFile();
       if (file == null || !mounted) return;
       await _composer.currentState?.addPicked(file);
+      if (mounted) setState(() => _notice = null);
+    } on Object catch (e) {
+      if (!mounted) return;
+      rememberFault(context.read<MaiaApiClient>(), 'attach file', e);
+      setState(() => _notice = shownFault(e));
     } finally {
       if (mounted) setState(() => _picking = false);
     }
@@ -213,11 +220,11 @@ class _ConversationState extends State<_Conversation> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (state.error != null)
+                  if (state.error != null || _notice != null)
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Text(
-                        state.error!,
+                        state.error ?? _notice!,
                         style: theme.textTheme.small.copyWith(
                           color: theme.colorScheme.destructive,
                         ),

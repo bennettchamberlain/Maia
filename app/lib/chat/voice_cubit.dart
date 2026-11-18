@@ -6,6 +6,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:maia_api_client/maia_api_client.dart';
 import 'package:maia_models/maia_models.dart';
 import 'package:maia_app/chat/parts/chat_part.dart';
+import 'package:maia_app/ui/fault.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
@@ -145,6 +146,10 @@ class VoiceCubit extends Cubit<VoiceState> {
   static const _enabledKey = 'maia.voice.enabled';
 
   final MaiaApiClient _api;
+
+  void _note(String action, Object detail) {
+    unawaited(_api.reportFault(action: action, detail: '$detail'));
+  }
   final SharedPreferences? _prefs;
   SpeechToText? _stt;
   FlutterTts? _tts;
@@ -259,7 +264,8 @@ class VoiceCubit extends Cubit<VoiceState> {
       emit(state.copyWith(ttsAvailable: true, clearError: true));
       return true;
     } on Object catch (e) {
-      emit(state.copyWith(ttsAvailable: false, error: '$e'));
+      _note('talk', e);
+      emit(state.copyWith(ttsAvailable: false, error: shownFault(e)));
       return false;
     }
   }
@@ -274,7 +280,13 @@ class VoiceCubit extends Cubit<VoiceState> {
             emit(state.copyWith(listening: false, clearError: true));
             return;
           }
-          emit(state.copyWith(listening: false, error: e.errorMsg));
+          _note('transcribe', e.errorMsg);
+          emit(
+            state.copyWith(
+              listening: false,
+              error: 'Speech recognition stopped.',
+            ),
+          );
         },
         onStatus: (status) {
           if (status == 'done' || status == 'notListening') {
@@ -289,13 +301,15 @@ class VoiceCubit extends Cubit<VoiceState> {
             error: 'Microphone is not available on this device.',
           ),
         );
+        _note('transcribe', 'microphone unavailable');
         return false;
       }
       _stt = stt;
       emit(state.copyWith(sttAvailable: true, clearError: true));
       return true;
     } on Object catch (e) {
-      emit(state.copyWith(sttAvailable: false, error: '$e'));
+      _note('transcribe', e);
+      emit(state.copyWith(sttAvailable: false, error: shownFault(e)));
       return false;
     }
   }
@@ -338,7 +352,8 @@ class VoiceCubit extends Cubit<VoiceState> {
         ),
       );
     } on Object catch (e) {
-      emit(state.copyWith(listening: false, error: '$e'));
+      _note('transcribe', e);
+      emit(state.copyWith(listening: false, error: shownFault(e)));
     }
   }
 
@@ -393,7 +408,8 @@ class VoiceCubit extends Cubit<VoiceState> {
       await _tts?.stop();
       await _tts?.speak(line);
     } on Object catch (e) {
-      emit(state.copyWith(speaking: false, error: '$e'));
+      _note('talk', e);
+      emit(state.copyWith(speaking: false, error: shownFault(e)));
       return;
     }
     emit(state.copyWith(speaking: false));

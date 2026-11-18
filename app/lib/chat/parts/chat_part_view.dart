@@ -9,6 +9,7 @@ import 'package:maia_app/chat/parts/chat_part.dart';
 import 'package:maia_app/chat/parts/you_search.dart';
 import 'package:maia_app/chat/voice_cubit.dart';
 import 'package:maia_app/ui/chrome.dart';
+import 'package:maia_app/ui/fault.dart';
 import 'package:maia_models/maia_models.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -777,7 +778,7 @@ class _YouSearchViewState extends State<_YouSearchView> {
       setState(() => _hits = hits);
     } on Exception catch (error) {
       if (!mounted) return;
-      setState(() => _error = '$error');
+      setState(() => _error = shownFault(error));
     }
   }
 

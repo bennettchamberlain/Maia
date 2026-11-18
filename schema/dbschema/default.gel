@@ -677,4 +677,25 @@ module default {
       allow select
       using (global current_person_id ?= .asker.id);
   }
+
+  # A failure someone hit. `summary` is the short line they saw. `detail`
+  # is the raw error. maia-api writes these; people do not.
+  type ClientFault {
+    required ref: str { constraint exclusive };
+    required kind: str;
+    required action: str;
+    required summary: str;
+    required detail: str;
+    route: str;
+    client: str;
+    person: Person;
+    required created_at: datetime { default := datetime_of_statement() };
+
+    index on (.created_at);
+    index on ((.person, .created_at));
+
+    access policy service_records
+      allow insert, select
+      using (global service_mode ?? false);
+  }
 }
