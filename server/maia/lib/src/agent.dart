@@ -63,25 +63,27 @@ class AgentClient {
   bool get keepsOwnHistory => model.startsWith('openclaw');
 
   /// `https://api.parasail.io/v1` + `chat/completions` must keep `/v1`.
+  /// Gemini's OpenAI-compat root is `/v1beta/openai`, same idea.
   /// `Uri.resolve` drops the last segment when the path has no trailing slash.
   static Uri _join(Uri base, String child) {
     final s = base.toString();
     return Uri.parse(s.endsWith('/') ? '$s$child' : '$s/$child');
   }
 
+  static bool _openaiRoot(Uri base) {
+    final segs = base.pathSegments.where((s) => s.isNotEmpty);
+    if (segs.isEmpty) return false;
+    final last = segs.last;
+    return last == 'v1' || last == 'openai';
+  }
+
   static Uri completionsUri(Uri base) {
-    final path = base.path;
-    if (path.endsWith('/v1') || path.endsWith('/v1/')) {
-      return _join(base, 'chat/completions');
-    }
+    if (_openaiRoot(base)) return _join(base, 'chat/completions');
     return _join(base, 'v1/chat/completions');
   }
 
   static Uri modelsUri(Uri base) {
-    final path = base.path;
-    if (path.endsWith('/v1') || path.endsWith('/v1/')) {
-      return _join(base, 'models');
-    }
+    if (_openaiRoot(base)) return _join(base, 'models');
     return _join(base, 'v1/models');
   }
 

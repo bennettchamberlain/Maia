@@ -19,6 +19,10 @@ class Config {
     this.chatProvider = 'auto',
     this.parasailChatModel = 'parasail-glm-53-flash',
     this.ollamaChatModel = 'llama3.2',
+    this.geminiApiKey,
+    this.geminiBaseUrl =
+        'https://generativelanguage.googleapis.com/v1beta/openai',
+    this.geminiChatModel = 'gemini-3-flash-preview',
     this.youApiKey,
     this.connectPublicUrl = 'http://127.0.0.1:8788',
     this.connectSidecarUrl = 'http://127.0.0.1:8788',
@@ -65,6 +69,13 @@ class Config {
           e['MAIA_PARASAIL_CHAT_MODEL'] ??
           'parasail-glm-53-flash',
       ollamaChatModel: e['MAIA_CHAT_MODEL'] ?? 'llama3.2',
+      geminiApiKey: _blankToNull(
+        e['GOOGLE_GEMINI_API_KEY'] ?? e['GEMINI_API_KEY'],
+      ),
+      geminiBaseUrl:
+          e['GEMINI_BASE_URL'] ??
+          'https://generativelanguage.googleapis.com/v1beta/openai',
+      geminiChatModel: e['GEMINI_MODEL'] ?? 'gemini-3-flash-preview',
       youApiKey: _blankToNull(e['YDC_API_KEY'] ?? e['YOU_WEB_SEARCH_TOKEN']),
       connectPublicUrl:
           e['CONNECT_PUBLIC_URL'] ??
@@ -124,11 +135,16 @@ class Config {
   /// Agent target. For OpenClaw this is an agent id, not a provider model.
   final String agentModel;
 
-  /// `auto` | `parasail` | `ollama` | `agent`. Auto prefers Parasail, then
-  /// local Ollama, then an explicit OpenClaw gateway.
+  /// `auto` | `gemini` | `parasail` | `ollama` | `agent`. Auto prefers
+  /// Gemini, then Parasail, then local Ollama, then OpenClaw.
   final String chatProvider;
   final String parasailChatModel;
   final String ollamaChatModel;
+
+  /// Gemini Developer API (OpenAI-compat at `/v1beta/openai`).
+  final String? geminiApiKey;
+  final String geminiBaseUrl;
+  final String geminiChatModel;
 
   /// You.com search key for the `web_search` chat tool.
   final String? youApiKey;

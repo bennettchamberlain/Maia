@@ -24,6 +24,20 @@ void main() {
         'http://127.0.0.1:11434/v1/chat/completions',
       );
     });
+
+    test('Gemini OpenAI-compat base keeps /v1beta/openai', () {
+      final base = Uri.parse(
+        'https://generativelanguage.googleapis.com/v1beta/openai',
+      );
+      expect(
+        AgentClient.completionsUri(base).toString(),
+        'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      );
+      expect(
+        AgentClient.modelsUri(base).toString(),
+        'https://generativelanguage.googleapis.com/v1beta/openai/models',
+      );
+    });
   });
 
   group('ChatToolbox formatting', () {
@@ -111,6 +125,22 @@ void main() {
       expect(c.youApiKey, 'you');
       expect(c.chatProvider, 'auto');
       expect(c.ollamaChatModel, 'llama3.2');
+    });
+
+    test('reads Gemini key, model, and provider', () {
+      final c = Config.fromEnv({
+        'MAIA_SESSION_SECRET': 'a-very-long-secret-at-least-32-chars!!',
+        'GOOGLE_GEMINI_API_KEY': 'gemini-key',
+        'GEMINI_MODEL': 'gemini-3-flash-preview',
+        'MAIA_CHAT_PROVIDER': 'gemini',
+      });
+      expect(c.geminiApiKey, 'gemini-key');
+      expect(c.geminiChatModel, 'gemini-3-flash-preview');
+      expect(c.chatProvider, 'gemini');
+      expect(
+        c.geminiBaseUrl,
+        'https://generativelanguage.googleapis.com/v1beta/openai',
+      );
     });
   });
 }

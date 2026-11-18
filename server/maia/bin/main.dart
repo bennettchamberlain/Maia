@@ -106,6 +106,13 @@ Future<void> main() async {
     await runner.start();
   }
 
+  final geminiChat = config.geminiApiKey == null
+      ? null
+      : AgentClient(
+          baseUrl: Uri.parse(config.geminiBaseUrl),
+          token: config.geminiApiKey,
+          model: config.geminiChatModel,
+        );
   final parasailChat = config.parasailApiKey == null
       ? null
       : AgentClient(
@@ -134,6 +141,7 @@ Future<void> main() async {
     jobs: jobs,
     embeddings: local,
     cloudEmbeddings: cloud,
+    geminiChat: geminiChat,
     parasailChat: parasailChat,
     ollamaChat: ollamaChat,
     agent: gateway,
