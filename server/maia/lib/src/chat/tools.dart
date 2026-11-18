@@ -18,6 +18,7 @@ class ChatToolbox {
     this.openRouterBaseUrl = 'https://openrouter.ai/api/v1',
     this.openRouterModel = 'google/gemini-2.5-flash-lite',
     this.disabled = const {},
+    this.connector,
     http.Client? httpClient,
   }) : _http = httpClient ?? http.Client();
 
@@ -41,6 +42,9 @@ class ChatToolbox {
   final String openRouterBaseUrl;
   final String openRouterModel;
   final Set<String> disabled;
+
+  /// Runs a granted One connector. Null when this person has none.
+  final Future<String> Function(Map<String, dynamic> args)? connector;
   final http.Client _http;
 
   bool get youConfigured => youApiKey != null && youApiKey!.isNotEmpty;
@@ -49,6 +53,8 @@ class ChatToolbox {
       openRouterApiKey != null && openRouterApiKey!.isNotEmpty;
 
   bool get webAvailable => youConfigured || openRouterConfigured;
+
+  bool get connectorsAvailable => connector != null;
 
   bool isOn(String name) => !disabled.contains(name);
 
@@ -67,6 +73,11 @@ class ChatToolbox {
       available: webAvailable,
     ),
     _info('now', 'Current local date and time.'),
+    _info(
+      'connector',
+      'Use a connected app such as Gmail, Calendar, or Slack.',
+      available: connectorsAvailable,
+    ),
   ];
 
   /// OpenAI `tools` array. Omit unavailable or switched-off tools.
@@ -119,6 +130,28 @@ class ChatToolbox {
         const ['query'],
       ),
     if (isOn('now')) _fn('now', 'Current local date and time.'),
+    if (connectorsAvailable && isOn('connector'))
+      _fn(
+        'connector',
+        'Use one connected app to complete work. Call with platform and '
+        'intent first. The result names an action_id and the fields it '
+        'needs. Call again with action_id plus path_params, query, or body.',
+        {
+          'platform': {
+            'type': 'string',
+            'description': 'Connector slug from the connected apps list.',
+          },
+          'intent': {
+            'type': 'string',
+            'description': 'What to do, in words, when action_id is unknown.',
+          },
+          'action_id': {'type': 'string'},
+          'path_params': {'type': 'object'},
+          'query': {'type': 'object'},
+          'body': {'type': 'object'},
+        },
+        const ['platform'],
+      ),
   ];
 
   Future<String> run(gel.Client c, String name, String rawArgs) async {
@@ -154,6 +187,12 @@ class ChatToolbox {
         ),
         'life_graph' => formatGraph(await lifeGraph(c)),
         'web_search' => await _webSearch('${args['query'] ?? ''}'),
+        'connector' => connector == null
+            ? jsonEncode({
+                'type': 'text',
+                'text': 'no connected apps',
+              })
+            : await connector!(args),
         _ => 'unknown tool $name',
       };
     } on Object catch (e) {

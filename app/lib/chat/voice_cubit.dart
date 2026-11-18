@@ -156,6 +156,7 @@ class VoiceCubit extends Cubit<VoiceState> {
   final MaiaApiClient _api;
   final SharedPreferences? _prefs;
   bool _wantListen = false;
+  int _pendingSpeech = 0;
   bool _relistening = false;
   String _said = '';
   String _lastFinal = '';
@@ -184,6 +185,18 @@ class VoiceCubit extends Cubit<VoiceState> {
       interruptSpeech();
       emit(state.copyWith(speaking: false));
     }
+  }
+
+  /// Talk stays on until it is pressed again. Off means nothing is read aloud.
+  Future<void> setTalk({required bool on}) async {
+    if (!on) {
+      await setEnabled(on: false);
+      return;
+    }
+    if (!state.enabled) await setEnabled(on: true);
+    if (isClosed) return;
+    if (state.listening && state.capture == VoiceCapture.talk) return;
+    await begin(VoiceCapture.talk);
   }
 
   void applyStatus(VoiceStatus status) {
@@ -375,17 +388,7 @@ class VoiceCubit extends Cubit<VoiceState> {
       await stopListen();
       if (same) return;
     }
-    if (next == VoiceCapture.talk) {
-      if (!state.enabled) {
-        emit(state.copyWith(enabled: true, clearError: true));
-        await _prefs?.setBool(_enabledKey, true);
-      }
-      if (!state.sidecarLive) {
-        final up = await startSidecar();
-        if (!up || isClosed) return;
-      }
-      await prepareSpeak();
-    }
+    if (next == VoiceCapture.talk) await prepareSpeak();
     if (!await prepareListen()) return;
     _wantListen = true;
     _said = '';
@@ -574,6 +577,7 @@ class VoiceCubit extends Cubit<VoiceState> {
   }
 
   Future<void> speak(String text) async {
+    if (!state.enabled) return;
     final line = text.trim();
     if (line.isEmpty) return;
     if (!await prepareSpeak()) return;
@@ -608,8 +612,12 @@ class VoiceCubit extends Cubit<VoiceState> {
   /// Drop anything still waiting to be spoken. A new question barges in.
   void interruptSpeech() {
     _speechGen++;
+    _pendingSpeech = 0;
     _queuedSpeech = '';
     unawaited(_tts?.stop());
+    if (!isClosed && state.speaking) {
+      emit(state.copyWith(speaking: false));
+    }
   }
 
   /// Speak a finished assistant message. Sentences already read from the
@@ -628,10 +636,19 @@ class VoiceCubit extends Cubit<VoiceState> {
 
   void _enqueueSpeech(String text) {
     final gen = _speechGen;
-    _speech = _speech.then((_) async {
-      if (gen != _speechGen || isClosed) return;
-      await _speakChunk(text);
-    });
+    _pendingSpeech++;
+    _speech = _speech
+        .then((_) async {
+          if (gen != _speechGen || isClosed) return;
+          await _speakChunk(text);
+        })
+        .whenComplete(() {
+          if (gen != _speechGen || isClosed) return;
+          if (_pendingSpeech > 0) _pendingSpeech--;
+          if (_pendingSpeech == 0 && state.speaking) {
+            emit(state.copyWith(speaking: false));
+          }
+        });
   }
 
   Future<void> _speakChunk(String text) async {
@@ -649,9 +666,7 @@ class VoiceCubit extends Cubit<VoiceState> {
       if (!isClosed) {
         emit(state.copyWith(speaking: false, error: shownFault(e)));
       }
-      return;
     }
-    if (!isClosed) emit(state.copyWith(speaking: false));
   }
 
   Future<void> _sayRemote(String line) async {

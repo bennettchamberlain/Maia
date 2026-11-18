@@ -16,6 +16,7 @@ import 'package:maia_api/src/config.dart';
 import 'package:maia_api/src/db.dart';
 import 'package:maia_api/src/embeddings.dart';
 import 'package:maia_api/src/one/catalog.dart';
+import 'package:maia_api/src/one/done_page.dart';
 import 'package:maia_api/src/faults.dart';
 import 'package:maia_api/src/geocoder.dart';
 import 'package:maia_api/src/parasail_embeddings.dart';
@@ -847,7 +848,11 @@ class MaiaApp {
     Directory('${config.hackathonRoot ?? Directory.current.path}/.secrets'),
   );
 
-  ChatToolbox _toolboxFor(ToolPrefs prefs) => ChatToolbox(
+  ChatToolbox _toolboxFor(
+    ToolPrefs prefs, {
+    String? personId,
+    bool connectors = false,
+  }) => ChatToolbox(
     searchMemory: _searchMemory,
     recentMemory: (c, limit) async {
       final rows = jsonDecode(
@@ -883,7 +888,62 @@ class MaiaApp {
     openRouterBaseUrl: config.openrouterBaseUrl,
     openRouterModel: config.openrouterChatModel,
     disabled: prefs.disabled,
+    connector: connectors && personId != null
+        ? (args) => _useConnector(personId, args)
+        : null,
   );
+
+  Future<String> _useConnector(
+    String personId,
+    Map<String, dynamic> args,
+  ) async {
+    final platform = '${args['platform'] ?? ''}'.trim();
+    if (platform.isEmpty) {
+      return jsonEncode({'type': 'text', 'text': 'platform required'});
+    }
+    try {
+      final res = await http
+          .post(
+            Uri.parse('${config.connectSidecarUrl}/api/one/act'),
+            headers: const {'content-type': 'application/json'},
+            body: jsonEncode({
+              'person': personId,
+              'platform': platform,
+              'intent': args['intent'],
+              'actionId': args['action_id'],
+              'pathParams': args['path_params'],
+              'query': args['query'],
+              'body': args['body'],
+              'encoding': args['encoding'],
+              'headers': args['headers'],
+            }),
+          )
+          .timeout(const Duration(seconds: 45));
+      return res.body;
+    } on Object catch (e) {
+      return jsonEncode({
+        'type': 'text',
+        'text': 'connector unavailable: $e',
+      });
+    }
+  }
+
+  Future<List<String>> _connectedPlatforms(gel.Client c) async {
+    try {
+      final personId = await _personId(c);
+      if (personId == null) return const [];
+      final grant = await _grantMap(c);
+      if (grant == null || grant['revoked_at'] != null) return const [];
+      final view = await _oneAccountView(c, personId, grant);
+      return [
+        for (final row in view)
+          if (row['platform'] != null && row['platform'].toString().isNotEmpty)
+            row['platform'].toString(),
+      ];
+    } on Object {
+      return const [];
+    }
+  }
 
   Future<String?> _personId(gel.Client c) async {
     final row = await c.querySingleJSON('select global current_person { id }');
@@ -896,7 +956,6 @@ class MaiaApp {
     final prefs = personId == null
         ? const ToolPrefs()
         : await _prefsStore.read(personId);
-    final box = _toolboxFor(prefs);
     final grantJson = await c.querySingleJSON(queries['one_grant_get']);
     final grant = grantJson == 'null'
         ? null
@@ -911,6 +970,11 @@ class MaiaApp {
     final accounts = oneLive && personId != null
         ? await _oneAccountView(c, personId, grant!)
         : const <Map<String, dynamic>>[];
+    final box = _toolboxFor(
+      prefs,
+      personId: personId,
+      connectors: accounts.isNotEmpty,
+    );
     final youOn = box.webAvailable;
     final accountCount = accounts.length;
     final accountLabel = accountCount == 1
@@ -1560,10 +1624,19 @@ class MaiaApp {
 
     // What the harness sees. OpenClaw keeps its own transcript per `user`,
     // so it gets the system frame and the new turn only.
+    final personId = await _personId(c);
+    final hostTools = !harness.keepsOwnHistory;
+    final platforms = hostTools
+        ? await _connectedPlatforms(c)
+        : const <String>[];
     final frame = <Map<String, dynamic>>[
       {
         'role': 'system',
-        'content': _systemFrame(person, screen: b['screen'] as String?),
+        'content': _systemFrame(
+          person,
+          screen: b['screen'] as String?,
+          connectors: platforms,
+        ),
       },
     ];
     if (harness.keepsOwnHistory) {
@@ -1594,11 +1667,13 @@ class MaiaApp {
         final turn = await runChatTurn(
           harness: harness,
           frame: frame,
-          toolbox: harness.keepsOwnHistory
-              ? null
-              : _toolboxFor(
-                  await _prefsStore.read(await _personId(c) ?? ''),
-                ),
+          toolbox: hostTools
+              ? _toolboxFor(
+                  await _prefsStore.read(personId ?? ''),
+                  personId: personId,
+                  connectors: platforms.isNotEmpty,
+                )
+              : null,
           db: c,
           emit: emit,
           user: 'conv:${session['agent_session_key']}',
@@ -1682,7 +1757,11 @@ class MaiaApp {
     return jsonDecode(json) as Map<String, dynamic>;
   }
 
-  String _systemFrame(Map<String, dynamic> person, {String? screen}) {
+  String _systemFrame(
+    Map<String, dynamic> person, {
+    String? screen,
+    List<String> connectors = const [],
+  }) {
     final name = person['display_name'] ?? person['handle'];
     final now = DateTime.now();
     final shown = (screen ?? '').trim();
@@ -1690,6 +1769,17 @@ class MaiaApp {
         ? ''
         : ' On screen right now, only these parts are visible. Speech may '
               'refer to these titles and must not invent others:\n$shown\n';
+    final apps = connectors.isEmpty
+        ? ''
+        : 'Connected apps: ${connectors.join(', ')}. Use the connector tool '
+              'to read or change them. Call it with platform and intent, then '
+              'again with action_id and the fields it lists. Every name in '
+              'that list is available. ';
+    final toolNames = connectors.isEmpty
+        ? 'memory_search, memory_recent, memory_get, remember, life_graph, '
+              'web_search, now'
+        : 'memory_search, memory_recent, memory_get, remember, life_graph, '
+              'web_search, now, connector';
     return 'You are Maia, $name\'s personal assistant. The day is twenty-four '
         'hours; spend them. The signed-in user is "$name" (handle ${person['handle']}). '
         'Current local time: ${now.toIso8601String()} (${now.timeZoneName}). '
@@ -1697,8 +1787,8 @@ class MaiaApp {
         'memory and graph rows exist. Nested shapes (owner, place, parent, '
         'parts, edges) come back in one query — do not invent rows you did '
         'not receive. '
-        'Tools: memory_search, memory_recent, memory_get, remember, life_graph, '
-        'web_search, now. For the user\'s life, people, places, plans or past, '
+        'Tools: $toolNames. $apps'
+        'For the user\'s life, people, places, plans or past, '
         'search memory and life_graph before answering. Verified graph edges '
         'are facts; proposed edges are not. For the public world, use '
         'web_search (You.com). Be accurate; say when you do not know. '
@@ -2442,9 +2532,7 @@ class MaiaApp {
         ? 'That attempt did not finish. Go back to Maia and try the account again.'
         : 'Each account you authorized is stored on this Maia. Close this tab and return to the app.';
     return Response.ok(
-      '<!doctype html><meta charset="utf-8"><title>$title</title>'
-      '<body style="font:16px/1.4 system-ui;max-width:36rem;margin:3rem auto;padding:0 1rem">'
-      '<h1>$title</h1><p>$text</p></body>',
+      oneDoneHtml(title: title, text: text),
       headers: const {'content-type': 'text/html; charset=utf-8'},
     );
   }

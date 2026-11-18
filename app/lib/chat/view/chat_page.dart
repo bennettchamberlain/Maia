@@ -211,7 +211,6 @@ class _ConversationState extends State<_Conversation> {
                         ),
                       )
                     : null,
-                actions: const [_VoiceToggle()],
               ),
               body: state.status == ChatStatus.loading && state.messages.isEmpty
                   ? const MaiaSkeleton()
@@ -260,6 +259,7 @@ class _ConversationState extends State<_Conversation> {
                       ),
                     ),
                   const _VoiceStatusLine(),
+                  const _TalkingBubble(),
                   const Padding(
                     padding: EdgeInsets.fromLTRB(12, 0, 12, 0),
                     child: _ComposerActions(),
@@ -333,24 +333,6 @@ class _ConversationState extends State<_Conversation> {
   }
 }
 
-class _VoiceToggle extends StatelessWidget {
-  const _VoiceToggle();
-
-  @override
-  Widget build(BuildContext context) {
-    final voice = context.watch<VoiceCubit>().state;
-    return ShadIconButton.ghost(
-      key: const Key('chat_voice_toggle'),
-      icon: Icon(
-        voice.enabled ? LucideIcons.volume2 : LucideIcons.volumeOff,
-        size: 16,
-      ),
-      onPressed: () =>
-          unawaited(context.read<VoiceCubit>().setEnabled(on: !voice.enabled)),
-    );
-  }
-}
-
 class _VoiceStatusLine extends StatelessWidget {
   const _VoiceStatusLine();
 
@@ -388,13 +370,8 @@ class _ComposerActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final voice = context.watch<VoiceCubit>().state;
-    final sending = context.select<ChatBloc, bool>((b) => b.state.sending);
     final transcribing =
         voice.listening && voice.capture == VoiceCapture.transcribe;
-    final talking = voice.listening && voice.capture == VoiceCapture.talk;
-    final booting =
-        !talking &&
-        (voice.sidecarStarting || (voice.sidecarLoading && !voice.sidecarLive));
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -408,16 +385,10 @@ class _ComposerActions extends StatelessWidget {
         ),
         _Action(
           key: const Key('chat_talk_button'),
-          label: booting
-              ? 'Loading'
-              : talking
-              ? 'Stop'
-              : 'Talk',
-          onPressed: sending || booting
-              ? null
-              : () => unawaited(
-                  context.read<VoiceCubit>().begin(VoiceCapture.talk),
-                ),
+          label: 'Talk',
+          selected: voice.enabled,
+          onPressed: () =>
+              unawaited(context.read<VoiceCubit>().setTalk(on: !voice.enabled)),
         ),
       ],
     );
@@ -425,17 +396,124 @@ class _ComposerActions extends StatelessWidget {
 }
 
 class _Action extends StatelessWidget {
-  const _Action({required this.label, required this.onPressed, super.key});
+  const new({
+    required this.label,
+    required this.onPressed,
+    this.selected = false,
+    super.key,
+  });
 
   final String label;
   final VoidCallback? onPressed;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
+    final child = Text(label);
+    if (selected) {
+      return ShadButton(
+        size: ShadButtonSize.sm,
+        onPressed: onPressed,
+        child: child,
+      );
+    }
     return ShadButton.outline(
       size: ShadButtonSize.sm,
       onPressed: onPressed,
-      child: Text(label),
+      child: child,
+    );
+  }
+}
+
+class _TalkingBubble extends StatelessWidget {
+  const new();
+
+  @override
+  Widget build(BuildContext context) {
+    final talking = context.select<VoiceCubit, bool>(
+      (v) => v.state.enabled && v.state.speaking,
+    );
+    if (!talking) return const SizedBox.shrink();
+    return const Padding(
+      padding: EdgeInsets.only(bottom: 8),
+      child: Center(child: _TalkingOrb()),
+    );
+  }
+}
+
+class _TalkingOrb extends StatefulWidget {
+  const new();
+
+  @override
+  State<_TalkingOrb> createState() => _TalkingOrbState();
+}
+
+class _TalkingOrbState extends State<_TalkingOrb>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    final ink = theme.colorScheme.foreground;
+    final paper = theme.colorScheme.background;
+    return AnimatedBuilder(
+      animation: _pulse,
+      builder: (context, _) {
+        final t = _pulse.value;
+        final glow = 0.12 + 0.16 * math.sin(t * math.pi * 2);
+        return Container(
+          width: 64,
+          height: 36,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: ink,
+            borderRadius: const BorderRadius.all(Radius.circular(18)),
+            boxShadow: [
+              BoxShadow(
+                color: ink.withValues(alpha: glow),
+                blurRadius: 16,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [for (var i = 0; i < 4; i++) _bar(paper, t, i)],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _bar(Color color, double t, int index) {
+    final wave = math.sin((t + index * 0.18) * math.pi * 2);
+    final height = 8 + 14 * (0.5 + 0.5 * wave);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Container(
+        width: 3,
+        height: height,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: const BorderRadius.all(Radius.circular(2)),
+        ),
+      ),
     );
   }
 }
@@ -572,7 +650,7 @@ class _Hint extends StatelessWidget {
     padding: const EdgeInsets.all(24),
     child: Text(
       'Ask about a memory, a place, or the web. Transcribe puts what you '
-      'said in the chat, in quotes. Talk sends it and speaks the reply. '
+      'said in the chat, in quotes. Talk stays on and reads replies aloud. '
       'The file icon attaches something you pick.',
       textAlign: TextAlign.center,
       style: ShadTheme.of(context).textTheme.muted,

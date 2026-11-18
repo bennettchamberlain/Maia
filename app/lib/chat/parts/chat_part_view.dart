@@ -80,8 +80,8 @@ class ChatMessageBody extends StatelessWidget {
                   switch (segment) {
                     ChatProse(:final text) => SelectableText(
                       _plain(text),
-              style: theme.textTheme.p.copyWith(color: foreground),
-              textWidthBasis: TextWidthBasis.parent,
+                      style: theme.textTheme.p.copyWith(color: foreground),
+                      textWidthBasis: TextWidthBasis.parent,
                       contextMenuBuilder: contextMenuBuilder,
                     ),
                     ChatBlock(:final part) => ChatPartView(part),
@@ -200,12 +200,11 @@ class _SpeechView extends StatelessWidget {
               color: theme.colorScheme.mutedForeground,
             ),
             const SizedBox(width: 8),
-            Expanded(
-              child: Text(text, style: theme.textTheme.muted),
-            ),
+            Expanded(child: Text(text, style: theme.textTheme.muted)),
             ShadIconButton.ghost(
               icon: const Icon(LucideIcons.play, size: 14),
-              onPressed: text.trim().isEmpty || voice == null
+              onPressed:
+                  text.trim().isEmpty || voice == null || !voice.state.enabled
                   ? null
                   : () => voice!.speak(text),
             ),
@@ -304,8 +303,7 @@ class _MapView extends StatelessWidget {
               ),
               children: [
                 TileLayer(
-                  urlTemplate:
-                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.maia.app',
                 ),
                 MarkerLayer(

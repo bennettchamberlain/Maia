@@ -32,6 +32,12 @@ function readCookie(req, name) {
   return "";
 }
 
+function clipValue(value) {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? null);
+  if (!text || text.length <= 8000) return value ?? null;
+  return `${text.slice(0, 8000)}…`;
+}
+
 function personId(req) {
   const url = new URL(req.url, "http://local");
   const fromQuery = url.searchParams.get("person") || "";
@@ -218,6 +224,103 @@ const server = createServer(async (req, res) => {
       res.end(JSON.stringify(reply.data ?? { blocked: reply.blockedByGrant }));
     } catch (err) {
       const message = err.message || "pull failed";
+      const reconnect = err.code === "reconnect_required" || /reconnect_required/.test(message);
+      res.writeHead(reconnect ? 409 : 502, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: reconnect ? "reconnect_required" : message }));
+    }
+    return;
+  }
+  if (url.pathname === "/api/one/act" && req.method === "POST") {
+    if (!connect) {
+      res.writeHead(503, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "one_unconfigured" }));
+      return;
+    }
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    let body;
+    try {
+      body = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+    } catch {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "invalid json" }));
+      return;
+    }
+    const person = body.person;
+    const platform = body.platform;
+    if (!person || !platform) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "person and platform required" }));
+      return;
+    }
+    try {
+      const rows = await connect.listConnections(person);
+      const conn = rows.find((row) => row.platform === platform);
+      if (!conn) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({
+          error: "not_connected",
+          connected: [...new Set(rows.map((row) => row.platform).filter(Boolean))],
+        }));
+        return;
+      }
+      const actionId = body.actionId || body.action_id;
+      if (!actionId) {
+        const intent = body.intent || "list recent records";
+        let actions;
+        try {
+          actions = await connect.searchActions(person, platform, intent, { limit: 5 });
+        } catch {
+          actions = await connect.searchActions(person, platform, intent);
+        }
+        const found = [];
+        for (const action of (actions || []).slice(0, 3)) {
+          const id = action._id || action.id;
+          if (!id) continue;
+          let guide = null;
+          try {
+            guide = await connect.getActionKnowledge(person, id);
+          } catch {
+            guide = null;
+          }
+          const knowledge = String(guide?.knowledge || action.description || "").slice(0, 1500);
+          found.push({
+            action_id: id,
+            title: action.title || action.name || id,
+            method: guide?.method || action.method || null,
+            path: guide?.path || action.path || null,
+            knowledge,
+          });
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({
+          platform,
+          intent,
+          actions: found,
+        }));
+        return;
+      }
+      const reply = await connect.runAction(person, {
+        connectionKey: conn.key,
+        actionId,
+        pathParams: body.pathParams || body.path_params,
+        query: body.query,
+        body: body.body,
+        encoding: body.encoding,
+        headers: body.headers,
+      });
+      const data = clipValue(reply?.data);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        ok: Boolean(reply?.ok),
+        status: reply?.status ?? null,
+        refusal: reply?.refusal ?? null,
+        blocked: Boolean(reply?.blockedByGrant),
+        action_id: actionId,
+        data,
+      }));
+    } catch (err) {
+      const message = err.message || "connector failed";
       const reconnect = err.code === "reconnect_required" || /reconnect_required/.test(message);
       res.writeHead(reconnect ? 409 : 502, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: reconnect ? "reconnect_required" : message }));

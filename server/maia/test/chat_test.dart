@@ -271,6 +271,26 @@ data: [DONE]
       ),
       isTrue,
     );
+    expect(
+      box.definitions.any(
+        (tool) => tool['function']['name'] == 'connector',
+      ),
+      isFalse,
+    );
+    final wired = ChatToolbox(
+      searchMemory: (c, query, limit) async => [],
+      recentMemory: (c, limit) async => [],
+      getMemory: (c, id) async => null,
+      remember: (c, title, body) async => '',
+      lifeGraph: (c) async => null,
+      connector: (args) async => '{"ok":true,"platform":"${args['platform']}"}',
+    );
+    expect(
+      wired.definitions.any(
+        (tool) => tool['function']['name'] == 'connector',
+      ),
+      isTrue,
+    );
   });
 }
 
