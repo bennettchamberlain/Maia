@@ -472,13 +472,16 @@ class _Bubble extends StatelessWidget {
     final foreground = mine
         ? theme.colorScheme.primaryForeground
         : theme.colorScheme.foreground;
-    return Align(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final available = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : 0.0;
+        return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: mine
-              ? MediaQuery.sizeOf(context).width * 0.72
-              : MediaQuery.sizeOf(context).width * 0.92,
+          maxWidth: mine ? available * 0.72 : available,
         ),
         child: Container(
           margin: const EdgeInsets.symmetric(vertical: 4),
@@ -513,6 +516,8 @@ class _Bubble extends StatelessWidget {
                 ),
         ),
       ),
+    );
+      },
     );
   }
 }

@@ -86,6 +86,7 @@ class FileAwareText extends StatelessWidget {
     ];
     return SelectableText.rich(
       TextSpan(style: style, children: spans),
+      textWidthBasis: TextWidthBasis.parent,
       contextMenuBuilder: contextMenuBuilder,
     );
   }

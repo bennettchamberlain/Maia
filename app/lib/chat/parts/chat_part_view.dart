@@ -45,51 +45,66 @@ class ChatMessageBody extends StatelessWidget {
     if (segments.isEmpty && otherTools.isEmpty && streaming) {
       return const SizedBox(width: 72, child: ShadProgress(minHeight: 6));
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (otherTools.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Wrap(
-              spacing: 6,
-              runSpacing: 6,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : 0.0;
+        return SizedBox(
+          width: width,
+          child: DefaultTextStyle(
+            style: theme.textTheme.p.copyWith(color: foreground),
+            softWrap: true,
+            overflow: TextOverflow.clip,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (final tool in otherTools)
-                  Tooltip(
-                    message: tool.result ?? tool.arguments,
-                    child: ShadBadge.outline(
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(LucideIcons.wrench, size: 12),
-                          const SizedBox(width: 4),
-                          Text(tool.name),
-                        ],
-                      ),
+                if (otherTools.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final tool in otherTools)
+                          Tooltip(
+                            message: tool.result ?? tool.arguments,
+                            child: ShadBadge.outline(
+                              child: Text(tool.name, softWrap: true),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                for (final segment in segments) ...[
+                  switch (segment) {
+                    ChatProse(:final text) => SelectableText(
+                      _plain(text),
+              style: theme.textTheme.p.copyWith(color: foreground),
+              textWidthBasis: TextWidthBasis.parent,
+                      contextMenuBuilder: contextMenuBuilder,
+                    ),
+                    ChatBlock(:final part) => ChatPartView(part),
+                    ChatBlockPending() => const SizedBox(
+                      height: 96,
+                      child: MaiaSkeleton(rows: 2),
+                    ),
+                  },
+                  const SizedBox(height: 8),
+                ],
+                if (streaming && text.isNotEmpty)
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: SizedBox(
+                      width: 72,
+                      child: ShadProgress(minHeight: 6),
                     ),
                   ),
               ],
             ),
           ),
-        for (final segment in segments) ...[
-          switch (segment) {
-            ChatProse(:final text) => SelectableText(
-              _plain(text),
-              style: theme.textTheme.p.copyWith(color: foreground),
-              contextMenuBuilder: contextMenuBuilder,
-            ),
-            ChatBlock(:final part) => ChatPartView(part),
-            ChatBlockPending() => const SizedBox(
-              height: 96,
-              child: MaiaSkeleton(rows: 2),
-            ),
-          },
-          const SizedBox(height: 8),
-        ],
-        if (streaming && text.isNotEmpty)
-          const SizedBox(width: 72, child: ShadProgress(minHeight: 6)),
-      ],
+        );
+      },
     );
   }
 }
@@ -103,9 +118,10 @@ class ChatPartView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return switch (part) {
-      ChatText(:final text) => Text(text),
+      ChatText(:final text) => Text(text, softWrap: true),
       ChatHeading(:final text) => Text(
         text,
+        softWrap: true,
         style: ShadTheme.of(context).textTheme.h4,
       ),
       ChatDivider() => const MaiaDivider.horizontal(),
@@ -429,9 +445,13 @@ class _QuoteView extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(quote.text, style: theme.textTheme.p),
+            Text(quote.text, softWrap: true, style: theme.textTheme.p),
             if (quote.attribution.isNotEmpty)
-              Text(quote.attribution, style: theme.textTheme.muted),
+              Text(
+                quote.attribution,
+                softWrap: true,
+                style: theme.textTheme.muted,
+              ),
           ],
         ),
       ),
@@ -647,9 +667,13 @@ class _CardView extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (card.title.isNotEmpty)
-                Text(card.title, style: theme.textTheme.p),
+                Text(card.title, softWrap: true, style: theme.textTheme.p),
               if (card.subtitle.isNotEmpty)
-                Text(card.subtitle, style: theme.textTheme.muted),
+                Text(
+                  card.subtitle,
+                  softWrap: true,
+                  style: theme.textTheme.muted,
+                ),
               for (final child in card.children) ChatPartView(child),
             ],
           ),
@@ -670,14 +694,22 @@ class _LinkView extends StatelessWidget {
     return _Disclosure(
       detail: link.detail,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          ShadButton.link(
-            onPressed: () => _open(link.url),
-            child: Text(link.title.isEmpty ? link.url : link.title),
+          GestureDetector(
+            onTap: () => _open(link.url),
+            child: Text(
+              link.title.isEmpty ? link.url : link.title,
+              softWrap: true,
+              style: theme.textTheme.p.copyWith(
+                color: theme.colorScheme.primary,
+                decoration: TextDecoration.underline,
+                decorationColor: theme.colorScheme.primary,
+              ),
+            ),
           ),
           if (link.snippet.isNotEmpty)
-            Text(link.snippet, style: theme.textTheme.muted),
+            Text(link.snippet, softWrap: true, style: theme.textTheme.muted),
         ],
       ),
     );
