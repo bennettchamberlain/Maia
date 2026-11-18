@@ -42,6 +42,10 @@ class Config {
     this.voiceBin,
     this.voiceWorkdir,
     this.voiceKeepAlive = const Duration(hours: 6),
+    this.polargridApiKey,
+    this.polargridRegion = 'yto-01',
+    this.polargridVoice = 'NATF0',
+    this.polargridPersona,
   });
 
   factory Config.fromEnv([Map<String, String>? env]) {
@@ -83,7 +87,8 @@ class Config {
       openrouterApiKey: _blankToNull(
         e['OPENROUTER_API_KEY'] ?? e['OPEN_ROUTER_API_KEY'],
       ),
-      openrouterBaseUrl: e['OPENROUTER_BASE_URL'] ?? 'https://openrouter.ai/api/v1',
+      openrouterBaseUrl:
+          e['OPENROUTER_BASE_URL'] ?? 'https://openrouter.ai/api/v1',
       openrouterChatModel:
           e['OPENROUTER_MODEL'] ?? 'google/gemini-2.5-flash-lite',
       openrouterMaxTokens:
@@ -94,8 +99,7 @@ class Config {
       connectPublicUrl:
           e['CONNECT_PUBLIC_URL'] ??
           'http://127.0.0.1:${e['CONNECT_PORT'] ?? '8788'}',
-      connectSidecarUrl:
-          'http://127.0.0.1:${e['CONNECT_PORT'] ?? '8788'}',
+      connectSidecarUrl: 'http://127.0.0.1:${e['CONNECT_PORT'] ?? '8788'}',
       googleMapsApiKey: _blankToNull(
         e['GOOGLE_MAPS_API_KEY'] ?? e['GEOCODING_API_KEY'],
       ),
@@ -105,7 +109,8 @@ class Config {
       parasailBaseUrl: e['PARASAIL_BASE_URL'] ?? 'https://api.parasail.io/v1',
       parasailEmbedModel: e['PARASAIL_EMBED_MODEL'] ?? 'parasail-bge-m3',
       internalSecret: _blankToNull(e['MAIA_INTERNAL_SECRET']),
-      pythonBin: e['MAIA_PYTHON'] ??
+      pythonBin:
+          e['MAIA_PYTHON'] ??
           (e['VIRTUAL_ENV'] == null
               ? 'python3'
               : '${e['VIRTUAL_ENV']}/bin/python'),
@@ -118,6 +123,12 @@ class Config {
       voiceKeepAlive: Duration(
         seconds: int.tryParse(e['VOICE_KEEP_ALIVE_SEC'] ?? '') ?? 6 * 3600,
       ),
+      polargridApiKey: _blankToNull(
+        e['POLARGRID_API_KEY'] ?? e['polargrid-api-key'],
+      ),
+      polargridRegion: _blankToNull(e['POLARGRID_REGION']) ?? 'yto-01',
+      polargridVoice: _blankToNull(e['POLARGRID_VOICE']) ?? 'NATF0',
+      polargridPersona: _blankToNull(e['POLARGRID_PERSONA']),
     );
   }
 
@@ -198,6 +209,13 @@ class Config {
   final String? voiceBin;
   final String? voiceWorkdir;
   final Duration voiceKeepAlive;
+
+  /// PolarGrid key. When set, voice uses their hosted PersonaPlex socket
+  /// instead of spawning the local sidecar.
+  final String? polargridApiKey;
+  final String polargridRegion;
+  final String polargridVoice;
+  final String? polargridPersona;
 
   static String? _defaultVoiceBin(String? root) {
     if (root == null) return null;

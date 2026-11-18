@@ -164,6 +164,7 @@ class VoiceCubit extends Cubit<VoiceState> {
   bool _breakBefore = false;
   SpeechToText? _stt;
   FlutterTts? _tts;
+  Future<bool>? _boot;
 
   void _note(String action, Object detail) {
     unawaited(_api.reportFault(action: action, detail: '$detail'));
@@ -211,10 +212,20 @@ class VoiceCubit extends Cubit<VoiceState> {
     }
   }
 
-  /// Start or warm the GPU sidecar. Returns when it is loaded or the
-  /// poll budget runs out. First start can take a couple of minutes.
-  Future<void> startSidecar() async {
-    if (state.sidecarStarting) return;
+  /// Start or warm PersonaPlex. One press shares one boot. Returns when
+  /// the engine is loaded, or when the start fails. First load can take
+  /// a couple of minutes.
+  Future<bool> startSidecar() {
+    final inflight = _boot;
+    if (inflight != null) return inflight;
+    final run = _bootSidecar();
+    _boot = run;
+    return run.whenComplete(() {
+      if (identical(_boot, run)) _boot = null;
+    });
+  }
+
+  Future<bool> _bootSidecar() async {
     emit(
       state.copyWith(
         sidecarStarting: true,
@@ -233,17 +244,22 @@ class VoiceCubit extends Cubit<VoiceState> {
             sidecarLoaded: false,
             sidecarLoading: false,
             sidecarTried: true,
-            clearError: true,
+            error: 'PersonaVoice did not start.',
           ),
         );
-        return;
+        return false;
       }
-      for (var i = 0; i < 90 && !state.sidecarLoaded; i++) {
-        if (!state.sidecarLoading && i > 2) break;
+      for (
+        var i = 0;
+        i < 90 && !state.sidecarLoaded && !state.sidecarLive;
+        i++
+      ) {
         await Future<void>.delayed(const Duration(seconds: 2));
+        if (isClosed) return false;
         applyStatus(await _api.voiceStatus());
       }
-    } on Object {
+    } on Object catch (e) {
+      _note('talk', e);
       emit(
         state.copyWith(
           sidecarStarting: false,
@@ -251,12 +267,20 @@ class VoiceCubit extends Cubit<VoiceState> {
           sidecarLoaded: false,
           sidecarLoading: false,
           sidecarTried: true,
-          clearError: true,
+          error: shownFault(e),
         ),
       );
-      return;
+      return false;
     }
-    emit(state.copyWith(sidecarStarting: false, clearError: true));
+    final up = state.sidecarLoaded || state.sidecarLive;
+    emit(
+      state.copyWith(
+        sidecarStarting: false,
+        error: up ? null : 'PersonaVoice did not finish loading.',
+        clearError: up,
+      ),
+    );
+    return up;
   }
 
   static bool _benignListenError(String msg) {
@@ -348,8 +372,16 @@ class VoiceCubit extends Cubit<VoiceState> {
       await stopListen();
       if (same) return;
     }
-    if (next == VoiceCapture.talk && !state.enabled) {
-      await setEnabled(on: true);
+    if (next == VoiceCapture.talk) {
+      if (!state.enabled) {
+        emit(state.copyWith(enabled: true, clearError: true));
+        await _prefs?.setBool(_enabledKey, true);
+      }
+      if (!state.sidecarLive) {
+        final up = await startSidecar();
+        if (!up || isClosed) return;
+      }
+      await prepareSpeak();
     }
     if (!await prepareListen()) return;
     _wantListen = true;
@@ -411,12 +443,7 @@ class VoiceCubit extends Cubit<VoiceState> {
       if (!_holdTranscribe) return;
       if (_stt?.isListening ?? false) return;
       await _listen(VoiceCapture.transcribe);
-      emit(
-        state.copyWith(
-          listening: true,
-          capture: VoiceCapture.transcribe,
-        ),
-      );
+      emit(state.copyWith(listening: true, capture: VoiceCapture.transcribe));
     } on Object catch (e) {
       _note('transcribe', e);
     } finally {

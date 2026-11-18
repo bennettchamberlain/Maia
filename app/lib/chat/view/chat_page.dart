@@ -348,10 +348,9 @@ class _VoiceStatusLine extends StatelessWidget {
     final text =
         voice.error ??
         (warming
-            ? 'Starting PersonaVoice on the server. First load can take '
-                  'a few minutes. You can still speak on this phone.'
+            ? 'Starting PersonaVoice. The first load can take a few minutes.'
             : voice.sidecarTried && !voice.sidecarLive
-            ? 'PersonaVoice is off on the server. Speech stays on this phone.'
+            ? 'PersonaVoice is off. Press Talk to start it.'
             : null);
     if (text == null) return const SizedBox.shrink();
     return Padding(
@@ -378,6 +377,9 @@ class _ComposerActions extends StatelessWidget {
     final transcribing =
         voice.listening && voice.capture == VoiceCapture.transcribe;
     final talking = voice.listening && voice.capture == VoiceCapture.talk;
+    final booting =
+        !talking &&
+        (voice.sidecarStarting || (voice.sidecarLoading && !voice.sidecarLive));
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -391,8 +393,12 @@ class _ComposerActions extends StatelessWidget {
         ),
         _Action(
           key: const Key('chat_talk_button'),
-          label: talking ? 'Stop' : 'Talk',
-          onPressed: sending
+          label: booting
+              ? 'Loading'
+              : talking
+              ? 'Stop'
+              : 'Talk',
+          onPressed: sending || booting
               ? null
               : () => unawaited(
                   context.read<VoiceCubit>().begin(VoiceCapture.talk),
@@ -497,45 +503,47 @@ class _Bubble extends StatelessWidget {
             ? constraints.maxWidth
             : 0.0;
         return Align(
-      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: mine ? available * 0.72 : available,
-        ),
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: background,
-            borderRadius: const BorderRadius.all(Radius.circular(8)),
-            border: mine ? null : Border.all(color: theme.colorScheme.border),
+          alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: mine ? available * 0.72 : available,
+            ),
+            child: Container(
+              margin: const EdgeInsets.symmetric(vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: background,
+                borderRadius: const BorderRadius.all(Radius.circular(8)),
+                border: mine
+                    ? null
+                    : Border.all(color: theme.colorScheme.border),
+              ),
+              child: mine
+                  ? FileAwareText(
+                      text: text,
+                      style: theme.textTheme.p.copyWith(color: foreground),
+                      contextMenuBuilder: (context, state) => maiaTextMenu(
+                        context,
+                        state,
+                        fallbackText: text,
+                        messageId: messageId,
+                      ),
+                    )
+                  : ChatMessageBody(
+                      text: text,
+                      foreground: foreground,
+                      tools: tools,
+                      streaming: streaming,
+                      contextMenuBuilder: (context, state) => maiaTextMenu(
+                        context,
+                        state,
+                        fallbackText: text,
+                        messageId: messageId,
+                      ),
+                    ),
+            ),
           ),
-          child: mine
-              ? FileAwareText(
-                  text: text,
-                  style: theme.textTheme.p.copyWith(color: foreground),
-                  contextMenuBuilder: (context, state) => maiaTextMenu(
-                    context,
-                    state,
-                    fallbackText: text,
-                    messageId: messageId,
-                  ),
-                )
-              : ChatMessageBody(
-                  text: text,
-                  foreground: foreground,
-                  tools: tools,
-                  streaming: streaming,
-                  contextMenuBuilder: (context, state) => maiaTextMenu(
-                    context,
-                    state,
-                    fallbackText: text,
-                    messageId: messageId,
-                  ),
-                ),
-        ),
-      ),
-    );
+        );
       },
     );
   }

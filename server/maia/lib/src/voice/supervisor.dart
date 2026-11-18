@@ -4,22 +4,31 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 import 'package:maia_api/src/config.dart';
+import 'package:maia_api/src/voice/polargrid.dart';
 
 /// Starts the local PersonaVoice process and asks it to load weights.
+///
+/// A [PolarGridVoice] key skips the local process. The hosted engine is
+/// already loaded, so [start] returns immediately.
 ///
 /// The HTTP port comes up before the 16 GB model. [start] waits for the
 /// port, then kicks a background load and returns. The sidecar keeps
 /// weights resident for [Config.voiceKeepAlive] after the last touch.
 class VoiceSupervisor {
-  VoiceSupervisor(this.config);
+  /// Local sidecar, or PolarGrid when [Config.polargridApiKey] is set.
+  VoiceSupervisor(this.config) : polar = PolarGridVoice(config);
 
   final Config config;
+
+  /// Hosted PersonaPlex. Idle until a client opens `/voice/live`.
+  final PolarGridVoice polar;
   Process? _child;
   Future<void>? _spawn;
 
   Uri get _base => Uri.parse(config.voiceUrl);
 
   Future<Map<String, dynamic>?> peek() async {
+    if (polar.enabled) return polar.status();
     try {
       final r = await http
           .get(Uri.parse('${config.voiceUrl}/api/status'))
@@ -34,6 +43,7 @@ class VoiceSupervisor {
 
   /// Spawn if needed, start a load if the engine is cold, extend the hold.
   Future<Map<String, dynamic>> start() async {
+    if (polar.enabled) return polar.status();
     var remote = await peek();
     if (remote == null) {
       await (_spawn ??= _spawnSidecar());
@@ -59,6 +69,10 @@ class VoiceSupervisor {
   }
 
   Future<Map<String, dynamic>> stop() async {
+    if (polar.enabled) {
+      await polar.close();
+      return polar.status();
+    }
     try {
       await http
           .post(

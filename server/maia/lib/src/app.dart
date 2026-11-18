@@ -179,6 +179,7 @@ class MaiaApp {
     ..get('/graph', _authed((r, c) => _one(c, 'graph')))
     ..get('/chat/tools', _authed(_chatTools))
     ..get('/voice/status', _authed(_voiceStatus))
+    ..get('/voice/live', _authed(_voiceLive))
     ..post('/voice/start', _authed(_voiceStart))
     ..post('/voice/stop', _authed(_voiceStop))
     ..post('/voice/ask', _authed(_voiceAsk))
@@ -1862,6 +1863,16 @@ class MaiaApp {
     final engine = remote?['engine'] is Map
         ? Map<String, dynamic>.from(remote!['engine'] as Map)
         : const <String, dynamic>{};
+    if (remote?['provider'] == 'polargrid') {
+      return {
+        'connected': true,
+        'ready': true,
+        'model': 'personaplex',
+        'description':
+            'PolarGrid PersonaPlex. Talk opens the call. The key stays '
+            'on this server.',
+      };
+    }
     final loaded = engine['loaded'] == true;
     final loading = engine['loading'] == true;
     final model = brain['model'] as String?;
@@ -1895,6 +1906,13 @@ class MaiaApp {
     });
   }
 
+  Future<Response> _voiceLive(Request r, gel.Client _) async {
+    if (!voice.polar.enabled) {
+      return _error(503, 'voice_unavailable', 'POLARGRID_API_KEY is not set');
+    }
+    return voice.polar.handle(r);
+  }
+
   Future<Response> _voiceStart(Request r, gel.Client c) async {
     try {
       return _json(await voice.start());
@@ -1911,6 +1929,7 @@ class MaiaApp {
     final b = await _body(r);
     final text = (b['text'] as String?)?.trim() ?? '';
     if (text.isEmpty) return _error(400, 'bad_request', 'text required');
+    if (voice.polar.enabled) return _polarSay(text);
     return _voicePost('/api/ask', {'text': text});
   }
 
@@ -1918,11 +1937,18 @@ class MaiaApp {
     final b = await _body(r);
     final text = (b['text'] as String?)?.trim() ?? '';
     if (text.isEmpty) return _error(400, 'bad_request', 'text required');
+    if (voice.polar.enabled) return _polarSay(text);
     return _voicePost('/api/say', {
       'text': text,
       'interrupt': b['interrupt'] == true,
     });
   }
+
+  Response _polarSay(String text) => _json({
+    'ok': true,
+    'provider': 'polargrid',
+    'spoken': voice.polar.say(text),
+  });
 
   Future<Response> _voicePost(String path, Map<String, dynamic> body) async {
     try {
