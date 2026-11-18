@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:maia_app/chat/chat.dart';
@@ -5,6 +7,7 @@ import 'package:maia_app/jobs/jobs.dart';
 import 'package:maia_app/memory/memory.dart';
 import 'package:maia_app/tools/tools.dart';
 import 'package:maia_app/session/session.dart';
+import 'package:maia_app/ui/chrome.dart';
 import 'package:maia_models/maia_models.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -97,40 +100,41 @@ class _Sidebar extends StatelessWidget {
         width: 220,
         child: Padding(
           padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  ShadAvatar(
-                    null,
-                    size: const Size.square(32),
-                    placeholder: Text(initial, style: theme.textTheme.small),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      handle ?? 'Maia',
-                      style: theme.textTheme.small,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              for (var i = 0; i < _HomePageState._destinations.length; i++)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: _NavButton(
-                    icon: _HomePageState._destinations[i].icon,
-                    label: _HomePageState._destinations[i].label,
-                    selected: index == i,
-                    onPressed: () => onSelected(i),
+          child: MaiaPane(
+            header: Row(
+              children: [
+                ShadAvatar(
+                  null,
+                  size: const Size.square(32),
+                  placeholder: Text(initial, style: theme.textTheme.small),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    handle ?? 'Maia',
+                    style: theme.textTheme.small,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                 ),
-              const Spacer(),
-              const _SignOutButton(),
-            ],
+              ],
+            ),
+            body: ListView(
+              padding: const EdgeInsets.only(top: 16),
+              children: [
+                for (var i = 0; i < _HomePageState._destinations.length; i++)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: _NavButton(
+                      icon: _HomePageState._destinations[i].icon,
+                      label: _HomePageState._destinations[i].label,
+                      selected: index == i,
+                      onPressed: () => onSelected(i),
+                    ),
+                  ),
+              ],
+            ),
+            footer: const _SignOutButton(),
           ),
         ),
       ),
@@ -153,22 +157,41 @@ class _BottomNav extends StatelessWidget {
         border: Border(top: BorderSide(color: theme.colorScheme.border)),
       ),
       child: SafeArea(
-        child: SizedBox(
-          height: 56,
-          child: Row(
-            children: [
-              for (var i = 0; i < _HomePageState._destinations.length; i++)
-                Expanded(
-                  child: _NavButton(
-                    icon: _HomePageState._destinations[i].icon,
-                    label: _HomePageState._destinations[i].label,
-                    selected: index == i,
-                    stacked: true,
-                    onPressed: () => onSelected(i),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth < 1 || constraints.maxHeight < 1) {
+              return const SizedBox.shrink();
+            }
+            final count = _HomePageState._destinations.length;
+            final slot = math.max(72, constraints.maxWidth / count).toDouble();
+            final barHeight = math.min(56, constraints.maxHeight).toDouble();
+            return SizedBox(
+              width: constraints.maxWidth,
+              height: barHeight,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: SizedBox(
+                  width: slot * count,
+                  height: 56,
+                  child: Row(
+                    children: [
+                      for (var i = 0; i < count; i++)
+                        SizedBox(
+                          width: slot,
+                          child: _NavButton(
+                            icon: _HomePageState._destinations[i].icon,
+                            label: _HomePageState._destinations[i].label,
+                            selected: index == i,
+                            stacked: true,
+                            onPressed: () => onSelected(i),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-            ],
-          ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -194,31 +217,45 @@ class _NavButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
     final glyph = Icon(icon, size: 16);
-    return ShadButton.ghost(
-      width: double.infinity,
-      height: stacked ? 56 : null,
-      padding: stacked ? const EdgeInsets.symmetric(horizontal: 4) : null,
-      mainAxisAlignment: stacked
-          ? MainAxisAlignment.center
-          : MainAxisAlignment.start,
-      backgroundColor: selected ? theme.colorScheme.accent : null,
-      leading: stacked ? null : glyph,
-      onPressed: onPressed,
-      child: stacked
-          ? Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                glyph,
-                const SizedBox(height: 2),
-                Text(
-                  label,
-                  style: theme.textTheme.small.copyWith(fontSize: 11),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+    final labelText = Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: stacked
+          ? theme.textTheme.small.copyWith(fontSize: 11)
+          : theme.textTheme.small,
+    );
+    // ShadButton's row gives its label unbounded width, so a narrow slot
+    // overflows. A plain button passes the slot's max width through.
+    return Material(
+      color: selected ? theme.colorScheme.accent : Colors.transparent,
+      borderRadius: const BorderRadius.all(Radius.circular(6)),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: const BorderRadius.all(Radius.circular(6)),
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: stacked ? 4 : 12,
+            vertical: stacked ? 4 : 8,
+          ),
+          child: stacked
+              ? Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    glyph,
+                    const SizedBox(height: 2),
+                    labelText,
+                  ],
+                )
+              : Row(
+                  children: [
+                    glyph,
+                    const SizedBox(width: 8),
+                    Expanded(child: labelText),
+                  ],
                 ),
-              ],
-            )
-          : Text(label),
+        ),
+      ),
     );
   }
 }
@@ -228,11 +265,30 @@ class _SignOutButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ShadButton.ghost(
-      mainAxisAlignment: MainAxisAlignment.start,
-      leading: const Icon(LucideIcons.logOut, size: 16),
-      onPressed: () => context.read<SessionCubit>().signedOut(),
-      child: const Text('Sign out'),
+    return Material(
+      color: Colors.transparent,
+      borderRadius: const BorderRadius.all(Radius.circular(6)),
+      child: InkWell(
+        onTap: () => context.read<SessionCubit>().signedOut(),
+        borderRadius: const BorderRadius.all(Radius.circular(6)),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              const Icon(LucideIcons.logOut, size: 16),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Sign out',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: ShadTheme.of(context).textTheme.small,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

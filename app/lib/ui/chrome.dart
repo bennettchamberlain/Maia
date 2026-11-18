@@ -26,6 +26,106 @@ Widget maiaMaterialTheme(BuildContext context, Widget? child) {
   );
 }
 
+/// Fills the viewport and scrolls when [child] is taller than the window.
+///
+/// The child is centered when there is spare room, and forced to the
+/// viewport width so text wraps instead of painting a horizontal overflow.
+class MaiaScrollFill extends StatelessWidget {
+  const new({
+    super.key,
+    required this.child,
+    this.padding = EdgeInsets.zero,
+    this.maxWidth,
+    this.alignment = Alignment.center,
+  });
+
+  final Widget child;
+  final EdgeInsets padding;
+  final double? maxWidth;
+  final Alignment alignment;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : 0.0;
+        final height = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : 0.0;
+        final innerWidth = (width - padding.horizontal).clamp(0.0, width);
+        final innerHeight = (height - padding.vertical).clamp(0.0, height);
+        return SingleChildScrollView(
+          padding: padding,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minWidth: innerWidth,
+              maxWidth: innerWidth,
+              minHeight: innerHeight,
+            ),
+            child: Align(
+              alignment: alignment,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: maxWidth ?? innerWidth,
+                ),
+                child: child,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Pins [header] and [footer] and gives [body] whatever height is left.
+///
+/// Header and footer scroll inside a capped slice when the window is too
+/// short for them, so a small desktop window cannot overflow the column.
+class MaiaPane extends StatelessWidget {
+  const new({
+    required this.body,
+    super.key,
+    this.header,
+    this.footer,
+  });
+
+  final Widget? header;
+  final Widget body;
+  final Widget? footer;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (!constraints.maxHeight.isFinite || constraints.maxHeight <= 0) {
+          return const SizedBox.shrink();
+        }
+        final cap = constraints.maxHeight * 0.45;
+        Widget chrome(Widget child) {
+          return ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: cap),
+            child: SingleChildScrollView(
+              child: child,
+            ),
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (header != null) chrome(header!),
+            Expanded(child: body),
+            if (footer != null) chrome(footer!),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class MaiaHeader extends StatelessWidget {
   const new({
     super.key,
@@ -63,7 +163,19 @@ class MaiaHeader extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                ...actions,
+                if (actions.isNotEmpty)
+                  Flexible(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: actions,
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -140,26 +252,22 @@ class MaiaFailure extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ShadAlert.destructive(
-                title: const Text('Could not load'),
-                description: Text(message),
-              ),
-              const SizedBox(height: 12),
-              ShadButton.outline(
-                onPressed: onRetry,
-                child: const Text('Retry'),
-              ),
-            ],
+    return MaiaScrollFill(
+      padding: const EdgeInsets.all(24),
+      maxWidth: 420,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ShadAlert.destructive(
+            title: const Text('Could not load'),
+            description: Text(message),
           ),
-        ),
+          const SizedBox(height: 12),
+          ShadButton.outline(
+            onPressed: onRetry,
+            child: const Text('Retry'),
+          ),
+        ],
       ),
     );
   }
@@ -172,14 +280,12 @@ class MaiaEmpty extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Text(
-          message,
-          textAlign: TextAlign.center,
-          style: ShadTheme.of(context).textTheme.muted,
-        ),
+    return MaiaScrollFill(
+      padding: const EdgeInsets.all(24),
+      child: Text(
+        message,
+        textAlign: TextAlign.center,
+        style: ShadTheme.of(context).textTheme.muted,
       ),
     );
   }

@@ -47,8 +47,11 @@ class App extends StatelessWidget {
               ),
               child: BlocListener<ServerCubit, String>(
                 // Re-point the live client when the user edits the URL.
-                listener: (context, _) =>
-                    context.read<MaiaApiClient>().baseUrl = server.uri,
+                listener: (context, raw) {
+                  final next = ServerCubit.tryNormalise(raw);
+                  if (next == null) return;
+                  context.read<MaiaApiClient>().baseUrl = next;
+                },
                 child: const AppView(),
               ),
             ),

@@ -26,34 +26,30 @@ class MemoryView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Column(
-        children: [
-          MaiaHeader(
-            title: 'Memory',
-            // TODO(maia): semantic search needs OLLAMA_URL on the server.
-            actions: [
-              ShadIconButton.ghost(
-                key: const Key('memory_addNote_fab'),
-                icon: const Icon(LucideIcons.squarePen, size: 16),
-                onPressed: () => _showAddNote(context),
-              ),
-            ],
-          ),
-          Expanded(
-            child: BlocListener<MemoryBloc, MemoryState>(
-              listenWhen: (p, c) => c.error != null && p.error != c.error,
-              listener: (context, state) {
-                ShadToaster.of(context).show(
-                  ShadToast.destructive(
-                    title: const Text('Memory'),
-                    description: Text(state.error!),
-                  ),
-                );
-              },
-              child: const _MemoryBody(),
+      body: MaiaPane(
+        header: MaiaHeader(
+          title: 'Memory',
+          // TODO(maia): semantic search needs OLLAMA_URL on the server.
+          actions: [
+            ShadIconButton.ghost(
+              key: const Key('memory_addNote_fab'),
+              icon: const Icon(LucideIcons.squarePen, size: 16),
+              onPressed: () => _showAddNote(context),
             ),
-          ),
-        ],
+          ],
+        ),
+        body: BlocListener<MemoryBloc, MemoryState>(
+          listenWhen: (p, c) => c.error != null && p.error != c.error,
+          listener: (context, state) {
+            ShadToaster.of(context).show(
+              ShadToast.destructive(
+                title: const Text('Memory'),
+                description: Text(state.error!),
+              ),
+            );
+          },
+          child: const _MemoryBody(),
+        ),
       ),
     );
   }

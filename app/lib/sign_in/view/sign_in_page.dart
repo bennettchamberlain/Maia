@@ -6,6 +6,7 @@ import 'package:maia_app/config/app_config.dart';
 import 'package:maia_app/config/server_cubit.dart';
 import 'package:maia_app/session/session.dart';
 import 'package:maia_app/sign_in/sign_in.dart';
+import 'package:maia_app/ui/chrome.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 class SignInPage extends StatelessWidget {
@@ -32,43 +33,39 @@ class SignInView extends StatelessWidget {
         context.read<SessionCubit>().signedIn(state.session!);
       },
       child: Scaffold(
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 400),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: ShadCard(
-                title: const Text('Maia'),
-                description: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Memento mori.',
-                      style: muted.copyWith(fontStyle: FontStyle.italic),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Twenty-four hours. That is the whole day. '
-                      'This machine remembers so you can spend what is left.',
-                      style: muted,
-                    ),
-                  ],
+        body: MaiaScrollFill(
+          padding: const EdgeInsets.all(24),
+          maxWidth: 400,
+          child: ShadCard(
+            title: const Text('Maia'),
+            description: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Memento mori.',
+                  style: muted.copyWith(fontStyle: FontStyle.italic),
                 ),
-                child: const Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _ServerField(),
-                    SizedBox(height: 12),
-                    _HandleField(),
-                    SizedBox(height: 12),
-                    _PasswordField(),
-                    SizedBox(height: 16),
-                    _ErrorText(),
-                    _SubmitButton(),
-                  ],
+                const SizedBox(height: 6),
+                Text(
+                  'Twenty-four hours. That is the whole day. '
+                  'This machine remembers so you can spend what is left.',
+                  style: muted,
                 ),
-              ),
+              ],
+            ),
+            child: const Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _ServerField(),
+                SizedBox(height: 12),
+                _HandleField(),
+                SizedBox(height: 12),
+                _PasswordField(),
+                SizedBox(height: 16),
+                _ErrorText(),
+                _SubmitButton(),
+              ],
             ),
           ),
         ),

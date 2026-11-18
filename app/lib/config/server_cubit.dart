@@ -30,7 +30,8 @@ class ServerCubit extends Cubit<String> {
   static const _key = 'maia.server_url';
   final SharedPreferences? _prefs;
 
-  Uri get uri => _normalise(state);
+  /// Parsed server, or the build-time default while the field is half-typed.
+  Uri get uri => tryNormalise(state) ?? tryNormalise(AppConfig.apiUrl)!;
 
   Future<void> set(String url) async {
     final value = url.trim();
@@ -41,10 +42,15 @@ class ServerCubit extends Cubit<String> {
 
   /// `192.168.1.5:8090` -> `http://192.168.1.5:8090/`; keeps a scheme if
   /// one is given; guarantees the trailing slash `Uri.resolve` needs.
-  static Uri _normalise(String raw) {
+  /// Null for a half-typed value such as `192.168.74.81:8:8090`.
+  static Uri? tryNormalise(String raw) {
     var s = raw.trim();
+    if (s.isEmpty) return null;
     if (!s.contains('://')) s = 'http://$s';
     if (!s.endsWith('/')) s = '$s/';
-    return Uri.parse(s);
+    final uri = Uri.tryParse(s);
+    if (uri == null || uri.host.isEmpty) return null;
+    if (uri.scheme != 'http' && uri.scheme != 'https') return null;
+    return uri;
   }
 }

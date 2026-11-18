@@ -26,15 +26,18 @@ class JobsView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Scaffold(
-      body: Column(
-        children: [
-          MaiaHeader(
-            title: 'Jobs',
-            actions: [_RefreshButton()],
-          ),
-          _StateFilter(),
-          Expanded(child: _JobsBody()),
-        ],
+      body: MaiaPane(
+        header: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            MaiaHeader(
+              title: 'Jobs',
+              actions: [_RefreshButton()],
+            ),
+            _StateFilter(),
+          ],
+        ),
+        body: _JobsBody(),
       ),
     );
   }

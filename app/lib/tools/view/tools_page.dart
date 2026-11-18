@@ -261,26 +261,29 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
     return Scaffold(
-      body: Column(
-        children: [
-          MaiaHeader(
-            title: 'Connectors',
-            actions: [
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Text(_connectedLabel, style: theme.textTheme.small),
+      body: MaiaPane(
+        header: MaiaHeader(
+          title: 'Connectors',
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Text(
+                _connectedLabel,
+                style: theme.textTheme.small,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              ShadIconButton.ghost(
-                key: const Key('tools_refresh_button'),
-                icon: const Icon(LucideIcons.refreshCw, size: 16),
-                onPressed: _busy ? null : _load,
-              ),
-            ],
-          ),
-          Expanded(
-            child: _loading && _catalog == null
-                ? const MaiaSkeleton()
-                : ListView(
+            ),
+            ShadIconButton.ghost(
+              key: const Key('tools_refresh_button'),
+              icon: const Icon(LucideIcons.refreshCw, size: 16),
+              onPressed: _busy ? null : _load,
+            ),
+          ],
+        ),
+        body: _loading && _catalog == null
+            ? const MaiaSkeleton()
+            : ListView(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
                     children: [
                       if (_error != null) ...[
@@ -392,8 +395,6 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
                       ),
                     ],
                   ),
-          ),
-        ],
       ),
     );
   }
@@ -611,19 +612,34 @@ class _ConnectorRow extends StatelessWidget {
               _AppGlyph(item: item),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(item.title, style: theme.textTheme.small),
+                child: Text(
+                  item.title,
+                  style: theme.textTheme.small,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
               if (connected)
-                Row(
-                  children: [
-                    Icon(
-                      LucideIcons.check,
-                      size: 16,
-                      color: theme.colorScheme.foreground,
-                    ),
-                    const SizedBox(width: 6),
-                    Text('Connected', style: theme.textTheme.muted),
-                  ],
+                Flexible(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        LucideIcons.check,
+                        size: 16,
+                        color: theme.colorScheme.foreground,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          'Connected',
+                          style: theme.textTheme.muted,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
                 )
               else
                 ShadButton.outline(
@@ -682,85 +698,92 @@ class _ConnectorDetail extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
     return Scaffold(
-      body: Column(
-        children: [
-          MaiaHeader(
-            title: item.title,
-            leading: ShadIconButton.ghost(
-              icon: const Icon(LucideIcons.arrowLeft, size: 16),
+      body: MaiaPane(
+        header: MaiaHeader(
+          title: item.title,
+          leading: ShadIconButton.ghost(
+            icon: const Icon(LucideIcons.arrowLeft, size: 16),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          actions: [
+            ShadIconButton.ghost(
+              icon: const Icon(LucideIcons.x, size: 16),
               onPressed: () => Navigator.of(context).pop(),
             ),
-            actions: [
-              ShadIconButton.ghost(
-                icon: const Icon(LucideIcons.x, size: 16),
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-            ],
-          ),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(20),
+          ],
+        ),
+        body: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Row(
               children: [
-                Row(
-                  children: [
-                    _AppGlyph(item: item, size: 48),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(item.title, style: theme.textTheme.h4),
-                    ),
-                    if (connected)
-                      ShadButton.outline(
-                        onPressed: busy ? null : onDisconnect,
-                        child: const Text('Disconnect'),
-                      )
-                    else
-                      ShadButton(
-                        onPressed: busy ? null : onConnect,
-                        child: const Text('Connect'),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Text(item.description, style: theme.textTheme.muted),
-                const SizedBox(height: 24),
-                Text('Accounts', style: theme.textTheme.muted),
-                const SizedBox(height: 8),
-                ShadCard(
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          account?.label ?? 'default',
-                          style: theme.textTheme.small,
-                        ),
-                      ),
-                      Text(
-                        connected ? 'Connected' : 'Off',
-                        style: theme.textTheme.muted.copyWith(
-                          color: connected
-                              ? const Color(0xFF34C759)
-                              : theme.colorScheme.mutedForeground,
-                        ),
-                      ),
-                    ],
+                _AppGlyph(item: item, size: 48),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    item.title,
+                    style: theme.textTheme.h4,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ),
-                if (connected) ...[
-                  const SizedBox(height: 16),
-                  ShadButton.outline(
-                    onPressed: busy ? null : onSync,
-                    child: const Text('Sync now'),
-                  ),
-                ],
-                const SizedBox(height: 24),
-                Text(
-                  'OAuth stays at One. Maia stores a grant pointer, not the token.',
-                  style: theme.textTheme.muted,
                 ),
               ],
             ),
-          ),
-        ],
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: connected
+                  ? ShadButton.outline(
+                      onPressed: busy ? null : onDisconnect,
+                      child: const Text('Disconnect'),
+                    )
+                  : ShadButton(
+                      onPressed: busy ? null : onConnect,
+                      child: const Text('Connect'),
+                    ),
+            ),
+            const SizedBox(height: 10),
+            Text(item.description, style: theme.textTheme.muted),
+            const SizedBox(height: 24),
+            Text('Accounts', style: theme.textTheme.muted),
+            const SizedBox(height: 8),
+            ShadCard(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      account?.label ?? 'default',
+                      style: theme.textTheme.small,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    connected ? 'Connected' : 'Off',
+                    style: theme.textTheme.muted.copyWith(
+                      color: connected
+                          ? const Color(0xFF34C759)
+                          : theme.colorScheme.mutedForeground,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (connected) ...[
+              const SizedBox(height: 16),
+              ShadButton.outline(
+                onPressed: busy ? null : onSync,
+                child: const Text('Sync now'),
+              ),
+            ],
+            const SizedBox(height: 24),
+            Text(
+              'OAuth stays at One. Maia stores a grant pointer, not the token.',
+              style: theme.textTheme.muted,
+            ),
+          ],
+        ),
       ),
     );
   }
