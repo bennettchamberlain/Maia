@@ -3,6 +3,7 @@ import 'package:maia_api_client/maia_api_client.dart';
 import 'package:maia_app/chat/day_groups.dart';
 import 'package:maia_app/graph/ontology_view.dart';
 import 'package:maia_app/memory/memory.dart';
+import 'package:maia_app/memory/memory_filter.dart';
 import 'package:maia_app/ui/chrome.dart';
 import 'package:maia_app/ui/company_logo.dart';
 import 'package:maia_models/maia_models.dart';
@@ -93,10 +94,17 @@ class _MemoryBodyState extends State<_MemoryBody> {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<MemoryBloc>().state;
-    final query = _search.text.trim().toLowerCase();
+    final phrase = readMemoryPhrase(
+      _search.text,
+      DateTime.now(),
+      platforms: [
+        for (final timeline in state.timelines)
+          if (timeline.platform != null) timeline.platform!,
+      ],
+    );
     final entries = [
       for (final entry in state.entries)
-        if (_matches(entry, query)) entry,
+        if (memoryPhraseMatches(phrase, entry)) entry,
     ];
     return Column(
       children: [
@@ -131,11 +139,24 @@ class _MemoryBodyState extends State<_MemoryBody> {
               child: ShadInput(
                 key: const Key('memory_search'),
                 controller: _search,
-                placeholder: const Text('Search this timeline…'),
-                onChanged: (_) => setState(() {}),
+                placeholder: const Text(
+                  'Filter in words, like gmail from Ada this week',
+                ),
+                onChanged: (value) => _onSearch(context, state, value),
               ),
             ),
-          Expanded(child: _list(context, state, entries, query.isNotEmpty)),
+          if (phrase.narrowed)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  memoryPhraseLine(phrase),
+                  style: ShadTheme.of(context).textTheme.muted,
+                ),
+              ),
+            ),
+          Expanded(child: _list(context, state, entries, phrase.narrowed)),
         ],
       ],
     );
@@ -210,18 +231,25 @@ class _MemoryBodyState extends State<_MemoryBody> {
     );
   }
 
-  bool _matches(TimelineEntry entry, String query) {
-    if (query.isEmpty) return true;
-    final hay = [
-      entry.title,
-      entry.body,
-      entry.platform,
-      entry.account,
-      entry.source,
-      _kindLine(entry),
-      ...entry.topics,
-    ].whereType<String>().join(' ').toLowerCase();
-    return hay.contains(query);
+  void _onSearch(BuildContext context, MemoryState state, String value) {
+    setState(() {});
+    final phrase = readMemoryPhrase(
+      value,
+      DateTime.now(),
+      platforms: [
+        for (final timeline in state.timelines)
+          if (timeline.platform != null) timeline.platform!,
+      ],
+    );
+    final platform = phrase.platform;
+    if (platform == null) return;
+    for (final timeline in state.timelines) {
+      if (timeline.platform != platform || timeline.id == state.selectedId) {
+        continue;
+      }
+      context.read<MemoryBloc>().add(MemoryTimelineSelected(timeline.id));
+      return;
+    }
   }
 }
 

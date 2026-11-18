@@ -829,8 +829,8 @@ class _YouSearchViewState extends State<_YouSearchView> {
 }
 
 String _plain(String text) => text
-    .replaceAll(RegExp(r'\*\*(.+?)\*\*'), r'$1')
-    .replaceAll(RegExp('`([^`]+)`'), r'$1')
+    .replaceAllMapped(RegExp(r'\*\*(.+?)\*\*'), (m) => m[1] ?? '')
+    .replaceAllMapped(RegExp(r'`([^`]+)`'), (m) => m[1] ?? '')
     .replaceAll(RegExp(r'^#+\s*', multiLine: true), '');
 
 Future<void> _open(String url) async {

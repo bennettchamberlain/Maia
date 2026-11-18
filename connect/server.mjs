@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
 import { parseUserReference } from "@withone/connect/server";
+import { accountLogin, fillPathParams } from "./path_params.mjs";
 
 loadEnv({ path: join(dirname(fileURLToPath(import.meta.url)), "..", ".env") });
 
@@ -143,6 +144,19 @@ try {
   console.warn("One Connect SDK not configured:", err.message);
 }
 
+async function paramsFor(person, actionId, path, pathParams, query, body, conn) {
+  let known = path || "";
+  if (!known && connect && actionId) {
+    try {
+      const guide = await connect.getActionKnowledge(person, actionId);
+      known = guide?.path || "";
+    } catch {
+      known = "";
+    }
+  }
+  return fillPathParams(known, pathParams, query, body, conn);
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
   if (url.pathname === "/" || url.pathname === "/index.html") {
@@ -206,6 +220,55 @@ const server = createServer(async (req, res) => {
         return;
       }
       const intent = body.intent || "list recent records";
+      if (body.discover) {
+        const actions = await connect.searchActions(person, platform, intent);
+        const found = [];
+        for (const action of (actions || []).slice(0, 3)) {
+          const id = action._id || action.id;
+          if (!id) continue;
+          found.push({
+            action_id: id,
+            title: action.title || action.name || id,
+            path: action.path || "",
+          });
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ actions: found, account: accountLogin(conn) }));
+        return;
+      }
+      const requested = body.actionId || body.action_id;
+      if (requested) {
+        const pathParams = await paramsFor(
+          person,
+          requested,
+          "",
+          body.pathParams || body.path_params,
+          body.query,
+          body.body,
+          conn,
+        );
+        const reply = await connect.runAction(person, {
+          connectionKey: conn.key,
+          actionId: requested,
+          pathParams,
+          query: body.query,
+          body: body.body,
+        });
+        if (reply?.refusal === "rate_limit" || reply?.status === 429) {
+          res.writeHead(429, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "rate_limit", retry: true }));
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({
+          ok: Boolean(reply?.ok),
+          status: reply?.status ?? null,
+          refusal: reply?.refusal ?? null,
+          action_id: requested,
+          data: reply?.data ?? null,
+        }));
+        return;
+      }
       const actions = await connect.searchActions(person, platform, intent);
       const action = actions[0];
       if (!action) {
@@ -217,22 +280,43 @@ const server = createServer(async (req, res) => {
       let last = actions[0];
       for (const candidate of actions.slice(0, 3)) {
         last = candidate;
+        const pathParams = await paramsFor(
+          person,
+          candidate._id,
+          candidate.path,
+          body.pathParams || body.path_params,
+          body.query,
+          body.body,
+          conn,
+        );
         reply = await connect.runAction(person, {
           connectionKey: conn.key,
           actionId: candidate._id,
+          pathParams,
+          query: body.query,
+          body: body.body,
         });
         if (reply.ok) break;
-        if (reply.blockedByGrant || reply.refusal === "grant") break;
+        if (reply.blockedByGrant || reply.refusal === "grant" || reply.refusal === "rate_limit") break;
+      }
+      if (reply?.refusal === "rate_limit" || reply?.status === 429) {
+        res.writeHead(429, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "rate_limit", retry: true, action_id: last?._id }));
+        return;
       }
       if (reply?.refusal === "reconnect_required" || /reconnect_required/.test(String(reply?.data ?? ""))) {
         res.writeHead(409, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "reconnect_required", action: last?._id }));
         return;
       }
-      res.writeHead(reply.ok ? 200 : reply.status || 502, {
-        "content-type": "application/json",
-      });
-      res.end(JSON.stringify(reply.data ?? { blocked: reply.blockedByGrant }));
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        ok: Boolean(reply?.ok),
+        status: reply?.status ?? null,
+        refusal: reply?.refusal ?? null,
+        action_id: last?._id || null,
+        data: reply?.data ?? null,
+      }));
     } catch (err) {
       const message = err.message || "pull failed";
       const reconnect = err.code === "reconnect_required" || /reconnect_required/.test(message);
@@ -307,14 +391,24 @@ const server = createServer(async (req, res) => {
         res.end(JSON.stringify({
           platform,
           intent,
+          account: accountLogin(conn),
           actions: found,
         }));
         return;
       }
+      const pathParams = await paramsFor(
+        person,
+        actionId,
+        "",
+        body.pathParams || body.path_params,
+        body.query,
+        body.body,
+        conn,
+      );
       const reply = await connect.runAction(person, {
         connectionKey: conn.key,
         actionId,
-        pathParams: body.pathParams || body.path_params,
+        pathParams,
         query: body.query,
         body: body.body,
         encoding: body.encoding,

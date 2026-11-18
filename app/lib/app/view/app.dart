@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:maia_api_client/maia_api_client.dart';
+import 'package:maia_app/app/bloc/app_bloc.dart';
 import 'package:maia_app/chat/voice_cubit.dart';
 import 'package:maia_app/config/chat_settings_cubit.dart';
 import 'package:maia_app/config/server_cubit.dart';
@@ -13,11 +13,12 @@ import 'package:maia_app/one/callback_forwarder.dart';
 import 'package:maia_app/session/session.dart';
 import 'package:maia_app/sign_in/sign_in.dart';
 import 'package:maia_app/ui/chrome.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class App extends StatelessWidget {
-  const new({super.key, this.apiClient, this.prefs});
+  const new({super.key, this.apiClient, this.prefs, this.autoSignIn = true});
 
   /// Injected in tests; built from [ServerCubit] otherwise.
   final MaiaApiClient? apiClient;
@@ -25,11 +26,21 @@ class App extends StatelessWidget {
   /// Persisted settings (server URL). Null in tests.
   final SharedPreferences? prefs;
 
+  /// Signs in with the default server and account. Tests that drive the
+  /// form themselves turn this off.
+  final bool autoSignIn;
+
   @override
   Widget build(BuildContext context) {
     return MultiBlocProvider(
       providers: [
-        BlocProvider(create: (_) => SessionCubit()),
+        BlocProvider(
+          create: (_) => SessionCubit(
+            initial: autoSignIn
+                ? const SessionState.starting()
+                : const SessionState.unauthenticated(),
+          ),
+        ),
         BlocProvider(create: (_) => ServerCubit(prefs: prefs)),
         BlocProvider(create: (_) => ChatSettingsCubit(prefs: prefs)),
       ],
@@ -47,7 +58,19 @@ class App extends StatelessWidget {
             child: BlocProvider(
               create: (context) =>
                   VoiceCubit(api: context.read<MaiaApiClient>(), prefs: prefs),
-              child: const _ServerBridge(),
+              child: BlocProvider(
+                lazy: false,
+                create: (context) {
+                  final bloc = AppBloc(
+                    api: context.read<MaiaApiClient>(),
+                    server: context.read<ServerCubit>(),
+                    session: context.read<SessionCubit>(),
+                  );
+                  if (autoSignIn) bloc.add(const AppStarted());
+                  return bloc;
+                },
+                child: const _ServerBridge(),
+              ),
             ),
           );
         },
@@ -109,9 +132,11 @@ class AppView extends StatelessWidget {
             builder: maiaMaterialTheme,
             child: GhostLayer(child: child ?? const SizedBox.shrink()),
           ),
-          home: status == SessionStatus.authenticated
-              ? const HomePage()
-              : const SignInPage(),
+          home: switch (status) {
+            SessionStatus.starting => const Scaffold(body: MaiaSkeleton()),
+            SessionStatus.authenticated => const HomePage(),
+            SessionStatus.unauthenticated => const SignInPage(),
+          },
         );
       },
     );

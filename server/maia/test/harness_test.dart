@@ -112,6 +112,8 @@ void main() {
     );
     expect(prompt, contains('gmail'));
     expect(prompt, contains('copied into memory'));
+    expect(prompt, contains('sync'));
+    expect(prompt, contains('still queued'));
   });
 
   test('a printed tool call is not a sentence', () {

@@ -26,6 +26,7 @@ import 'package:maia_api/src/harness/harness.dart';
 import 'package:maia_api/src/library/store.dart';
 import 'package:maia_api/src/jobs/dream_job.dart';
 import 'package:maia_api/src/jobs/job_mirror.dart';
+import 'package:maia_api/src/jobs/sync_pace.dart';
 import 'package:maia_api/src/queries.dart';
 import 'package:maia_api/src/timeline/summary.dart';
 import 'package:maia_api/src/timeline/writer.dart';
@@ -73,6 +74,9 @@ class MaiaApp {
   final Db db;
   final FaultLog faults;
   final OneCatalog oneCatalog = OneCatalog();
+
+  /// Where the slow connector walk left off, per person.
+  final Map<String, int> _syncCursor = {};
   final NamedQueries queries;
   final PgBossQueue? jobs;
   final Embeddings? embeddings;
@@ -178,6 +182,7 @@ class MaiaApp {
     ..get('/memory', _authed(_memoryFeed))
     ..get('/memory/<id>', _authed(_memoryGet))
     ..post('/memory', _authed(_memoryUpsert))
+    ..post('/memory/present', _authed(_memoryPresent))
     ..post('/memory/search', _authed(_memorySearch))
     ..post('/positions', _authed(_positions))
     ..get('/places/reverse', _authed(_placesReverse))
@@ -495,9 +500,61 @@ class MaiaApp {
     return DateTime.now().toUtc();
   }
 
+  /// A row we already stored with the same text. The backfill hits these
+  /// on every later pass, and they do not need another embed or conclude.
+  Future<String?> _unchangedMemory(
+    gel.Client c,
+    String source,
+    String sourceId,
+    String? title,
+    String? body,
+  ) async {
+    final raw = jsonDecode(
+      await c.queryJSON(
+        r'''
+        select MemoryItem { id, title, body }
+        filter .owner = global current_person
+          and .source = <str>$source
+          and .source_id = <str>$source_id
+        limit 1
+        ''',
+        {'source': source, 'source_id': sourceId},
+      ),
+    );
+    if (raw is! List || raw.isEmpty || raw.first is! Map) return null;
+    final row = Map<String, dynamic>.from(raw.first as Map);
+    final sameTitle = '${row['title'] ?? ''}' == (title ?? '');
+    final sameBody = '${row['body'] ?? ''}' == (body ?? '');
+    if (!sameTitle || !sameBody) return null;
+    final id = row['id'];
+    return id == null ? null : '$id';
+  }
+
   /// Insert-or-update, then embed inline when Ollama is configured (so search
   /// works the moment a memory lands) and kick the `embed` job for anything
   /// the inline pass missed.
+  Future<Response> _memoryPresent(Request r, gel.Client c) async {
+    final b = await _body(r);
+    final source = (b['source'] as String?)?.trim() ?? '';
+    final ids = [
+      for (final id in b['source_ids'] as List<dynamic>? ?? const [])
+        if ('$id'.trim().isNotEmpty) '$id'.trim(),
+    ];
+    if (source.isEmpty || ids.isEmpty) return _json({'ids': const <String>[]});
+    final raw = jsonDecode(
+      await c.queryJSON(queries['memory_present'], {
+        'source': source,
+        'ids': ids,
+      }),
+    );
+    return _json({
+      'ids': [
+        for (final row in raw is List ? raw : const [])
+          if (row is Map && row['source_id'] != null) '${row['source_id']}',
+      ],
+    });
+  }
+
   Future<String> _upsertMemory(
     gel.Client c, {
     required String kind,
@@ -508,6 +565,8 @@ class MaiaApp {
     required String sourceId,
     String? account,
   }) async {
+    final kept = await _unchangedMemory(c, source, sourceId, title, body);
+    if (kept != null) return kept;
     final json = await c.querySingleJSON(queries['memory_upsert'], {
       'kind': kind,
       'title': title,
@@ -935,6 +994,7 @@ class MaiaApp {
     connector: connectors && personId != null
         ? (args) => _useConnector(personId, args)
         : null,
+    sync: personId == null ? null : (c, args) => _syncTool(c, args),
     sessionSearch: (c, query, limit) => searchSessions(c, query, limit: limit),
     proposeSkill: (c, name, body) async {
       final id = await proposeSkill(
@@ -1032,7 +1092,11 @@ class MaiaApp {
     if (map['actions'] is List && map['data'] == null) {
       return jsonEncode({
         'type': 'model',
-        'text': connectorActionPrompt(platform, map['actions']),
+        'text': connectorActionPrompt(
+          platform,
+          map['actions'],
+          account: '${map['account'] ?? ''}',
+        ),
       });
     }
     if (map['ok'] != true || map['data'] == null) {
@@ -2671,17 +2735,18 @@ class MaiaApp {
     List<String> platforms,
   ) async {
     final token = _jobToken(personId);
-    for (final platform in platforms) {
+    for (var i = 0; i < platforms.length; i++) {
+      final platform = platforms[i];
+      final wait = syncDelay(i);
       await _enqueue(
         c,
         'etl',
-        {
-          'person_id': personId,
-          'platform': platform,
-          'token': token,
-        },
+        {'person_id': personId, 'platform': platform, 'token': token},
         recordName: 'etl:$platform',
-        options: SendOptions(singletonKey: '$personId:$platform'),
+        options: SendOptions(
+          singletonKey: '$personId:$platform',
+          startAfter: wait == Duration.zero ? null : wait,
+        ),
       );
     }
   }
@@ -2691,16 +2756,14 @@ class MaiaApp {
   Future<void> syncConnected() async {
     if (jobs == null) return;
     final raw = jsonDecode(
-      await db.bypass.queryJSON(
-        r'''
+      await db.bypass.queryJSON(r'''
         select OneGrant {
           platforms,
           one_user_id,
           owner: { id },
         }
         filter not exists .revoked_at
-        ''',
-      ),
+        '''),
     );
     if (raw is! List) return;
     for (final row in raw) {
@@ -2716,8 +2779,11 @@ class MaiaApp {
           .where((p) => p.isNotEmpty)
           .toList();
       if (platforms.isEmpty) continue;
+      final pick = nextConnector(platforms, _syncCursor[personId] ?? 0);
+      if (pick == null) continue;
+      _syncCursor[personId] = pick.next;
       try {
-        await _enqueueEtl(db.asPerson(personId), personId, platforms);
+        await _enqueueEtl(db.asPerson(personId), personId, [pick.platform]);
       } on Object {
         // One person's grant should not stop the others.
       }
@@ -2788,6 +2854,56 @@ class MaiaApp {
       await _enqueueEtl(c, personId, platforms);
     }
     return Response.ok(json, headers: _jsonHeaders);
+  }
+
+  /// What the chat model calls. Queues a pull when asked, then says
+  /// whether jobs are running or still sitting in the queue.
+  Future<String> _syncTool(gel.Client c, Map<String, dynamic> args) async {
+    final personId = await _personId(c);
+    if (personId == null) {
+      return jsonEncode({'type': 'text', 'text': 'not signed in'});
+    }
+    final asked = '${args['platform'] ?? ''}'.trim();
+    final enqueued = <String>[];
+    if (asked.isNotEmpty) {
+      final platforms = asked == 'all'
+          ? await _syncingPlatforms(c, personId)
+          : <String>[asked];
+      if (platforms.isEmpty) {
+        return jsonEncode({
+          'type': 'text',
+          'text': 'No connected apps to sync.',
+        });
+      }
+      await _enqueueEtl(c, personId, platforms);
+      enqueued.addAll(platforms);
+    }
+    final jobsRaw = jsonDecode(
+      await c.queryJSON(queries['jobs_list'], {'states': null, 'limit': 40}),
+    );
+    final cursorsRaw = jsonDecode(
+      await c.queryJSON(queries['sync_cursor_list']),
+    );
+    final jobs = jobsRaw is List
+        ? [
+            for (final row in jobsRaw)
+              if (row is Map) Map<String, dynamic>.from(row),
+          ]
+        : const <Map<String, dynamic>>[];
+    final cursors = cursorsRaw is List
+        ? [
+            for (final row in cursorsRaw)
+              if (row is Map) Map<String, dynamic>.from(row),
+          ]
+        : const <Map<String, dynamic>>[];
+    return jsonEncode({
+      'type': 'text',
+      'text': formatSyncStatus(
+        enqueued: enqueued,
+        jobs: jobs,
+        cursors: cursors,
+      ),
+    });
   }
 
   Future<Response> _oneSync(Request r, gel.Client c) async {

@@ -782,8 +782,8 @@ String screenNoteOfMessages(List<ChatMessage> messages) {
 
 String _spokenFallback(String text) {
   final plain = text
-      .replaceAll(RegExp(r'\*\*(.+?)\*\*'), r'$1')
-      .replaceAll(RegExp('`([^`]+)`'), r'$1')
+      .replaceAllMapped(RegExp(r'\*\*(.+?)\*\*'), (m) => m[1] ?? '')
+      .replaceAllMapped(RegExp(r'`([^`]+)`'), (m) => m[1] ?? '')
       .replaceAll(RegExp(r'^#+\s*', multiLine: true), '')
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();

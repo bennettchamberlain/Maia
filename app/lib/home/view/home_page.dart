@@ -77,26 +77,28 @@ class _HomePageState extends State<HomePage> {
 
     if (wide) {
       return Scaffold(
-        body: Row(
-          children: [
-            _Sidebar(
-              person: person,
-              index: _index,
-              settings: _settings,
-              onSelected: (i) => setState(() {
-                _index = i;
-                _settings = false;
-              }),
-              onSettings: () => setState(() => _settings = !_settings),
-            ),
-            Expanded(child: body),
-          ],
+        body: SafeArea(
+          child: Row(
+            children: [
+              _Sidebar(
+                person: person,
+                index: _index,
+                settings: _settings,
+                onSelected: (i) => setState(() {
+                  _index = i;
+                  _settings = false;
+                }),
+                onSettings: () => setState(() => _settings = !_settings),
+              ),
+              Expanded(child: body),
+            ],
+          ),
         ),
       );
     }
 
     return Scaffold(
-      body: body,
+      body: SafeArea(bottom: false, child: body),
       bottomNavigationBar: _BottomNav(
         index: _index,
         onSelected: (i) => setState(() => _index = i),

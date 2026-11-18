@@ -23,10 +23,16 @@ def _iso(value: Any) -> str:
 
 
 def gmail(payload: Any) -> list[dict[str, Any]]:
-    rows = _walk(payload, ("messages", "threads", "data", "result"))
+    rows = _walk(payload, ("emails", "messages", "threads", "data", "result"))
     out: list[dict[str, Any]] = []
     for row in rows:
-        mid = str(row.get("id") or row.get("threadId") or row.get("source_id") or "")
+        mid = str(
+            row.get("id")
+            or row.get("messageId")
+            or row.get("threadId")
+            or row.get("source_id")
+            or ""
+        )
         if not mid:
             continue
         headers = {
@@ -35,8 +41,9 @@ def gmail(payload: Any) -> list[dict[str, Any]]:
             if isinstance(h, dict)
         }
         subject = headers.get("subject") or row.get("subject") or row.get("snippet") or "(email)"
-        sender = headers.get("from") or row.get("from") or ""
-        snippet = row.get("snippet") or row.get("body") or ""
+        sender = headers.get("from") or row.get("from") or row.get("sender") or ""
+        body = row.get("body")
+        snippet = row.get("snippet") or (body if isinstance(body, str) else "") or ""
         out.append(
             {
                 "kind": "email",
@@ -127,31 +134,55 @@ def generic(platform: str, payload: Any) -> list[dict[str, Any]]:
             "issues",
             "nodes",
             "values",
+            "threads",
         ),
     )
     out: list[dict[str, Any]] = []
     for row in rows:
-        source_id = str(row.get("id") or row.get("gid") or row.get("url") or "")
+        headers = _headers(row)
+        source_id = str(
+            row.get("id")
+            or row.get("ts")
+            or row.get("gid")
+            or row.get("url")
+            or row.get("threadId")
+            or row.get("iCalUID")
+            or ""
+        )
         if not source_id:
             continue
         title = (
-            row.get("title")
+            headers.get("subject")
+            or row.get("title")
             or row.get("name")
             or row.get("summary")
             or row.get("subject")
+            or row.get("snippet")
+            or row.get("text")
             or platform
         )
-        body = row.get("body") or row.get("description") or row.get("snippet") or ""
+        sender = headers.get("from") or row.get("from") or ""
+        body = (
+            row.get("snippet")
+            or row.get("text")
+            or row.get("body")
+            or row.get("description")
+            or ""
+        )
+        if sender:
+            body = f"From: {sender}\n{body}".strip()
         out.append(
             {
                 "kind": "note",
                 "title": str(title),
                 "body": str(body),
                 "occurred_at": _iso(
-                    row.get("updated_at")
+                    row.get("internalDate")
+                    or row.get("updated_at")
                     or row.get("created_at")
                     or row.get("date")
                     or row.get("occurred_at")
+                    or row.get("ts")
                 ),
                 "source": f"one:{platform}",
                 "source_id": source_id,
@@ -162,7 +193,23 @@ def generic(platform: str, payload: Any) -> list[dict[str, Any]]:
 
 def normalize(platform: str, payload: Any) -> list[dict[str, Any]]:
     fn = ADAPTERS.get(platform, lambda value: generic(platform, value))
-    return fn(payload)
+    return fn(payload)[:500]
+
+
+def _headers(row: dict[str, Any]) -> dict[str, str]:
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    raw = payload.get("headers") if isinstance(payload, dict) else None
+    raw = raw if isinstance(raw, list) else row.get("headers")
+    if not isinstance(raw, list):
+        return {}
+    out: dict[str, str] = {}
+    for header in raw:
+        if not isinstance(header, dict):
+            continue
+        name = str(header.get("name") or "").strip().lower()
+        if name:
+            out[name] = str(header.get("value") or "")
+    return out
 
 
 def json_preview(value: Any, limit: int = 800) -> str:

@@ -104,13 +104,15 @@ class MaiaPane extends StatelessWidget {
           );
         }
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (header != null) chrome(header!),
-            Expanded(child: body),
-            if (footer != null) chrome(footer!),
-          ],
+        return SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (header != null) chrome(header!),
+              Expanded(child: body),
+              if (footer != null) chrome(footer!),
+            ],
+          ),
         );
       },
     );

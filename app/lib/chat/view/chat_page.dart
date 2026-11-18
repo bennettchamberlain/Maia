@@ -63,28 +63,43 @@ class ChatView extends StatelessWidget {
             children: [
               SizedBox(width: listWidth, child: const TimelineColumn()),
               const MaiaDivider.vertical(),
-              const Expanded(
-                child: Column(
-                  children: [
-                    ChatBenchStrip(),
-                    Expanded(child: _WideConversation()),
-                  ],
-                ),
-              ),
+              const Expanded(child: _BenchColumn(child: _WideConversation())),
             ],
           );
         },
       );
     }
-    return Column(
-      children: [
-        const ChatBenchStrip(),
-        Expanded(
-          child: hasOpen
-              ? const _Conversation(showBack: true)
-              : const TimelineColumn(),
-        ),
-      ],
+    return _BenchColumn(
+      child: hasOpen
+          ? const _Conversation(showBack: true)
+          : const TimelineColumn(),
+    );
+  }
+}
+
+/// The checks list sits above the conversation when the window is tall
+/// enough for both. A short window keeps the conversation.
+class _BenchColumn extends StatelessWidget {
+  const new({required this.child});
+
+  final Widget child;
+
+  static const _minHeight = 360.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tall =
+            constraints.maxHeight.isFinite &&
+            constraints.maxHeight >= _minHeight;
+        return Column(
+          children: [
+            if (tall) const ChatBenchStrip(),
+            Expanded(child: child),
+          ],
+        );
+      },
     );
   }
 }

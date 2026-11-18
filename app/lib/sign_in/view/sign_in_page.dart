@@ -33,39 +33,41 @@ class SignInView extends StatelessWidget {
         context.read<SessionCubit>().signedIn(state.session!);
       },
       child: Scaffold(
-        body: MaiaScrollFill(
-          padding: const EdgeInsets.all(24),
-          maxWidth: 400,
-          child: ShadCard(
-            title: const Text('Maia'),
-            description: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Memento mori.',
-                  style: muted.copyWith(fontStyle: FontStyle.italic),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Twenty-four hours. That is the whole day. '
-                  'This machine remembers so you can spend what is left.',
-                  style: muted,
-                ),
-              ],
-            ),
-            child: const Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _ServerField(),
-                SizedBox(height: 12),
-                _HandleField(),
-                SizedBox(height: 12),
-                _PasswordField(),
-                SizedBox(height: 16),
-                _ErrorText(),
-                _SubmitButton(),
-              ],
+        body: SafeArea(
+          child: MaiaScrollFill(
+            padding: const EdgeInsets.all(24),
+            maxWidth: 400,
+            child: ShadCard(
+              title: const Text('Maia'),
+              description: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Memento mori.',
+                    style: muted.copyWith(fontStyle: FontStyle.italic),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Twenty-four hours. That is the whole day. '
+                    'This machine remembers so you can spend what is left.',
+                    style: muted,
+                  ),
+                ],
+              ),
+              child: const Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _ServerField(),
+                  SizedBox(height: 12),
+                  _HandleField(),
+                  SizedBox(height: 12),
+                  _PasswordField(),
+                  SizedBox(height: 16),
+                  _ErrorText(),
+                  _SubmitButton(),
+                ],
+              ),
             ),
           ),
         ),

@@ -204,7 +204,8 @@ Future<void> main() async {
   );
   await app.ensureBootstrap();
   if (jobs != null) {
-    sync = SyncClock(app.syncConnected)..start();
+    sync = SyncClock(app.syncConnected, every: const Duration(minutes: 2))
+      ..start();
   }
 
   final server = await io.serve(

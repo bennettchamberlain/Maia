@@ -13,6 +13,44 @@ class _MockApi extends Mock implements MaiaApiClient;
 
 void main() {
   group('App', () {
+    testWidgets('signs in with the default account on launch', (tester) async {
+      final api = _MockApi();
+      registerFallbackValue(Uri.parse('http://100.86.127.113:8090/'));
+      when(() => api.baseUrl = any())
+          .thenReturn(Uri.parse('http://100.86.127.113:8090/'));
+      when(() => api.signIn(handle: 'maia', password: 'maia-admin')).thenAnswer(
+        (_) async => Session(
+          token: 't',
+          expiresAt: DateTime.utc(2030),
+          person: const Person(id: 'p1', handle: 'maia', isSuperadmin: true),
+        ),
+      );
+      when(api.chatSessions).thenAnswer((_) async => []);
+      when(api.chatTools).thenAnswer(
+        (_) async => const ChatCatalog(
+          defaultProvider: 'parasail',
+          providers: {},
+          tools: [],
+        ),
+      );
+      when(api.memoryFeed).thenAnswer((_) async => []);
+      when(() => api.jobs(limit: 200)).thenAnswer((_) async => []);
+      when(api.oneConnectors).thenAnswer(
+        (_) async =>
+            const OneConnectorPage(total: 0, categories: [], connectors: []),
+      );
+      when(api.userTimeline).thenAnswer((_) async => UserTimelineView.empty);
+      when(api.timelines).thenAnswer((_) async => []);
+      when(api.library).thenAnswer((_) async => LibraryView.empty);
+
+      await tester.pumpWidget(App(apiClient: api));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(HomePage), findsOneWidget);
+      expect(find.byType(SignInPage), findsNothing);
+    });
+
     testWidgets('shows sign-in, then home after a successful sign-in', (
       tester,
     ) async {
@@ -41,15 +79,14 @@ void main() {
       when(api.memoryFeed).thenAnswer((_) async => []);
       when(() => api.jobs(limit: 200)).thenAnswer((_) async => []);
       when(api.oneConnectors).thenAnswer(
-        (_) async => const OneConnectorPage(
-          total: 0,
-          categories: [],
-          connectors: [],
-        ),
+        (_) async =>
+            const OneConnectorPage(total: 0, categories: [], connectors: []),
       );
       when(api.userTimeline).thenAnswer((_) async => UserTimelineView.empty);
+      when(api.timelines).thenAnswer((_) async => []);
+      when(api.library).thenAnswer((_) async => LibraryView.empty);
 
-      await tester.pumpWidget(App(apiClient: api));
+      await tester.pumpWidget(App(apiClient: api, autoSignIn: false));
       expect(find.byType(SignInPage), findsOneWidget);
 
       await tester.enterText(
@@ -72,12 +109,20 @@ void main() {
       tester,
     ) async {
       final api = _MockApi();
-      await _pumpAt(tester, App(apiClient: api), const Size(420, 320));
+      await _pumpAt(
+        tester,
+        App(apiClient: api, autoSignIn: false),
+        const Size(420, 320),
+      );
       expect(find.byType(SignInPage), findsOneWidget);
       await tester.ensureVisible(find.byKey(const Key('signIn_submit_button')));
       expect(tester.takeException(), isNull);
 
-      await _pumpAt(tester, App(apiClient: api), const Size(280, 640));
+      await _pumpAt(
+        tester,
+        App(apiClient: api, autoSignIn: false),
+        const Size(280, 640),
+      );
       await tester.ensureVisible(find.byKey(const Key('signIn_submit_button')));
       expect(tester.takeException(), isNull);
     });
@@ -97,15 +142,18 @@ void main() {
       when(api.memoryFeed).thenAnswer((_) async => []);
       when(() => api.jobs(limit: 200)).thenAnswer((_) async => []);
       when(api.oneConnectors).thenAnswer(
-        (_) async => const OneConnectorPage(
-          total: 0,
-          categories: [],
-          connectors: [],
-        ),
+        (_) async =>
+            const OneConnectorPage(total: 0, categories: [], connectors: []),
       );
       when(api.userTimeline).thenAnswer((_) async => UserTimelineView.empty);
+      when(api.timelines).thenAnswer((_) async => []);
+      when(api.library).thenAnswer((_) async => LibraryView.empty);
 
-      await _pumpAt(tester, App(apiClient: api), const Size(800, 600));
+      await _pumpAt(
+        tester,
+        App(apiClient: api, autoSignIn: false),
+        const Size(800, 600),
+      );
       tester
           .element(find.byType(SignInPage))
           .read<SessionCubit>()

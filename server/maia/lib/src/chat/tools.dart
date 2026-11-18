@@ -19,6 +19,7 @@ class ChatToolbox {
     this.openRouterModel = 'google/gemini-2.5-flash-lite',
     this.disabled = const {},
     this.connector,
+    this.sync,
     this.allow,
     this.sessionSearch,
     this.proposeSkill,
@@ -50,6 +51,9 @@ class ChatToolbox {
 
   /// Runs a granted One connector. Null when this person has none.
   final Future<String> Function(Map<String, dynamic> args)? connector;
+
+  /// Queues a connector sync and reports whether jobs are actually pulling.
+  final Future<String> Function(gel.Client c, Map<String, dynamic> args)? sync;
 
   /// Null means every tool. `memory` and `work` are the two planes.
   final Set<String>? allow;
@@ -106,6 +110,12 @@ class ChatToolbox {
       'connector',
       'Use a connected app such as Gmail, Calendar, or Slack.',
       available: connectorsAvailable,
+    ),
+    _info(
+      'sync',
+      'Queue a full pull of a connected app into memory, and report '
+          'whether that pull is actually running.',
+      available: sync != null,
     ),
   ];
 
@@ -169,8 +179,10 @@ class ChatToolbox {
       _fn(
         'connector',
         'Read a connected app through One. First call: platform and intent. '
-            'The result lists action_id values. Second call: action_id and '
-            'the fields it names. That call copies the rows into memory.',
+            'The result lists action_id values and the connected login. '
+            'Second call: action_id, and any path field such as username '
+            'in path_params. The login is filled from the connection when '
+            'you omit it. That call copies the rows into memory.',
         {
           'platform': {
             'type': 'string',
@@ -186,6 +198,20 @@ class ChatToolbox {
           'body': {'type': 'object'},
         },
         const ['platform'],
+      ),
+    if (sync != null && isOn('sync'))
+      _fn(
+        'sync',
+        'Drive a connector sync. Omit platform to report the current '
+            'jobs and cursors. Pass a platform, or "all", to queue a pull '
+            'into memory. The result says whether rows are actually being '
+            'pulled or the jobs are still queued.',
+        {
+          'platform': {
+            'type': 'string',
+            'description': 'Connector slug, or all. Omit to only report.',
+          },
+        },
       ),
     if (sessionSearch != null && isOn('session_search'))
       _fn(
@@ -272,6 +298,10 @@ class ChatToolbox {
           connector == null
               ? jsonEncode({'type': 'text', 'text': 'no connected apps'})
               : await connector!(args),
+        'sync' =>
+          sync == null
+              ? jsonEncode({'type': 'text', 'text': 'sync is off'})
+              : await sync!(c, args),
         'session_search' =>
           sessionSearch == null
               ? 'session search is off'
@@ -687,6 +717,70 @@ String? answerFromOpenRouter(Object? decoded) {
   if (content is! String) return null;
   final text = content.trim();
   return text.isEmpty ? null : text;
+}
+
+/// What the sync tool tells the model. A created job has not copied data.
+String formatSyncStatus({
+  List<String> enqueued = const [],
+  required List<Map<String, dynamic>> jobs,
+  required List<Map<String, dynamic>> cursors,
+}) {
+  final etl = [
+    for (final job in jobs)
+      if ('${job['name']}'.startsWith('etl')) job,
+  ];
+  final counts = <String, int>{};
+  for (final job in etl) {
+    final state = '${job['state']}';
+    counts[state] = (counts[state] ?? 0) + 1;
+  }
+  final pulling = etl
+      .where((job) => job['state'] == 'active' || job['state'] == 'completed')
+      .length;
+  final lines = <String>[];
+  if (enqueued.isNotEmpty) {
+    lines.add('Queued sync for ${enqueued.join(', ')}.');
+  }
+  if (etl.isEmpty) {
+    lines.add('No sync jobs.');
+  } else {
+    final bits = [
+      for (final entry in counts.entries) '${entry.value} ${entry.key}',
+    ];
+    lines.add('Sync jobs: ${bits.join(', ')}.');
+    if (pulling == 0) {
+      lines.add('Nothing is pulling yet. The jobs are still queued.');
+    }
+  }
+  final saved = [
+    for (final row in cursors)
+      if (row['endpoint'] == 'sync') row,
+  ];
+  if (saved.isEmpty) {
+    lines.add('No page cursor has been saved, so a pull has not started.');
+  } else {
+    for (final row in saved) {
+      final cursor = _cursorMap(row['cursor']);
+      final mode = cursor?['mode'];
+      final err = row['last_error'];
+      final note = err == null || '$err'.isEmpty ? '' : ' ($err)';
+      lines.add('${row['platform']}: ${mode ?? 'cursor'}$note');
+    }
+  }
+  return lines.join('\n');
+}
+
+Map<String, dynamic>? _cursorMap(Object? raw) {
+  if (raw is Map) return Map<String, dynamic>.from(raw);
+  if (raw is String && raw.trim().isNotEmpty) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } on FormatException {
+      return null;
+    }
+  }
+  return null;
 }
 
 Map<String, dynamic>? _openRouterMessage(Object? decoded) {

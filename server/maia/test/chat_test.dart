@@ -348,6 +348,27 @@ data: [DONE]
       wired.definitions.any((tool) => tool['function']['name'] == 'connector'),
       isTrue,
     );
+    final syncing = ChatToolbox(
+      searchMemory: (c, query, limit) async => [],
+      recentMemory: (c, limit) async => [],
+      getMemory: (c, id) async => null,
+      remember: (c, title, body) async => '',
+      lifeGraph: (c) async => null,
+      sync: (c, args) async => 'queued',
+    );
+    expect(
+      syncing.definitions.any((tool) => tool['function']['name'] == 'sync'),
+      isTrue,
+    );
+    expect(
+      formatSyncStatus(
+        jobs: const [
+          {'name': 'etl:gmail', 'state': 'created'},
+        ],
+        cursors: const [],
+      ),
+      contains('Nothing is pulling yet'),
+    );
   });
 }
 

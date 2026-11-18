@@ -58,7 +58,11 @@ List<ConnectorCopy> connectorCopies(String platform, Object? data) {
 }
 
 /// What the model should do with the action list from the first call.
-String connectorActionPrompt(String platform, Object? actions) {
+String connectorActionPrompt(
+  String platform,
+  Object? actions, {
+  String account = '',
+}) {
   if (actions is! List || actions.isEmpty) {
     return 'No One action matched $platform. Say that and stop.';
   }
@@ -77,8 +81,13 @@ String connectorActionPrompt(String platform, Object? actions) {
   if (lines.isEmpty) {
     return 'No One action matched $platform. Say that and stop.';
   }
+  final login = account.trim().isEmpty
+      ? ''
+      : ' The connected login is $account. Put it in path_params for a '
+            'field such as username. Do not ask the person for it.';
   return 'Call connector again for $platform with one action_id below '
-      'and the fields that action asks for. The rows are copied into memory.\n'
+      'and the fields that action asks for, in path_params. '
+      'The rows are copied into memory.$login\n'
       '${lines.join('\n')}';
 }
 

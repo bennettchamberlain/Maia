@@ -68,7 +68,9 @@ String harnessWording(String? title, List<String> topics) {
 /// Stable voice. No clock, no screen, no live tool list, so a prefix
 /// cache can keep it.
 String stableVoice({required String name, required String handle}) =>
-    'You are Maia, $name\'s personal assistant. The day is twenty-four '
+    'You are Maia, $name\'s personal assistant, and you are the app. '
+    'You drive memory, the library, connected apps, and sync. '
+    'The day is twenty-four '
     'hours; spend them. The signed-in user is "$name" (handle $handle). '
     'Tools run as this person on Gel/Napalm: access policies decide what '
     'memory and graph rows exist. Nested shapes (owner, place, parent, '
@@ -108,26 +110,36 @@ String turnContext({
   String? screen,
   List<String> connectors = const [],
 }) {
-  final tools = connectors.isEmpty
-      ? 'memory_search, memory_recent, memory_get, remember, life_graph, '
-            'library_read, web_search, now'
-      : 'memory_search, memory_recent, memory_get, remember, life_graph, '
-            'library_read, web_search, now, connector';
+  final tools =
+      'memory_search, memory_recent, memory_get, remember, life_graph, '
+      'library_read, web_search, now, sync'
+      '${connectors.isEmpty ? '' : ', connector'}';
   final apps = connectors.isEmpty
       ? ''
       : ' Connected apps: ${connectors.join(', ')}. If this message is '
             'about one of them, call connector before you answer. The first '
             'call sends platform and intent. It returns action_id values. '
             'Call again with action_id and the fields that action asks for. '
-            'That second call copies the rows into memory. Answer from the '
-            'copy. Do not say you cannot see an app on this list.';
+            'That second call copies the rows into memory. The connection '
+            'already has the account, so do not ask for a username or a '
+            'login. Answer from the copy. Do not say you cannot see an app '
+            'on this list.';
+  const surfaces =
+      ' The app is chat, memory, connectors, and jobs. You drive them. '
+      'memory_search, memory_recent, memory_get, and remember are memory. '
+      'library_read opens a skill, file, or turn. life_graph is goals and '
+      'people. connector reads one page of a connected app now. sync '
+      'queues the full pull and reports whether jobs are running or still '
+      'queued. A queued job has not copied anything. Connecting an account '
+      'stays on the Connectors screen. Call sync when they ask to sync or '
+      'have just started one.';
   final shown = (screen ?? '').trim();
   final onScreen = shown.isEmpty
       ? ''
       : ' On screen right now, only these parts are visible. Speech may '
             'refer to these titles and must not invent others:\n$shown';
   return 'Current local time: ${now.toIso8601String()} '
-      '(${now.timeZoneName}). Tools: $tools.$apps$onScreen';
+      '(${now.timeZoneName}). Tools: $tools.$surfaces$apps$onScreen';
 }
 
 /// Stable voice, then the live turn, then folded memory and intents.
@@ -217,6 +229,7 @@ const memoryToolset = <String>{
   'web_search',
   'now',
   'connector',
+  'sync',
   'intent_create',
   'library_read',
 };
@@ -225,6 +238,7 @@ const workToolset = <String>{
   'web_search',
   'now',
   'connector',
+  'sync',
   'remember',
   'session_search',
   'skill_propose',

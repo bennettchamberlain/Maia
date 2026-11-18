@@ -41,6 +41,15 @@ void main() {
     ]);
     expect(text, contains('action_id: search'));
     expect(text, contains('copied into memory'));
+    final named = connectorActionPrompt(
+      'github',
+      [
+        {'action_id': 'repos', 'title': 'List repos'},
+      ],
+      account: 'bennettchamberlain',
+    );
+    expect(named, contains('bennettchamberlain'));
+    expect(named, contains('path_params'));
   });
 
   test('harness text is stripped from a public reply', () {

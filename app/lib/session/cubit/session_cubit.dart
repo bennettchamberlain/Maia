@@ -7,7 +7,8 @@ part 'session_state.dart';
 /// Who is signed in. The api client's `TokenProvider` reads `state.token`,
 /// so every feature's calls carry the current identity without passing it.
 class SessionCubit extends Cubit<SessionState> {
-  new() : super(const SessionState.unauthenticated());
+  new({SessionState initial = const SessionState.unauthenticated()})
+    : super(initial);
 
   String? get token => state.session?.token;
 
