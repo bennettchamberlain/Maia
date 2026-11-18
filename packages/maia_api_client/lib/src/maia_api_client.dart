@@ -174,6 +174,22 @@ class MaiaApiClient {
   Future<List<TimelineInfo>> timelines() async =>
       _list(await _get('/timelines'), TimelineInfo.fromJson);
 
+  /// Newest events on one timeline. The memory page filters with this.
+  Future<List<TimelineEntry>> timelineFeed(
+    String timelineId, {
+    int limit = 200,
+  }) async {
+    final json = await _get(
+      '/timelines/$timelineId/feed',
+      query: {'limit': '$limit'},
+    );
+    return _list(json, TimelineEntry.fromJson);
+  }
+
+  Future<LibraryView> library() async => LibraryView.fromJson(
+    await _get('/library') as Map<String, dynamic>,
+  );
+
   Future<List<Document>> documents() async =>
       _list(await _get('/files'), Document.fromJson);
 
