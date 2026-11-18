@@ -3,10 +3,11 @@ import 'dart:math' as math;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:maia_app/chat/chat.dart';
+import 'package:maia_app/home/view/settings_page.dart';
 import 'package:maia_app/jobs/jobs.dart';
 import 'package:maia_app/memory/memory.dart';
-import 'package:maia_app/tools/tools.dart';
 import 'package:maia_app/session/session.dart';
+import 'package:maia_app/tools/tools.dart';
 import 'package:maia_app/ui/chrome.dart';
 import 'package:maia_models/maia_models.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -22,6 +23,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   var _index = 0;
+  var _settings = false;
 
   static const _pages = <Widget>[
     ChatPage(),
@@ -50,16 +52,23 @@ class _HomePageState extends State<HomePage> {
       (c) => c.state.person,
     );
     final wide = MediaQuery.sizeOf(context).width >= 700;
-    final body = IndexedStack(index: _index, children: _pages);
+    final body = _settings
+        ? SettingsPage(onClose: () => setState(() => _settings = false))
+        : IndexedStack(index: _index, children: _pages);
 
     if (wide) {
       return Scaffold(
         body: Row(
           children: [
             _Sidebar(
-              handle: person?.handle,
+              person: person,
               index: _index,
-              onSelected: (i) => setState(() => _index = i),
+              settings: _settings,
+              onSelected: (i) => setState(() {
+                _index = i;
+                _settings = false;
+              }),
+              onSettings: () => setState(() => _settings = !_settings),
             ),
             Expanded(child: body),
           ],
@@ -79,19 +88,22 @@ class _HomePageState extends State<HomePage> {
 
 class _Sidebar extends StatelessWidget {
   const new({
-    required this.handle,
+    required this.person,
     required this.index,
+    required this.settings,
     required this.onSelected,
+    required this.onSettings,
   });
 
-  final String? handle;
+  final Person? person;
   final int index;
+  final bool settings;
   final ValueChanged<int> onSelected;
+  final VoidCallback onSettings;
 
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    final initial = (handle ?? '?').substring(0, 1).toUpperCase();
     return DecoratedBox(
       decoration: BoxDecoration(
         border: Border(right: BorderSide(color: theme.colorScheme.border)),
@@ -101,24 +113,7 @@ class _Sidebar extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: MaiaPane(
-            header: Row(
-              children: [
-                ShadAvatar(
-                  null,
-                  size: const Size.square(32),
-                  placeholder: Text(initial, style: theme.textTheme.small),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    handle ?? 'Maia',
-                    style: theme.textTheme.small,
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                  ),
-                ),
-              ],
-            ),
+            header: Text('Maia', style: theme.textTheme.small),
             body: ListView(
               padding: const EdgeInsets.only(top: 16),
               children: [
@@ -128,13 +123,17 @@ class _Sidebar extends StatelessWidget {
                     child: _NavButton(
                       icon: _HomePageState._destinations[i].icon,
                       label: _HomePageState._destinations[i].label,
-                      selected: index == i,
+                      selected: !settings && index == i,
                       onPressed: () => onSelected(i),
                     ),
                   ),
               ],
             ),
-            footer: const _SignOutButton(),
+            footer: _UserMenu(
+              person: person,
+              settings: settings,
+              onSettings: onSettings,
+            ),
           ),
         ),
       ),
@@ -260,35 +259,104 @@ class _NavButton extends StatelessWidget {
   }
 }
 
-class _SignOutButton extends StatelessWidget {
-  const new();
+class _UserMenu extends StatefulWidget {
+  const new({
+    required this.person,
+    required this.settings,
+    required this.onSettings,
+  });
+
+  final Person? person;
+  final bool settings;
+  final VoidCallback onSettings;
+
+  @override
+  State<_UserMenu> createState() => _UserMenuState();
+}
+
+class _UserMenuState extends State<_UserMenu> {
+  var _open = false;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: const BorderRadius.all(Radius.circular(6)),
-      child: InkWell(
-        onTap: () => context.read<SessionCubit>().signedOut(),
-        borderRadius: const BorderRadius.all(Radius.circular(6)),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            children: [
-              const Icon(LucideIcons.logOut, size: 16),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Sign out',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: ShadTheme.of(context).textTheme.small,
+    final theme = ShadTheme.of(context);
+    final handle = widget.person?.handle ?? 'Maia';
+    final initial = handle.substring(0, 1).toUpperCase();
+    final detail = widget.person?.email ?? widget.person?.displayName;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        MaiaExpand(
+          expanded: _open,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Column(
+              children: [
+                _NavButton(
+                  icon: LucideIcons.settings,
+                  label: 'Settings',
+                  selected: widget.settings,
+                  onPressed: widget.onSettings,
                 ),
-              ),
-            ],
+                const SizedBox(height: 4),
+                _NavButton(
+                  icon: LucideIcons.logOut,
+                  label: 'Sign out',
+                  selected: false,
+                  onPressed: () => context.read<SessionCubit>().signedOut(),
+                ),
+              ],
+            ),
           ),
         ),
-      ),
+        Material(
+          color: _open ? theme.colorScheme.accent : Colors.transparent,
+          borderRadius: const BorderRadius.all(Radius.circular(6)),
+          child: InkWell(
+            onTap: () => setState(() => _open = !_open),
+            borderRadius: const BorderRadius.all(Radius.circular(6)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              child: Row(
+                children: [
+                  ShadAvatar(
+                    null,
+                    size: const Size.square(28),
+                    placeholder: Text(initial, style: theme.textTheme.small),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          handle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.small,
+                        ),
+                        if (detail != null && detail.isNotEmpty)
+                          Text(
+                            detail,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.muted.copyWith(fontSize: 11),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    _open ? LucideIcons.chevronDown : LucideIcons.chevronUp,
+                    size: 14,
+                    color: theme.colorScheme.mutedForeground,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
