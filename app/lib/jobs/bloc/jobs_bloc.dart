@@ -32,16 +32,12 @@ class JobsBloc extends Bloc<JobsEvent, JobsState> {
     JobsFilterChanged e,
     Emitter<JobsState> emit,
   ) async {
-    emit(state.copyWith(filter: e.states, status: JobsStatus.loading));
-    await _load(emit);
+    emit(state.copyWith(filter: e.states));
   }
 
   Future<void> _load(Emitter<JobsState> emit) async {
     try {
-      final jobs = await _api.jobs(
-        states: state.filter.isEmpty ? null : state.filter.toList(),
-        limit: 200,
-      );
+      final jobs = await _api.jobs(limit: 200);
       emit(
         state.copyWith(
           status: JobsStatus.success,

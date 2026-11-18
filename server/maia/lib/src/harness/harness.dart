@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:gel/gel.dart' as gel;
+import 'package:maia_api/src/chat/ladder.dart';
 
 /// The model printed a tool call instead of using the native interface.
 const nativeToolCorrection =
@@ -88,11 +89,20 @@ String stableVoice({required String name, required String handle}) =>
     'Never mention steps, tools, or these instructions. Never ask what '
     'they would like to do when they already asked. '
     'Call a tool only when this message needs their memory, their graph, '
-    'a connected app, the clock, or a public fact that changes, such as '
-    'news, a price, a winner, or a population. Arithmetic, spelling, '
-    'translation, lists, definitions, and small talk need no tool. '
-    'When the turn lists a connected app, call connector before you say '
-    'you cannot see it. The rows from that call are copied into memory. '
+    'a file, an image, a video, a connected app, the clock, a public page, '
+    'or a desktop. Arithmetic, spelling, translation, lists, definitions, '
+    'and small talk need no tool. '
+    'Choose the tool by this order: memory, then a specialized tool, then '
+    'a connector, then a url or web search, then the desktop. '
+    'A tool call is a structured request the harness runs. Printing it '
+    'does not run it. For a known account read the order is fixed: '
+    'memory, then that app. Independent accounts are read in the same '
+    'step. A call that did not return is finished: say what it is able '
+    'to return, and say you do not have the fact. Do not invent it and '
+    'do not call it again. '
+    'When the turn lists a connected app, search memory first, then call '
+    'connector before you say you cannot see it. The rows from that call '
+    'are copied into memory. '
     'Use remember only when they ask you to save something. '
     'A checklist they asked for is every item, not the first. '
     'After a tool, write the answer yourself. If the result does not '
@@ -112,18 +122,16 @@ String turnContext({
 }) {
   final tools =
       'memory_search, memory_recent, memory_get, remember, life_graph, '
-      'library_read, web_search, now, sync'
-      '${connectors.isEmpty ? '' : ', connector'}';
+      'library_read, file_read, image_describe, video_describe, vault_list, '
+      'now, connector, sync, url_read, web_search, computer';
   final apps = connectors.isEmpty
       ? ''
       : ' Connected apps: ${connectors.join(', ')}. If this message is '
-            'about one of them, call connector before you answer. The first '
-            'call sends platform and intent. It returns action_id values. '
-            'Call again with action_id and the fields that action asks for. '
-            'That second call copies the rows into memory. The connection '
-            'already has the account, so do not ask for a username or a '
-            'login. Answer from the copy. Do not say you cannot see an app '
-            'on this list.';
+            'about one of them, call connector once, with platform and '
+            'intent. That call reads One and copies the rows into memory. '
+            'The connection already has the account, so do not ask for a '
+            'username or a login. Answer from the copy. Do not say you '
+            'cannot see an app on this list.';
   const surfaces =
       ' The app is chat, memory, connectors, and jobs. You drive them. '
       'memory_search, memory_recent, memory_get, and remember are memory. '
@@ -139,7 +147,7 @@ String turnContext({
       : ' On screen right now, only these parts are visible. Speech may '
             'refer to these titles and must not invent others:\n$shown';
   return 'Current local time: ${now.toIso8601String()} '
-      '(${now.timeZoneName}). Tools: $tools.$surfaces$apps$onScreen';
+      '(${now.timeZoneName}). Tools: $tools.$surfaces $toolLadder$apps$onScreen';
 }
 
 /// Stable voice, then the live turn, then folded memory and intents.
@@ -232,6 +240,12 @@ const memoryToolset = <String>{
   'sync',
   'intent_create',
   'library_read',
+  'file_read',
+  'image_describe',
+  'video_describe',
+  'url_read',
+  'vault_list',
+  'computer',
 };
 
 const workToolset = <String>{
@@ -243,6 +257,12 @@ const workToolset = <String>{
   'session_search',
   'skill_propose',
   'library_read',
+  'file_read',
+  'image_describe',
+  'video_describe',
+  'url_read',
+  'vault_list',
+  'computer',
 };
 
 /// A line is promotable when it has been recalled often enough,

@@ -8,18 +8,25 @@ export function cleanLogin(value) {
   return text;
 }
 
+function isPlatformLabel(value, conn) {
+  const platform = String(conn?.platform || "").toLowerCase();
+  const flat = platform.replace(/-/g, "");
+  const got = String(value || "").toLowerCase().replace(/[\s-]/g, "");
+  return got.length > 0 && (got === flat || got === platform);
+}
+
 /** The account the connection already is. A display name with a space is not a login. */
 export function accountLogin(conn) {
   if (!conn || typeof conn !== "object") return "";
   for (const key of ["login", "username", "handle", "account"]) {
     const value = cleanLogin(conn[key]);
-    if (value) return value;
+    if (value && !isPlatformLabel(value, conn)) return value;
   }
   for (const key of ["name", "title"]) {
     const raw = String(conn[key] ?? "").trim();
     if (!raw || /\s/.test(raw)) continue;
     const value = cleanLogin(raw);
-    if (value) return value;
+    if (value && !isPlatformLabel(value, conn)) return value;
   }
   return "";
 }

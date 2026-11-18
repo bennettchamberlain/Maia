@@ -3,10 +3,11 @@ import 'dart:math' as math;
 import 'package:flutter/widgets.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
-/// A ring of points. It turns on its own. While [speaking], points kick
-/// outward in short spikes that stand in for a voice. No audio analysis.
+/// A fan of a hundred dotted terraces. The scatter stays inside its
+/// terrace, and the step to the next one stays open. The steps widen
+/// toward the left. One tight ripple kicks while [speaking].
 class MaiaCloud extends StatefulWidget {
-  const new({this.speaking = false, this.size = 76, super.key});
+  const new({this.speaking = false, this.size = 280, super.key});
 
   final bool speaking;
   final double size;
@@ -27,7 +28,7 @@ class _MaiaCloudState extends State<MaiaCloud>
       vsync: this,
       duration: const Duration(seconds: 24),
     )..repeat();
-    _grains = _ring();
+    _grains = _fan();
   }
 
   @override
@@ -59,36 +60,40 @@ class _MaiaCloudState extends State<MaiaCloud>
 }
 
 class _Grain {
-  const new(this.angle, this.radius, this.i, this.core);
+  const new(this.s, this.nCross, this.nLift, this.ridge);
 
-  final double angle;
-  final double radius;
-  final int i;
-  final double core;
+  /// Along the terrace.
+  final double s;
+
+  /// Scatter inside the terrace, smaller than the step.
+  final double nCross;
+
+  /// Scatter in the topographic height.
+  final double nLift;
+
+  /// Which terrace. The step between these is the drawing.
+  final int ridge;
 }
 
-/// A tick ring. Most points sit on the circle. A few sit just off it.
-List<_Grain> _ring() {
+const _terraces = 96;
+const _steps = 48;
+
+/// One dotted contour per terrace. Noise does not cross the step.
+List<_Grain> _fan() {
   final random = math.Random(11);
   double gauss() {
-    final u = math.max(1e-9, random.nextDouble());
-    final v = random.nextDouble();
-    return math.sqrt(-2 * math.log(u)) * math.cos(2 * math.pi * v);
+    final a = math.max(1e-9, random.nextDouble());
+    final b = random.nextDouble();
+    final g = math.sqrt(-2 * math.log(a)) * math.cos(math.pi * 2 * b);
+    return g.clamp(-1.8, 1.8);
   }
 
   final grains = <_Grain>[];
-  const count = 168;
-  for (var n = 0; n < count; n++) {
-    final wobble = gauss() * 0.028;
-    final core = math.exp(-(wobble * wobble) / 0.0008).clamp(0.25, 1.0);
-    grains.add(_Grain((n / count) * math.pi * 2, 0.78 + wobble, n, core));
-  }
-  for (var n = 0; n < 28; n++) {
-    final sign = random.nextBool() ? 1.0 : -1.0;
-    final radius = 0.78 + sign * (0.06 + random.nextDouble() * 0.1);
-    grains.add(
-      _Grain(random.nextDouble() * math.pi * 2, radius, count + n, 0.3),
-    );
+  for (var ridge = 0; ridge < _terraces; ridge++) {
+    for (var step = 0; step < _steps; step++) {
+      final along = -1.05 + step * (2.1 / (_steps - 1));
+      grains.add(_Grain(along + gauss() * 0.012, gauss(), gauss(), ridge));
+    }
   }
   return grains;
 }
@@ -107,42 +112,60 @@ class _CloudPainter extends CustomPainter {
   final List<_Grain> grains;
 
   static const _sunset = <Color>[
-    Color(0xFF08040E),
     Color(0xFF4A0C56),
     Color(0xFFFF2A6A),
     Color(0xFFFF5C24),
     Color(0xFFFFBA40),
     Color(0xFFFFF4E0),
-    Color(0xFFFFFFFF),
   ];
 
   @override
   void paint(Canvas canvas, Size size) {
-    final span = size.shortestSide * 0.42;
+    final span = size.shortestSide * 0.46;
     final origin = Offset(size.width / 2, size.height / 2);
-    final spin = seconds * 0.22;
-    final breathe = 1 + math.sin(seconds * 0.35) * 0.03;
+    final pulse = speaking ? _spike(seconds, 3) : 0.0;
+    final drawn = <({Offset at, double depth, double hot, double relief})>[];
     for (final grain in grains) {
-      final spike = speaking ? _spike(seconds, grain.i) : 0.0;
-      final radius = (grain.radius + spike * 0.24) * breathe;
-      final angle = grain.angle + spin;
-      final at = Offset(
-        origin.dx + math.cos(angle) * radius * span,
-        origin.dy + math.sin(angle) * radius * span,
-      );
-      final color = spike > 0.08
-          ? _band(spike).withValues(alpha: 0.95)
-          : ink.withValues(alpha: 0.28 + grain.core * 0.62);
-      final dot = 1.1 + grain.core * 0.9;
+      final s = grain.s;
+      final open = ((1.15 - s) / 2.3).clamp(0.0, 1.0);
+      final half = 0.72 + open * 0.3;
+      final pitch = (2 * half) / (_terraces - 1);
+      final u = grain.ridge / (_terraces - 1);
+      final cross = (u - 0.5) * 2 * half + grain.nCross * pitch * 0.08;
+      final lift =
+          math.sin(s * 2.2 + grain.ridge * 0.05 + seconds * 0.35) *
+              pitch *
+              0.12 +
+          grain.nLift * pitch * 0.05;
+      final du = u - 0.55;
+      final hot = math.exp(-(math.pow(s - 0.15, 2) * 22 + du * du * 4000));
+      final kick = hot * pulse * pitch * 0.45;
+      final depth = (0.3 + (1 - open) * 0.45).clamp(0.0, 1.0);
+      drawn.add((
+        at: Offset(
+          origin.dx + s * span,
+          origin.dy + (cross + lift - kick) * span,
+        ),
+        depth: depth,
+        hot: hot,
+        relief: (lift.abs() / pitch).clamp(0.0, 1.0),
+      ));
+    }
+    drawn.sort((a, b) => a.depth.compareTo(b.depth));
+    for (final dot in drawn) {
+      final lit = speaking && dot.hot > 0.45;
+      final color = lit
+          ? _band(dot.hot).withValues(alpha: 0.92)
+          : ink.withValues(alpha: 0.28 + dot.depth * 0.4 + dot.relief * 0.12);
+      final side = 1 + dot.depth * 0.12;
       canvas.drawRect(
-        Rect.fromCenter(center: at, width: dot, height: dot),
+        Rect.fromCenter(center: dot.at, width: side, height: side),
         Paint()..color = color,
       );
     }
   }
 
-  /// A few sines, raised hard, so most frames are quiet and a few points
-  /// kick out like a transient.
+  /// One shared transient. [paint] masks it onto a couple of terraces.
   double _spike(double seconds, int i) {
     final a = math.sin(seconds * 11 + i * 0.71);
     final b = math.sin(seconds * 19 + i * 1.37);

@@ -27,6 +27,8 @@ class Config {
     this.openrouterBaseUrl = 'https://openrouter.ai/api/v1',
     this.openrouterChatModel = 'google/gemini-2.5-flash-lite',
     this.openrouterMaxTokens = 2048,
+    this.visionModel,
+    this.instaboxBin = 'instabox',
     this.youApiKey,
     this.connectPublicUrl = 'http://127.0.0.1:8788',
     this.connectSidecarUrl = 'http://127.0.0.1:8788',
@@ -94,6 +96,8 @@ class Config {
           e['OPENROUTER_MODEL'] ?? 'google/gemini-2.5-flash-lite',
       openrouterMaxTokens:
           int.tryParse(e['OPENROUTER_MAX_TOKENS'] ?? '') ?? 2048,
+      visionModel: _blankToNull(e['MAIA_VISION_MODEL']),
+      instaboxBin: _blankToNull(e['INSTABOX_BIN']) ?? 'instabox',
       youApiKey: _blankToNull(
         e['YDC_API_KEY'] ?? e['YOU_API_KEY'] ?? e['YOU_WEB_SEARCH_TOKEN'],
       ),
@@ -180,6 +184,27 @@ class Config {
   final String openrouterBaseUrl;
   final String openrouterChatModel;
   final int openrouterMaxTokens;
+
+  /// Vision model for images and video. Falls back to the chat model.
+  final String? visionModel;
+
+  /// `instabox` binary used to wake a person's desktop.
+  final String instaboxBin;
+
+  /// Model that describes images and video.
+  String get activeVisionModel {
+    if (visionModel != null) return visionModel!;
+    if (openrouterApiKey != null) return openrouterChatModel;
+    return geminiChatModel;
+  }
+
+  /// Endpoint the vision call uses. OpenRouter when that key is set.
+  String get activeVisionBase {
+    if (openrouterApiKey != null) return openrouterBaseUrl;
+    return geminiBaseUrl;
+  }
+
+  String? get activeVisionKey => openrouterApiKey ?? geminiApiKey;
 
   /// You.com search key for the `web_search` chat tool.
   final String? youApiKey;

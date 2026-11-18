@@ -8,6 +8,8 @@ class ChatTurnBenchCase {
     this.mustNotInclude = const [],
     this.exact,
     this.noTool = false,
+    this.toolsBefore = const [],
+    this.mustNotTool = const [],
   });
 
   final String id;
@@ -19,10 +21,18 @@ class ChatTurnBenchCase {
   final String? exact;
   final bool noTool;
 
+  /// Tool names that must appear in this order. Extra calls may sit between.
+  final List<String> toolsBefore;
+
+  /// Tools that fail the case when the turn calls them.
+  final List<String> mustNotTool;
+
   String? checkReply(String reply, {Iterable<String> toolNames = const []}) {
     final text = reply.trim();
+    final names = toolNames.toList();
     if (exact != null && text != exact) {
-      return 'expected exact "$exact", got "${text.length > 80 ? '${text.substring(0, 80)}…' : text}"';
+      final shown = text.length > 80 ? '${text.substring(0, 80)}…' : text;
+      return 'expected exact "$exact", got "$shown"';
     }
     final lower = text.toLowerCase();
     for (final needle in mustInclude) {
@@ -35,59 +45,79 @@ class ChatTurnBenchCase {
         return 'must not contain "$needle"';
       }
     }
-    if (noTool && toolNames.isNotEmpty) {
-      return 'expected no tool, saw ${toolNames.join(", ")}';
+    if (noTool && names.isNotEmpty) {
+      return 'expected no tool, saw ${names.join(", ")}';
+    }
+    for (final banned in mustNotTool) {
+      if (names.contains(banned)) return 'called $banned';
+    }
+    var at = 0;
+    for (final name in names) {
+      if (at < toolsBefore.length && name == toolsBefore[at]) at++;
+    }
+    if (at != toolsBefore.length) {
+      final want = toolsBefore.join(' then ');
+      return 'tools ${names.join(", ")} did not follow $want';
     }
     return null;
   }
 }
 
-/// Ordered ladder, easy then hard (same order as the live eval client).
+/// The previous ladder passed. These judge a failed read, a two-app
+/// graph, and a question that must not become a tool call.
 const chatTurnBenchCases = <ChatTurnBenchCase>[
   ChatTurnBenchCase(
-    id: 'ready',
-    prompt: 'Reply with the single word ready.',
-    exact: 'ready',
+    id: 'checkpoint',
+    prompt: 'Reply with the single word checkpoint.',
+    exact: 'checkpoint',
     noTool: true,
   ),
   ChatTurnBenchCase(
-    id: 'arithmetic',
-    prompt: 'What is 2+2? Reply with the number only.',
-    exact: '4',
-    noTool: true,
-  ),
-  ChatTurnBenchCase(
-    id: 'water-wet',
-    prompt: 'Is water wet? Yes or no, then one reason.',
+    id: 'acyclic',
+    prompt: 'In one sentence, what makes a graph acyclic? No tools.',
+    mustInclude: ['cycle'],
     mustNotInclude: ['what would you like'],
     noTool: true,
   ),
   ChatTurnBenchCase(
-    id: 'github-access',
-    prompt: 'Do you have access to GitHub?',
+    id: 'quorinth',
+    prompt: 'What do you remember about the word quorinth? If memory has nothing, say you do not have it. Do not search the web.',
+    mustInclude: ['quorinth', 'do not have'],
+    mustNotInclude: ['what would you like', 'action_id'],
+    mustNotTool: ['web_search', 'url_read', 'computer'],
+  ),
+  ChatTurnBenchCase(
+    id: 'capability',
+    prompt: 'The GitHub read did not return. Say what that tool is able to return, and say you do not have the account. Do not invent a login or a repository.',
+    mustInclude: ['able', 'do not have'],
     mustNotInclude: [
       'action_id',
       'conn_mod',
       'Call connector',
       'what would you like',
     ],
+    toolsBefore: ['memory_search', 'connector'],
+    mustNotTool: ['web_search', 'computer'],
   ),
   ChatTurnBenchCase(
-    id: 'austen',
-    prompt: 'Who wrote Pride and Prejudice? Name only.',
-    mustInclude: ['Austen'],
-    mustNotInclude: ['Search results', 'snippet'],
+    id: 'one-read',
+    prompt: 'Read my GitHub account once. If the read fails, do not search the web and do not try again. Say that you do not have the account.',
+    mustInclude: ['github', 'do not have'],
+    mustNotInclude: ['action_id', 'conn_mod', 'what would you like'],
+    toolsBefore: ['memory_search', 'connector'],
+    mustNotTool: ['web_search', 'url_read', 'computer'],
   ),
   ChatTurnBenchCase(
-    id: 'primary-colors',
-    prompt: 'Name the three primary colors, one per line, and nothing else.',
-    mustInclude: ['red', 'blue'],
-    noTool: true,
-  ),
-  ChatTurnBenchCase(
-    id: 'github-account',
-    prompt:
-        'What is in my GitHub account right now? If you cannot see a repo or a login, say you do not have it. Do not list actions.',
-    mustNotInclude: ['action_id', 'conn_mod'],
+    id: 'two-apps',
+    prompt: 'What is my GitHub login, and who sent my latest Gmail? They do not depend on each other. For whichever call does not return, say you do not have that one. Do not invent it.',
+    mustInclude: ['github', 'gmail', 'do not have'],
+    mustNotInclude: [
+      'action_id',
+      'conn_mod',
+      'Call connector',
+      'what would you like',
+    ],
+    toolsBefore: ['memory_search', 'connector', 'connector'],
+    mustNotTool: ['web_search', 'computer'],
   ),
 ];

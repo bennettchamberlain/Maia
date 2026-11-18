@@ -49,6 +49,10 @@ void main() {
     expect(toolsetAllows('memory', 'skill_propose'), isFalse);
     expect(toolsetAllows('memory', 'library_read'), isTrue);
     expect(toolsetAllows('work', 'library_read'), isTrue);
+    expect(toolsetAllows('memory', 'computer'), isTrue);
+    expect(toolsetAllows('memory', 'file_read'), isTrue);
+    expect(toolsetAllows('work', 'video_describe'), isTrue);
+    expect(toolsetAllows('work', 'life_graph'), isFalse);
   });
 
   test('night research follows named interests and stops at three', () {
@@ -114,6 +118,11 @@ void main() {
     expect(prompt, contains('copied into memory'));
     expect(prompt, contains('sync'));
     expect(prompt, contains('still queued'));
+    expect(prompt, contains('Memory first'));
+    expect(prompt, contains('computer'));
+    expect(prompt, contains('cred_'));
+    expect(prompt, contains('did not return'));
+    expect(prompt, contains('able to return'));
   });
 
   test('a printed tool call is not a sentence', () {

@@ -9,8 +9,11 @@ import 'package:maia_api/src/agent.dart';
 import 'package:maia_api/src/auth/api_key.dart';
 import 'package:maia_api/src/auth/password.dart';
 import 'package:maia_api/src/chat/prefs.dart';
+import 'package:maia_api/src/chat/senses.dart';
 import 'package:maia_api/src/chat/tools.dart';
 import 'package:maia_api/src/chat/turn.dart';
+import 'package:maia_api/src/desk/desk.dart';
+import 'package:maia_api/src/vault/vault.dart';
 import 'package:maia_api/src/auth/session_token.dart';
 import 'package:maia_api/src/config.dart';
 import 'package:maia_api/src/db.dart';
@@ -63,6 +66,16 @@ class MaiaApp {
        _tokens = SessionToken(config.sessionSecret),
        faults = FaultLog(db),
        voice = VoiceSupervisor(config),
+       vault = VaultStore(
+         root: Directory('${config.dataDir}/vault'),
+         secret: config.sessionSecret,
+       ),
+       desk = ComputerDesk(bin: config.instaboxBin),
+       senses = Senses(
+         apiKey: config.activeVisionKey,
+         baseUrl: config.activeVisionBase,
+         model: config.activeVisionModel,
+       ),
        geocoder =
            geocoder ??
            Geocoder(
@@ -73,6 +86,9 @@ class MaiaApp {
   final Config config;
   final Db db;
   final FaultLog faults;
+  final VaultStore vault;
+  final ComputerDesk desk;
+  final Senses senses;
   final OneCatalog oneCatalog = OneCatalog();
 
   /// Where the slow connector walk left off, per person.
@@ -221,6 +237,9 @@ class MaiaApp {
     ..post('/chat/sessions/<id>/messages', _authed(_chatSend))
     ..post('/chat/sessions/<id>/steer', _authed(_chatSteer))
     ..get('/library', _authed(_libraryList))
+    ..get('/vault', _authed(_vaultList))
+    ..put('/vault/<name>', _authed(_vaultPut))
+    ..delete('/vault/<name>', _authed(_vaultDelete))
     ..get('/files', _authed(_files))
     ..post('/files', _authed(_fileCreate))
     ..post('/files/<id>/append', _authed(_fileAppend))
@@ -1016,6 +1035,10 @@ class MaiaApp {
     },
     createIntent: (c, phrase, instruction) =>
         createIntent(c, phrase: phrase, instruction: instruction),
+    senses: senses,
+    computer: personId == null ? null : (c, args) => _computer(personId, args),
+    vaultList: personId == null ? null : () => _vaultHandles(personId),
+    scrub: personId == null ? null : (text) => vault.scrub(personId, text),
     readLibrary: personId == null
         ? null
         : (kind, id) async {
@@ -1030,6 +1053,95 @@ class MaiaApp {
             return body;
           },
   );
+
+  Future<List<Map<String, dynamic>>> _scrubTools(
+    String personId,
+    List<Map<String, dynamic>> tools,
+  ) async {
+    final out = <Map<String, dynamic>>[];
+    for (final tool in tools) {
+      out.add({
+        ...tool,
+        'arguments': await vault.scrub(personId, '${tool['arguments'] ?? ''}'),
+        'result': await vault.scrub(personId, '${tool['result'] ?? ''}'),
+      });
+    }
+    return out;
+  }
+
+  Future<String> _vaultHandles(String personId) async {
+    final handles = await vault.list(personId);
+    if (handles.isEmpty) {
+      return jsonEncode({
+        'type': 'text',
+        'text': 'No credentials stored. Add one with PUT /vault/<name>.',
+      });
+    }
+    final lines = [
+      for (final handle in handles) '${handle.name}: ${handle.dummy}',
+    ];
+    return jsonEncode({'type': 'text', 'text': lines.join('\n')});
+  }
+
+  Future<String> _computer(String personId, Map<String, dynamic> args) async {
+    final task = '${args['task'] ?? ''}'.trim();
+    if (task.isEmpty) {
+      return jsonEncode({
+        'type': 'text',
+        'text': 'Say what the desktop should do.',
+      });
+    }
+    final key = await vault.instaboxKey(personId);
+    final files = await vault.filesFor(personId, task);
+    try {
+      final text = await desk.run(
+        personId: personId,
+        task: task,
+        apiKey: key,
+        files: files,
+      );
+      return jsonEncode({
+        'type': 'text',
+        'text': await vault.scrub(personId, text),
+      });
+    } on Object {
+      return jsonEncode({'type': 'text', 'text': 'The desktop did not start.'});
+    }
+  }
+
+  Future<Response> _vaultList(Request r, gel.Client c) async {
+    final personId = await _personId(c);
+    if (personId == null) return _error(400, 'bad_request', 'no person');
+    final handles = await vault.list(personId);
+    return _json([
+      for (final handle in handles)
+        {'name': handle.name, 'dummy': handle.dummy},
+    ]);
+  }
+
+  Future<Response> _vaultPut(Request r, gel.Client c) async {
+    final personId = await _personId(c);
+    if (personId == null) return _error(400, 'bad_request', 'no person');
+    final name = r.params['name'] ?? '';
+    final body = await _body(r);
+    final value = body['value'];
+    if (value is! String) {
+      return _error(400, 'bad_request', 'value required');
+    }
+    try {
+      final handle = await vault.put(personId, name, value);
+      return _json({'name': handle.name, 'dummy': handle.dummy});
+    } on VaultException catch (e) {
+      return _error(400, 'bad_request', e.message);
+    }
+  }
+
+  Future<Response> _vaultDelete(Request r, gel.Client c) async {
+    final personId = await _personId(c);
+    if (personId == null) return _error(400, 'bad_request', 'no person');
+    await vault.remove(personId, r.params['name'] ?? '');
+    return _json({'ok': true});
+  }
 
   Future<String> _useConnector(
     String personId,
@@ -1131,10 +1243,9 @@ class MaiaApp {
         stderr.writeln('connector: $e');
       }
     }
-    final lines = [for (final row in rows) '- ${row.title}'];
     return jsonEncode({
       'type': 'text',
-      'text': 'Copied $copied $platform rows into memory.\n${lines.join('\n')}',
+      'text': connectorBrief(platform, copied, rows),
     });
   }
 
@@ -1963,17 +2074,20 @@ class MaiaApp {
     final session = jsonDecode(sessionJson) as Map<String, dynamic>;
     final person = session['person'] as Map<String, dynamic>;
 
-    final userMsg = await _appendMessage(c, sessionId, 'user', content);
+    final personId = await _personId(c);
+    final safeContent = personId == null
+        ? content
+        : await vault.scrub(personId, content);
+    final userMsg = await _appendMessage(c, sessionId, 'user', safeContent);
     if (session['title'] == null) {
       await c.execute(
         r'update ChatSession filter .id = <uuid>$id set { title := <str>$t }',
-        {'id': sessionId, 't': _titleFrom(content)},
+        {'id': sessionId, 't': _titleFrom(safeContent)},
       );
     }
 
     // What the harness sees. OpenClaw keeps its own transcript per `user`,
     // so it gets the system frame and the new turn only.
-    final personId = await _personId(c);
     final hostTools = !harness.keepsOwnHistory;
     final platforms = hostTools
         ? await _connectedPlatforms(c)
@@ -1982,7 +2096,7 @@ class MaiaApp {
     final extra = hostTools
         ? harnessContext(
             compaction: await _folded(c, sessionId),
-            intents: matchingIntents(await activeIntents(c), content),
+            intents: matchingIntents(await activeIntents(c), safeContent),
             skills: await activeSkills(c),
             library: personId == null ? null : await _sessionIndex(c, personId),
           )
@@ -2001,7 +2115,7 @@ class MaiaApp {
       },
     ];
     if (harness.keepsOwnHistory) {
-      frame.add({'role': 'user', 'content': content});
+      frame.add({'role': 'user', 'content': safeContent});
     } else {
       final history = jsonDecode(
         await c.queryJSON(queries['chat_messages'], {
@@ -2011,7 +2125,10 @@ class MaiaApp {
       ) as List<dynamic>;
       final split = splitForCompaction(history.cast<Map<String, dynamic>>());
       for (final m in split.kept) {
-        frame.add({'role': m['role'], 'content': m['content']});
+        final text = personId == null
+            ? '${m['content']}'
+            : await vault.scrub(personId, '${m['content']}');
+        frame.add({'role': m['role'], 'content': text});
       }
     }
 
@@ -2043,13 +2160,20 @@ class MaiaApp {
           user: 'conv:${session['agent_session_key']}',
           steer: lane.take,
         );
-        final reply = turn.text.trim();
+        final replyRaw = turn.text.trim();
+        final reply = personId == null
+            ? replyRaw
+            : await vault.scrub(personId, replyRaw);
+        if (reply != replyRaw) emit('replace', {'text': reply});
+        final storedTools = personId == null
+            ? turn.tools
+            : await _scrubTools(personId, turn.tools);
         final assistant = await _appendMessage(
           c,
           sessionId,
           'assistant',
           reply.isEmpty ? '(no reply)' : reply,
-          toolCalls: turn.tools.isEmpty ? null : turn.tools,
+          toolCalls: storedTools.isEmpty ? null : storedTools,
           model: turn.model,
         );
         emit('done', {'message': assistant});

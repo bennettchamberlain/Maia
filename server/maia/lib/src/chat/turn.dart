@@ -1,5 +1,9 @@
+import 'dart:convert';
+
 import 'package:gel/gel.dart' as gel;
 import 'package:maia_api/src/agent.dart';
+import 'package:maia_api/src/chat/graphs.dart';
+import 'package:maia_api/src/chat/ladder.dart';
 import 'package:maia_api/src/chat/tools.dart';
 import 'package:maia_api/src/harness/harness.dart';
 import 'package:maia_api/src/one/extract.dart';
@@ -22,15 +26,36 @@ runChatTurn({
   final text = StringBuffer();
   var model = harness.model;
   var corrected = false;
+  var memoryChecked = false;
+  var graphDone = false;
   String? lastKey;
+  final opening = _latestUser(messages);
+  final tools = toolbox;
+  final book = tools != null && !harness.keepsOwnHistory && opening != null
+      ? playbookFor(opening)
+      : null;
+  if (book != null && tools != null && opening != null) {
+    final checkpoint = await runGraph(
+      book: book,
+      ask: opening,
+      call: (tool, arguments) => tools.run(db, tool, arguments),
+    );
+    _commitGraph(messages, used, emit, checkpoint);
+    messages.add({'role': 'system', 'content': checkpoint.note});
+    graphDone = true;
+    memoryChecked = true;
+  }
 
   for (var round = 0; round < chatStepBudget; round++) {
     final hostTools = toolbox != null && !harness.keepsOwnHistory;
-    final offered = hostTools ? toolbox.definitions : null;
+    final offered = hostTools && !graphDone ? toolbox.definitions : null;
     final names = offered == null ? const <String>[] : toolNames(offered);
     final request = [for (final m in messages) Map<String, dynamic>.from(m)];
     if (hostTools && used.isNotEmpty) {
-      request.add({'role': 'system', 'content': answerCue});
+      request.add({
+        'role': 'system',
+        'content': graphDone ? graphAnswerCue : answerCue,
+      });
     }
     final calls = <AgentToolCall>[];
     final roundText = StringBuffer();
@@ -94,11 +119,63 @@ runChatTurn({
     final call = calls.first;
     final key = '${call.name}\n${call.arguments}';
     if (key == lastKey) break;
+    if (names.contains(call.name) &&
+        consultMemoryFirst(call.name) &&
+        !memoryChecked &&
+        toolbox.isOn('memory_search')) {
+      memoryChecked = true;
+      final query = _latestUser(messages) ?? '';
+      final memory = await toolbox.run(
+        db,
+        'memory_search',
+        jsonEncode({'query': query, 'limit': 6}),
+      );
+      used.add({
+        'name': 'memory_search',
+        'arguments': jsonEncode({'query': query}),
+        'result': memory,
+      });
+      emit('tool', {
+        'name': 'memory_search',
+        'arguments': jsonEncode({'query': query}),
+        'result': memory,
+      });
+      if (!runAlongsideEmptyMemory(call.name, memory)) {
+        _record(messages, used, emit, call, memoryFirstNote(query, memory));
+        continue;
+      }
+    }
     lastKey = key;
-    final result = names.contains(call.name)
+    var result = names.contains(call.name)
         ? await toolbox.run(db, call.name, call.arguments)
         : 'Tool ${call.name} is not available. '
               'Tools now: ${names.isEmpty ? 'none' : names.join(', ')}.';
+    if (call.name == 'sync' &&
+        result.contains('Nothing is pulling') &&
+        names.contains('connector')) {
+      final platform = _syncPlatform(call.arguments);
+      if (platform.isNotEmpty) {
+        final reading = await toolbox.run(
+          db,
+          'connector',
+          jsonEncode({
+            'platform': platform,
+            'intent': _latestUser(messages) ?? 'list recent records',
+          }),
+        );
+        used.add({
+          'name': 'connector',
+          'arguments': jsonEncode({'platform': platform}),
+          'result': reading,
+        });
+        emit('tool', {
+          'name': 'connector',
+          'arguments': jsonEncode({'platform': platform}),
+          'result': reading,
+        });
+        result = '$result\n$reading';
+      }
+    }
     _record(messages, used, emit, call, result);
     for (final extra in calls.skip(1)) {
       _record(messages, used, emit, extra, heldStepResult);
@@ -115,7 +192,7 @@ runChatTurn({
       text.toString().trim().isEmpty) {
     final request = [
       for (final m in messages) Map<String, dynamic>.from(m),
-      {'role': 'system', 'content': answerCue},
+      {'role': 'system', 'content': graphDone ? graphAnswerCue : answerCue},
     ];
     final answerSpoken = StringBuffer();
     var answerEmitted = 0;
@@ -140,6 +217,68 @@ runChatTurn({
   }
 
   return (text: text.toString(), tools: used, model: model);
+}
+
+void _commitGraph(
+  List<Map<String, dynamic>> messages,
+  List<Map<String, dynamic>> used,
+  void Function(String event, Object data) emit,
+  GraphCheckpoint checkpoint,
+) {
+  for (final wave in checkpoint.waves) {
+    messages.add({
+      'role': 'assistant',
+      'content': null,
+      'tool_calls': [
+        for (final call in wave)
+          {
+            'id': call.id,
+            'type': 'function',
+            'function': {'name': call.tool, 'arguments': call.arguments},
+          },
+      ],
+    });
+    for (final call in wave) {
+      used.add({
+        'name': call.tool,
+        'arguments': call.arguments,
+        'result': call.result,
+      });
+      emit('tool', {
+        'name': call.tool,
+        'arguments': call.arguments,
+        'result': call.result,
+      });
+      messages.add({
+        'role': 'tool',
+        'tool_call_id': call.id,
+        'tool_name': call.tool,
+        'content': call.result,
+      });
+    }
+  }
+}
+
+String _syncPlatform(String arguments) {
+  try {
+    final decoded = jsonDecode(arguments);
+    if (decoded is! Map) return '';
+    final platform = '${decoded['platform'] ?? ''}'.trim();
+    if (platform.isEmpty || platform == 'all') return '';
+    return platform;
+  } on FormatException {
+    return '';
+  }
+}
+
+String? _latestUser(List<Map<String, dynamic>> messages) {
+  for (final message in messages.reversed) {
+    if (message['role'] != 'user') continue;
+    final text = '${message['content'] ?? ''}'.trim();
+    if (text.isEmpty || text == nativeToolCorrection) continue;
+    return text.length <= 240 ? text : text.substring(0, 240);
+  }
+  return null;
 }
 
 void _record(

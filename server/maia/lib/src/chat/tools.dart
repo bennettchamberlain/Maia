@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:gel/gel.dart' as gel;
 import 'package:http/http.dart' as http;
 import 'package:maia_api/src/agent.dart';
+import 'package:maia_api/src/chat/senses.dart';
 
 /// Host tools the chat model can call. OpenClaw keeps its own; Parasail
 /// and Ollama run these here so memory and the web stay on the server.
@@ -25,6 +26,10 @@ class ChatToolbox {
     this.proposeSkill,
     this.createIntent,
     this.readLibrary,
+    this.senses,
+    this.computer,
+    this.vaultList,
+    this.scrub,
     http.Client? httpClient,
   }) : _http = httpClient ?? http.Client();
 
@@ -72,6 +77,19 @@ class ChatToolbox {
   )?
   createIntent;
   final Future<String?> Function(String kind, String id)? readLibrary;
+
+  /// Files, images, and video. Null hides those tools.
+  final Senses? senses;
+
+  /// Wakes this person's desktop. Null hides the tool.
+  final Future<String> Function(gel.Client c, Map<String, dynamic> args)?
+  computer;
+
+  /// Credential handles only. Never a secret.
+  final Future<String> Function()? vaultList;
+
+  /// Rewrites a tool result so a stored secret becomes its cred_ handle.
+  final Future<String> Function(String text)? scrub;
   final http.Client _http;
 
   bool get youConfigured => youApiKey != null && youApiKey!.isNotEmpty;
@@ -116,6 +134,36 @@ class ChatToolbox {
       'Queue a full pull of a connected app into memory, and report '
           'whether that pull is actually running.',
       available: sync != null,
+    ),
+    _info(
+      'file_read',
+      'Read a public file and, when it is an image or a video, describe it.',
+      available: senses != null,
+    ),
+    _info(
+      'image_describe',
+      'Describe an image at a public url.',
+      available: senses != null,
+    ),
+    _info(
+      'video_describe',
+      'Describe a video at a public url.',
+      available: senses != null,
+    ),
+    _info(
+      'url_read',
+      'Read the text of one public page.',
+      available: senses != null,
+    ),
+    _info(
+      'vault_list',
+      'List credential handles. The secret stays out of the chat.',
+      available: vaultList != null,
+    ),
+    _info(
+      'computer',
+      'Wake this person\'s desktop and run a task there.',
+      available: computer != null,
     ),
   ];
 
@@ -178,11 +226,10 @@ class ChatToolbox {
     if (connectorsAvailable && isOn('connector'))
       _fn(
         'connector',
-        'Read a connected app through One. First call: platform and intent. '
-            'The result lists action_id values and the connected login. '
-            'Second call: action_id, and any path field such as username '
-            'in path_params. The login is filled from the connection when '
-            'you omit it. That call copies the rows into memory.',
+        'Read a connected app through One. One call, with platform and '
+            'intent, is enough. The server runs the action, fills the '
+            'login from the connection, and copies the rows into memory. '
+            'Answer from those rows. Do not ask for an action id.',
         {
           'platform': {
             'type': 'string',
@@ -202,10 +249,10 @@ class ChatToolbox {
     if (sync != null && isOn('sync'))
       _fn(
         'sync',
-        'Drive a connector sync. Omit platform to report the current '
-            'jobs and cursors. Pass a platform, or "all", to queue a pull '
-            'into memory. The result says whether rows are actually being '
-            'pulled or the jobs are still queued.',
+        'Queue a full pull of a connected app. This does not read the '
+            'account. To say what is in it now, call connector. Omit '
+            'platform to report jobs. Pass a platform, or "all", to queue '
+            'the pull. A queued job has not copied anything yet.',
         {
           'platform': {
             'type': 'string',
@@ -252,9 +299,75 @@ class ChatToolbox {
         },
         const ['phrase', 'instruction'],
       ),
+    if (senses != null && isOn('file_read'))
+      _fn(
+        'file_read',
+        'Read one public file. Images and videos are described. '
+            'Use this after memory, before the web and the desktop.',
+        {
+          'url': {'type': 'string'},
+          'ask': {'type': 'string'},
+        },
+        const ['url'],
+      ),
+    if (senses != null && isOn('image_describe'))
+      _fn(
+        'image_describe',
+        'Describe a public image. Use after memory, before the web.',
+        {
+          'url': {'type': 'string'},
+          'ask': {'type': 'string'},
+        },
+        const ['url'],
+      ),
+    if (senses != null && isOn('video_describe'))
+      _fn(
+        'video_describe',
+        'Describe a public video. Use after memory, before the web.',
+        {
+          'url': {'type': 'string'},
+          'ask': {'type': 'string'},
+        },
+        const ['url'],
+      ),
+    if (senses != null && isOn('url_read'))
+      _fn(
+        'url_read',
+        'Read one public page as text. After memory and connectors, '
+            'before computer.',
+        {
+          'url': {'type': 'string'},
+        },
+        const ['url'],
+      ),
+    if (vaultList != null && isOn('vault_list'))
+      _fn(
+        'vault_list',
+        'List cred_ handles. Use a handle in a computer task. '
+            'You never receive the secret.',
+      ),
+    if (computer != null && isOn('computer'))
+      _fn(
+        'computer',
+        'Last resort. Wake this person\'s desktop and do a task a file, '
+            'a connector, or the web cannot do. The machine is theirs: it '
+            'sleeps when idle, wakes for the task, and their instabox '
+            'account is billed. Name a credential by its cred_ handle.',
+        {
+          'task': {'type': 'string'},
+        },
+        const ['task'],
+      ),
   ];
 
   Future<String> run(gel.Client c, String name, String rawArgs) async {
+    final produced = await _dispatch(c, name, rawArgs);
+    final clean = scrub;
+    if (clean == null) return produced;
+    return clean(produced);
+  }
+
+  Future<String> _dispatch(gel.Client c, String name, String rawArgs) async {
     Map<String, dynamic> args;
     try {
       final parsed = rawArgs.trim().isEmpty
@@ -337,6 +450,37 @@ class ChatToolbox {
                   ),
                   'status': 'active',
                 }),
+        'file_read' =>
+          senses == null
+              ? _plain('file reading is off')
+              : await senses!.readFile(
+                  '${args['url'] ?? ''}',
+                  ask: args['ask'] as String?,
+                ),
+        'image_describe' =>
+          senses == null
+              ? _plain('vision is off')
+              : await senses!.describeImage(
+                  '${args['url'] ?? ''}',
+                  ask: args['ask'] as String?,
+                ),
+        'video_describe' =>
+          senses == null
+              ? _plain('vision is off')
+              : await senses!.describeVideo(
+                  '${args['url'] ?? ''}',
+                  ask: args['ask'] as String?,
+                ),
+        'url_read' =>
+          senses == null
+              ? _plain('url reading is off')
+              : await senses!.readUrl('${args['url'] ?? ''}'),
+        'vault_list' =>
+          vaultList == null ? _plain('vault is off') : await vaultList!(),
+        'computer' =>
+          computer == null
+              ? _plain('the desktop is off')
+              : await computer!(c, args),
         _ => 'unknown tool $name',
       };
     } on Object catch (e) {
@@ -568,6 +712,9 @@ class ChatToolbox {
     if (v is num) return v.toInt().clamp(1, 40);
     return fallback;
   }
+
+  static String _plain(String text) =>
+      jsonEncode({'type': 'text', 'text': text});
 
   static Map<String, dynamic> _info(
     String name,

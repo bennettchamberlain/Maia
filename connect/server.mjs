@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
 import { parseUserReference } from "@withone/connect/server";
+import { rankActions } from "./actions.mjs";
 import { accountLogin, fillPathParams } from "./path_params.mjs";
 
 loadEnv({ path: join(dirname(fileURLToPath(import.meta.url)), "..", ".env") });
@@ -368,31 +369,72 @@ const server = createServer(async (req, res) => {
         } catch {
           actions = await connect.searchActions(person, platform, intent);
         }
-        const found = [];
-        for (const action of (actions || []).slice(0, 3)) {
+        const decorated = [];
+        for (const action of (actions || []).slice(0, 5)) {
           const id = action._id || action.id;
           if (!id) continue;
-          let guide = null;
-          try {
-            guide = await connect.getActionKnowledge(person, id);
-          } catch {
-            guide = null;
+          let method = action.method || null;
+          let path = action.path || "";
+          if (!method) {
+            try {
+              const guide = await connect.getActionKnowledge(person, id);
+              method = guide?.method || null;
+              path = path || guide?.path || "";
+            } catch {
+              method = null;
+            }
           }
-          const knowledge = String(guide?.knowledge || action.description || "").slice(0, 1500);
-          found.push({
-            action_id: id,
-            title: action.title || action.name || id,
-            method: guide?.method || action.method || null,
-            path: guide?.path || action.path || null,
-            knowledge,
+          decorated.push({ ...action, _id: id, method, path });
+        }
+        const pool = rankActions(decorated, intent);
+        if (!pool.length) {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: false, refusal: "no_action", data: null }));
+          return;
+        }
+        let reply;
+        let last = pool[0];
+        for (const candidate of pool) {
+          last = candidate;
+          const pathParams = await paramsFor(
+            person,
+            candidate._id,
+            candidate.path,
+            body.pathParams || body.path_params,
+            body.query,
+            body.body,
+            conn,
+          );
+          reply = await connect.runAction(person, {
+            connectionKey: conn.key,
+            actionId: candidate._id,
+            pathParams,
+            query: body.query,
+            body: body.body,
+            encoding: body.encoding,
+            headers: body.headers,
           });
+          if (reply?.ok) break;
+          if (reply?.blockedByGrant || reply?.refusal === "grant" || reply?.refusal === "rate_limit") break;
+        }
+        if (reply?.refusal === "rate_limit" || reply?.status === 429) {
+          res.writeHead(429, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "rate_limit", retry: true }));
+          return;
+        }
+        if (reply?.refusal === "reconnect_required" || /reconnect_required/.test(String(reply?.data ?? ""))) {
+          res.writeHead(409, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "reconnect_required" }));
+          return;
         }
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({
-          platform,
-          intent,
+          ok: Boolean(reply?.ok),
+          status: reply?.status ?? null,
+          refusal: reply?.refusal ?? null,
+          blocked: Boolean(reply?.blockedByGrant),
           account: accountLogin(conn),
-          actions: found,
+          data: clipValue(reply?.data),
         }));
         return;
       }

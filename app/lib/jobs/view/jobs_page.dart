@@ -1,10 +1,11 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:maia_api_client/maia_api_client.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:maia_app/jobs/job_groups.dart';
+import 'package:maia_app/jobs/job_verdicts.dart';
 import 'package:maia_app/jobs/jobs.dart';
 import 'package:maia_app/ui/chrome.dart';
 import 'package:maia_models/maia_models.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 class JobsPage extends StatelessWidget {
@@ -32,7 +33,7 @@ class JobsView extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             MaiaHeader(title: 'Jobs', actions: [_RefreshButton()]),
-            _SyncNote(),
+            _Health(),
             _StateFilter(),
           ],
         ),
@@ -59,20 +60,61 @@ class _RefreshButton extends StatelessWidget {
   }
 }
 
-class _SyncNote extends StatelessWidget {
+class _Health extends StatelessWidget {
   const new();
 
   @override
   Widget build(BuildContext context) {
+    final status = context.select<JobsBloc, JobsStatus>(
+      (bloc) => bloc.state.status,
+    );
+    final jobs = context.select<JobsBloc, List<JobRecord>>(
+      (bloc) => bloc.state.jobs,
+    );
+    if (status != JobsStatus.success) return const SizedBox.shrink();
+    final verdicts = jobVerdicts(jobs);
+    if (verdicts.isEmpty) return const SizedBox.shrink();
     final theme = ShadTheme.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-      child: Text(
-        'The cloud holds the record. This device keeps a cache, and sync '
-        'keeps running.',
-        style: theme.textTheme.muted,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final verdict in verdicts)
+            InkWell(
+              onTap: verdict.state == null
+                  ? null
+                  : () => _show(context, verdict.state!),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      verdict.headline,
+                      style: theme.textTheme.p.copyWith(
+                        color: verdict.tone == JobTone.critical
+                            ? theme.colorScheme.destructive
+                            : theme.colorScheme.foreground,
+                      ),
+                    ),
+                    if (verdict.detail != null)
+                      Text(verdict.detail!, style: theme.textTheme.muted),
+                  ],
+                ),
+              ),
+            ),
+        ],
       ),
     );
+  }
+
+  void _show(BuildContext context, JobState state) {
+    final current = context.read<JobsBloc>().state.filter;
+    final next = current.length == 1 && current.contains(state)
+        ? <JobState>{}
+        : {state};
+    context.read<JobsBloc>().add(JobsFilterChanged(next));
   }
 }
 
@@ -150,12 +192,20 @@ class _JobsBody extends StatelessWidget {
           onRetry: () => context.read<JobsBloc>().add(const JobsRefreshed()),
         );
       case JobsStatus.success:
-        final groups = groupJobs(state.jobs);
-        if (groups.isEmpty) {
+        final shown = state.filter.isEmpty
+            ? state.jobs
+            : state.jobs
+                  .where((job) => state.filter.contains(job.state))
+                  .toList();
+        final groups = groupJobs(shown);
+        if (state.jobs.isEmpty) {
           return const MaiaEmpty(
             'Nothing is syncing yet. Connect an account and Maia starts '
             'keeping a copy.',
           );
+        }
+        if (groups.isEmpty) {
+          return const MaiaEmpty('Nothing in this view.');
         }
         return ListView.separated(
           itemCount: groups.length,

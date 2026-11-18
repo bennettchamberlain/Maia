@@ -25,8 +25,10 @@ List<ConnectorCopy> connectorCopies(String platform, Object? data) {
     final headers = _headers(row);
     final title = _text(
       headers['subject'] ??
+          row['full_name'] ??
           row['title'] ??
           row['name'] ??
+          row['login'] ??
           row['summary'] ??
           row['subject'] ??
           row['snippet'] ??
@@ -34,15 +36,20 @@ List<ConnectorCopy> connectorCopies(String platform, Object? data) {
           platform,
     );
     final sender = _text(headers['from'] ?? row['from'] ?? '');
+    final login = _text(row['login'] ?? _ownerLogin(row));
     final body = _text(
-      row['snippet'] ??
+      row['bio'] ??
+          row['description'] ??
+          row['snippet'] ??
           row['text'] ??
           row['body'] ??
-          row['description'] ??
           row['preview'] ??
           '',
     );
-    final written = sender.isEmpty ? body : 'From: $sender\n$body'.trim();
+    final withLogin = login.isEmpty || title == login ? body : '$login. $body';
+    final written = sender.isEmpty
+        ? withLogin
+        : 'From: $sender\n$withLogin'.trim();
     out.add(
       ConnectorCopy(
         sourceId: id,
@@ -55,6 +62,17 @@ List<ConnectorCopy> connectorCopies(String platform, Object? data) {
     if (out.length == 8) break;
   }
   return out;
+}
+
+/// What the model reads back. The title alone is not a reading of the mail.
+String connectorBrief(String platform, int copied, List<ConnectorCopy> rows) {
+  final lines = <String>[];
+  for (final row in rows) {
+    final said = row.body.replaceAll(RegExp(r'\s+'), ' ').trim();
+    lines.add(said.isEmpty ? '- ${row.title}' : '- ${row.title}. $said');
+  }
+  final noun = copied == 1 ? 'record' : 'records';
+  return 'Read $copied $platform $noun.\n${lines.join('\n')}';
 }
 
 /// What the model should do with the action list from the first call.
@@ -128,6 +146,8 @@ List<Map<String, dynamic>> _records(Object? payload) {
     'data',
     'results',
     'records',
+    'repositories',
+    'repos',
     'messages',
     'events',
     'issues',
@@ -158,6 +178,12 @@ List<Map<String, dynamic>> _records(Object? payload) {
     }
   }
   return map['id'] == null && map['ts'] == null ? const [] : [map];
+}
+
+String _ownerLogin(Map<String, dynamic> row) {
+  final owner = row['owner'];
+  if (owner is! Map) return '';
+  return _text(owner['login']);
 }
 
 String _id(Map<String, dynamic> row) {

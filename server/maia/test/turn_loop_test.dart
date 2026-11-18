@@ -121,6 +121,242 @@ void main() {
     expect(used.map((call) => call['name']), ['now', 'memory_search']);
     expect(used.last['result'], heldStepResult);
   });
+
+  test('the web waits until memory has been checked', () async {
+    final search = _Json((request) {
+      return http.Response(
+        jsonEncode({
+          'choices': [
+            {
+              'message': {'content': 'a public headline'},
+            },
+          ],
+        }),
+        200,
+      );
+    });
+    final box = ChatToolbox(
+      searchMemory: (c, query, limit) async => [],
+      recentMemory: (c, limit) async => [],
+      getMemory: (c, id) async => null,
+      remember: (c, title, body) async => '',
+      lifeGraph: (c) async => null,
+      openRouterApiKey: 'sk-or-test',
+      httpClient: search,
+    );
+    final script = _Script((body) {
+      final ran = _toolMessages(body);
+      if (ran == 0) return _call('web_search', '{"query":"news"}', 'w');
+      final tools = [
+        for (final message in body['messages'] as List)
+          if (message is Map && message['role'] == 'tool') message,
+      ];
+      expect('${tools.first['content']}', contains('Checked memory'));
+      if (ran == 1) return _call('web_search', '{"query":"news"}', 'w2');
+      return _say('the headline');
+    });
+    final turn = await runChatTurn(
+      harness: _harness(script),
+      frame: [
+        {'role': 'user', 'content': 'what is new'},
+      ],
+      toolbox: box,
+      db: _Db(),
+      emit: (_, _) {},
+    );
+    expect(turn.tools.map((call) => call['name']), [
+      'memory_search',
+      'web_search',
+      'web_search',
+    ]);
+    expect(turn.tools[1]['result'], contains('Checked memory'));
+    expect(turn.tools.last['result'], contains('a public headline'));
+    expect(turn.text, 'the headline');
+  });
+
+  test('an empty memory still runs the connector in the same step', () async {
+    var connectorCalls = 0;
+    final box = ChatToolbox(
+      searchMemory: (c, query, limit) async => [],
+      recentMemory: (c, limit) async => [],
+      getMemory: (c, id) async => null,
+      remember: (c, title, body) async => '',
+      lifeGraph: (c) async => null,
+      connector: (args) async {
+        connectorCalls++;
+        expect(args['platform'], 'github');
+        return jsonEncode({
+          'type': 'text',
+          'text': 'Copied 1 github rows into memory.\n- maia',
+        });
+      },
+    );
+    var sawGraph = false;
+    final script = _Script((body) {
+      if (_toolMessages(body) == 0) {
+        return _call(
+          'connector',
+          '{"platform":"github","intent":"list repos"}',
+          'g',
+        );
+      }
+      sawGraph = true;
+      expect(body['tools'], isNull);
+      return _say('You have the maia repo.');
+    });
+    final turn = await runChatTurn(
+      harness: _harness(script),
+      frame: [
+        {'role': 'user', 'content': 'What is in my GitHub account?'},
+      ],
+      toolbox: box,
+      db: _Db(),
+      emit: (_, _) {},
+    );
+    expect(sawGraph, isTrue);
+    expect(connectorCalls, 1);
+    expect(turn.tools.map((call) => call['name']), [
+      'memory_search',
+      'connector',
+    ]);
+    expect(turn.tools.last['result'], contains('Copied 1 github'));
+    expect(turn.tools.last['result'], isNot(contains('Call this tool again')));
+    expect(turn.text, 'You have the maia repo.');
+  });
+
+  test('a sync that is not pulling still reads the account', () async {
+    var reads = 0;
+    final box = ChatToolbox(
+      searchMemory: (c, query, limit) async => [],
+      recentMemory: (c, limit) async => [],
+      getMemory: (c, id) async => null,
+      remember: (c, title, body) async => '',
+      lifeGraph: (c) async => null,
+      connector: (args) async {
+        reads++;
+        expect(args['platform'], 'github');
+        return jsonEncode({
+          'type': 'text',
+          'text': 'Read 1 github record.\n- bennettchamberlain/maia. the app',
+        });
+      },
+      sync: (c, args) async => jsonEncode({
+        'type': 'text',
+        'text':
+            'Queued sync for github.\n'
+            'Nothing is pulling yet. The jobs are still queued.',
+      }),
+    );
+    final script = _Script((body) {
+      if (_toolMessages(body) == 0) {
+        return _call('sync', '{"platform":"github"}', 's');
+      }
+      return _say('Your login is on bennettchamberlain/maia.');
+    });
+    final turn = await runChatTurn(
+      harness: _harness(script),
+      frame: [
+        {'role': 'user', 'content': 'Sync GitHub now'},
+      ],
+      toolbox: box,
+      db: _Db(),
+      emit: (_, _) {},
+    );
+    expect(reads, 1);
+    expect(turn.tools.map((call) => call['name']), [
+      'memory_search',
+      'connector',
+      'sync',
+    ]);
+    expect(turn.tools.last['result'], contains('bennettchamberlain/maia'));
+    expect(turn.text, 'Your login is on bennettchamberlain/maia.');
+  });
+
+  test('a failed account read is not called again', () async {
+    var reads = 0;
+    final box = ChatToolbox(
+      searchMemory: (c, query, limit) async => [],
+      recentMemory: (c, limit) async => [],
+      getMemory: (c, id) async => null,
+      remember: (c, title, body) async => '',
+      lifeGraph: (c) async => null,
+      connector: (args) async {
+        reads++;
+        return jsonEncode({
+          'type': 'text',
+          'text': 'One could not read ${args['platform']} (failed).',
+        });
+      },
+    );
+    final script = _Script((body) {
+      final systems = [
+        for (final message in body['messages'] as List)
+          if (message is Map && message['role'] == 'system')
+            '${message['content']}',
+      ];
+      expect(systems.join('\n'), contains('did not return'));
+      expect(systems.join('\n'), contains('do not have'));
+      expect(body['tools'], isNull);
+      return _say(
+        'GitHub is able to return a login. I do not have the account.',
+      );
+    });
+    final turn = await runChatTurn(
+      harness: _harness(script),
+      frame: [
+        {'role': 'user', 'content': 'What is my GitHub login?'},
+      ],
+      toolbox: box,
+      db: _Db(),
+      emit: (_, _) {},
+    );
+    expect(reads, 1);
+    expect(turn.tools.map((call) => call['name']), [
+      'memory_search',
+      'connector',
+    ]);
+    expect(turn.text, contains('do not have'));
+  });
+
+  test('github and gmail are one superstep after memory', () async {
+    final platforms = <String>[];
+    final box = ChatToolbox(
+      searchMemory: (c, query, limit) async => [],
+      recentMemory: (c, limit) async => [],
+      getMemory: (c, id) async => null,
+      remember: (c, title, body) async => '',
+      lifeGraph: (c) async => null,
+      connector: (args) async {
+        final platform = '${args['platform']}';
+        platforms.add(platform);
+        return jsonEncode({
+          'type': 'text',
+          'text': 'One could not read $platform (failed).',
+        });
+      },
+    );
+    final script = _Script((_) => _say('I do not have either account.'));
+    final turn = await runChatTurn(
+      harness: _harness(script),
+      frame: [
+        {
+          'role': 'user',
+          'content': 'What is my GitHub login, and who sent my latest Gmail?',
+        },
+      ],
+      toolbox: box,
+      db: _Db(),
+      emit: (_, _) {},
+    );
+    expect(platforms, ['github', 'gmail']);
+    expect(turn.tools.map((call) => call['name']), [
+      'memory_search',
+      'connector',
+      'connector',
+    ]);
+    final assistant = [for (final call in turn.tools) call['name']];
+    expect(assistant.where((name) => name == 'connector'), hasLength(2));
+  });
 }
 
 Future<List<Map<String, dynamic>>> _run(_Script script, String task) async {
@@ -242,4 +478,19 @@ String _calls(List<(String, String, String)> calls) {
     'data: [DONE]',
   ];
   return '${lines.join('\n\n')}\n';
+}
+
+class _Json extends http.BaseClient {
+  _Json(this.reply);
+  final http.Response Function(http.Request request) reply;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final response = reply(request as http.Request);
+    return http.StreamedResponse(
+      Stream<List<int>>.value(response.bodyBytes),
+      response.statusCode,
+      headers: response.headers,
+    );
+  }
 }

@@ -36,19 +36,32 @@ void main() {
     );
 
     blocTest<JobsBloc, JobsState>(
-      'passes the selected states to the api',
+      'a filter keeps the jobs already loaded',
       setUp: () {
-        when(() => api.jobs(states: [JobState.failed], limit: 200))
-            .thenAnswer((_) async => [_job('2', JobState.failed)]);
+        when(() => api.jobs(limit: 200)).thenAnswer(
+          (_) async => [
+            _job('1', JobState.created),
+            _job('2', JobState.failed),
+          ],
+        );
       },
       build: () => JobsBloc(api: api),
-      act: (b) => b.add(const JobsFilterChanged({JobState.failed})),
+      act: (b) async {
+        b.add(const JobsFetched());
+        await b.stream.firstWhere((s) => s.status == JobsStatus.success);
+        b.add(const JobsFilterChanged({JobState.failed}));
+      },
       expect: () => [
-        const JobsState(status: JobsStatus.loading, filter: {JobState.failed}),
+        const JobsState(status: JobsStatus.loading),
+        isA<JobsState>().having((s) => s.jobs.length, 'jobs', 2),
         isA<JobsState>()
-            .having((s) => s.jobs.single.state, 'state', JobState.failed)
-            .having((s) => s.filter, 'filter', {JobState.failed}),
+            .having((s) => s.jobs.length, 'jobs', 2)
+            .having((s) => s.filter, 'filter', {JobState.failed})
+            .having((s) => s.status, 'status', JobsStatus.success),
       ],
+      verify: (_) {
+        verify(() => api.jobs(limit: 200)).called(1);
+      },
     );
 
     blocTest<JobsBloc, JobsState>(

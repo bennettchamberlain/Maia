@@ -3,47 +3,46 @@
 done-when: assistant text on screen and eval wire agree; harness, tool names, action ids, and "what would you like to do" never appear in the reply
 provider: openrouter (google/gemini-2.5-flash-lite per /health)
 
-## ready required
-send: Reply with the single word ready.
+The previous ladder passed, including the GitHub miss that answered from what the tool is able to return. Those prompts are retired below. This run judges the graph: a failed read stays failed, two independent accounts are one step, and a definition does not become a tool call.
+
+## checkpoint required
+send: Reply with the single word checkpoint.
 setup: signed in as eval, fresh session, default tools
 wire: 200, delta, done, no tool
-screen: exactly `ready` (trimmed)
+screen: exactly `checkpoint` (trimmed)
 
-## arithmetic required
-send: What is 2+2? Reply with the number only.
+## acyclic required
+send: In one sentence, what makes a graph acyclic? No tools.
 setup: signed in as eval, fresh session
 wire: 200, delta, done, no tool
-screen: exactly `4`
+screen: one sentence containing `cycle`; must not contain `what would you like`
 
-## water-wet required
-send: Is water wet? Yes or no, then one reason.
+## quorinth required
+send: What do you remember about the word quorinth? If memory has nothing, say you do not have it. Do not search the web.
 setup: signed in as eval, fresh session
-wire: 200, delta, done, no tool
-screen: one short yes/no answer; must not contain `what would you like`
+wire: 200, delta, done, no web_search, url_read, or computer
+screen: contains `quorinth` and `do not have`; must not contain `what would you like` or `action_id`
 
-## github-access required
-send: Do you have access to GitHub?
-setup: signed in as eval, fresh session, connector enabled when connected
-wire: 200, delta, done
-screen: one sentence; must not contain action_id, conn_mod, Call connector, what would you like
-
-## austen required
-send: Who wrote Pride and Prejudice? Name only.
+## capability required
+send: The GitHub read did not return. Say what that tool is able to return, and say you do not have the account. Do not invent a login or a repository.
 setup: signed in as eval, fresh session
-wire: 200, delta, done
-screen: contains Austen; must not dump a search heading or five snippets
+wire: 200, delta, done, tools memory_search then connector, no web_search or computer
+screen: contains `able` and `do not have`; must not contain action_id, conn_mod, Call connector, what would you like
 
-## primary-colors required
-send: Name the three primary colors, one per line, and nothing else.
+## one-read required
+send: Read my GitHub account once. If the read fails, do not search the web and do not try again. Say that you do not have the account.
 setup: signed in as eval, fresh session
-wire: 200, delta, done, no tool
-screen: three color lines, either red/green/blue or red/yellow/blue, nothing else
+wire: 200, delta, done, tools memory_search then connector, no web_search, url_read, or computer
+screen: contains `github` and `do not have`; must not contain action_id, conn_mod, what would you like
 
-## github-account required
-send: What is in my GitHub account right now? If you cannot see a repo or a login, say you do not have it. Do not list actions.
+## two-apps required
+send: What is my GitHub login, and who sent my latest Gmail? They do not depend on each other. For whichever call does not return, say you do not have that one. Do not invent it.
 setup: signed in as eval, fresh session
-wire: 200, delta, done
-screen: real repo/login fact or honest miss; must not contain action_id or conn_mod
+wire: 200, delta, done, tools memory_search then connector then connector, no web_search or computer
+screen: contains `github`, `gmail`, and `do not have`; must not contain action_id, conn_mod, Call connector, what would you like
+
+## retired (passed, do not rerun)
+ready, arithmetic, water-wet, github-access, austen, primary-colors, github-account. GitHub did not return a login, and the reply still answered from the tool's capability. That pass is why capability, one-read, and two-apps replaced it.
 
 ### answers round 1
 prompt: Reply with the single word ready.
