@@ -89,13 +89,9 @@ void main() {
     ]);
     expect(text, contains('action_id: search'));
     expect(text, contains('copied into memory'));
-    final named = connectorActionPrompt(
-      'github',
-      [
-        {'action_id': 'repos', 'title': 'List repos'},
-      ],
-      account: 'bennettchamberlain',
-    );
+    final named = connectorActionPrompt('github', [
+      {'action_id': 'repos', 'title': 'List repos'},
+    ], account: 'bennettchamberlain');
     expect(named, contains('bennettchamberlain'));
     expect(named, contains('path_params'));
   });
@@ -106,5 +102,11 @@ void main() {
         'Yes, I can access GitHub. What would you like to do?\n$leak\nfoo';
     expect(publicChatText(raw), 'Yes, I can access GitHub.');
     expect(looksLikeConnectorHarnessText(leak), isTrue);
+    expect(
+      publicChatText(
+        'I do not have the account. The connector can return users and repos.',
+      ),
+      'I do not have the account.',
+    );
   });
 }

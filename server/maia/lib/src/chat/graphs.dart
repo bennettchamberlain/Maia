@@ -7,10 +7,32 @@ import 'package:maia_api/src/chat/ladder.dart';
 const graphAnswerCue =
     "Answer the person's latest message from the checkpoint above. "
     'The graph has finished, so do not call a tool. '
-    'A call that did not return is finished: say what it is able to '
-    'return, and say you do not have the fact. Earlier notes are not '
+    'A call that did not return is finished. Say you do not have '
+    'the fact. Do not describe the tool. Earlier notes are not '
     'the account. Do not invent it. '
     'Do not mention the graph, the checkpoint, or the tools.';
+
+/// After a read, one more connector call may do the change they asked for.
+const graphChangeCue =
+    'The account page is already in the checkpoint. '
+    'They asked for a change. Call connector once, with that platform '
+    'and an intent that is the change: reply, send, schedule, create, '
+    'or move. Then answer from whatever comes back. '
+    'If that call does not return, say you do not have it. '
+    'Do not describe the tool. Do not search the web.';
+
+/// The read needed an account that is not connected.
+const graphMissingCue =
+    'A needed account is not connected. Call connector once more only if '
+    'another connected app could hold the same fact. If none can, tell them '
+    'which connector to add on the Connectors screen. Do not invent the '
+    'page. Do not describe the tool.';
+
+/// The tool result says the account was never granted.
+bool missingAccount(String result) {
+  final text = result.toLowerCase();
+  return text.contains('not connected') || text.contains('no grant');
+}
 
 /// One node. [after] are the node ids that must finish first.
 /// Nodes that share no edge are one superstep and may run together.
@@ -69,6 +91,11 @@ class GraphCheckpoint {
 
   List<GraphCall> get calls => [for (final wave in waves) ...wave];
 
+  /// A required account is missing, so one other app may still answer.
+  bool get needsAnotherWay => calls.any(
+    (call) => call.tool == 'connector' && missingAccount(call.result),
+  );
+
   /// What the model reads. A failed call stays failed.
   String get note {
     final bits = <String>[
@@ -79,14 +106,20 @@ class GraphCheckpoint {
           call.tool == 'memory_search' && memoryIsChatter(call.result);
       bits.add(
         call.failed
-            ? '${call.tool} on ${call.label} did not return. '
-                  'It is able to ${call.able}. You do not have that fact. '
-                  'Do not call it again.'
+            ? missingAccount(call.result)
+                  ? '${call.label} is not connected. Tell them to connect '
+                        'it on the Connectors screen. One other connected '
+                        'app is allowed if it could hold the same fact. '
+                        'Do not invent the page.'
+                  : '${call.tool} on ${call.label} did not return. '
+                        'You do not have that fact. Do not describe the '
+                        'tool and do not call it again.'
             : notes
             ? 'memory_search returned earlier notes, not the live account. '
                   'Do not treat them as the login or the mailbox.'
             : '${call.tool} on ${call.label} returned. '
-                  'Use that result and do not call it again.',
+                  '${nextStep(call.label)} '
+                  'Use that result. Call again only for a change they asked for.',
       );
     }
     return bits.join(' ');
@@ -118,6 +151,8 @@ bool nodeFailed(String result) {
     'needs a reconnect',
     'refused',
     'no connected apps',
+    'not connected',
+    'no grant',
     'failed',
     'error',
   ];
@@ -127,17 +162,193 @@ bool nodeFailed(String result) {
   return false;
 }
 
-const _platforms = ['github', 'gmail', 'calendar'];
+/// One connected app. [phrases] are how a person names it. [next] is
+/// what a later call can do, and only when they asked for that change.
+class DeskApp {
+  const DeskApp(this.slug, this.phrases, this.next);
+
+  final String slug;
+  final List<String> phrases;
+  final String next;
+}
+
+const deskApps = <DeskApp>[
+  DeskApp('gmail', [
+    'gmail',
+    'inbox',
+    'mailbox',
+    'latest email',
+  ], 'A reply or a send is a later call only if they asked to reply or send.'),
+  DeskApp(
+    'google-calendar',
+    [
+      'calendar',
+      'schedule',
+      'agenda',
+      'my day',
+      'my week',
+      'this afternoon',
+      'my afternoon',
+    ],
+    'A new or moved event is a later call only if they asked to change the day.',
+  ),
+  DeskApp(
+    'google-drive',
+    ['google drive', 'my drive'],
+    'Opening or creating a file is a later call only if they asked for a file.',
+  ),
+  DeskApp('google-docs', [
+    'google doc',
+    'google docs',
+    'my docs',
+  ], 'Editing a document is a later call only if they asked to change it.'),
+  DeskApp(
+    'github',
+    ['github'],
+    'An issue or a pull request is a later call only if they asked to write one.',
+  ),
+  DeskApp('linked-in', [
+    'linkedin',
+    'linked in',
+  ], 'A post is a later call only if they asked to publish it.'),
+  DeskApp('figma', [
+    'figma',
+  ], 'A change to a file is a later call only if they asked to edit it.'),
+  DeskApp('supabase', [
+    'supabase',
+  ], 'A change to the project is a later call only if they asked for it.'),
+  DeskApp('x', [
+    'twitter',
+    'on x',
+  ], 'A post is a later call only if they asked to publish it.'),
+  DeskApp('google-sheets', [
+    'google sheet',
+    'google sheets',
+    'google-sheets',
+    'spreadsheet',
+  ], 'Editing a sheet is a later call only if they asked to change it.'),
+  DeskApp('google-slides', [
+    'google slides',
+    'google-slides',
+    'slide deck',
+  ], 'Editing a deck is a later call only if they asked to change it.'),
+  DeskApp('google-tasks', [
+    'google tasks',
+    'google-tasks',
+  ], 'A new or completed task is a later call only if they asked for it.'),
+  DeskApp('slack', [
+    'slack',
+  ], 'A message is a later call only if they asked to send one.'),
+  DeskApp('notion', [
+    'notion',
+  ], 'A new or edited page is a later call only if they asked to change it.'),
+  DeskApp('linear', [
+    'in linear',
+    'linear issue',
+    'linear ticket',
+  ], 'A new issue is a later call only if they asked to write one.'),
+  DeskApp('zoom', [
+    'zoom',
+  ], 'A new meeting is a later call only if they asked to book one.'),
+  DeskApp(
+    'outlook-calendar',
+    ['outlook calendar', 'outlook-calendar'],
+    'A new or moved event is a later call only if they asked to change the day.',
+  ),
+  DeskApp('outlook-mail', [
+    'outlook mail',
+    'outlook-mail',
+    'outlook',
+  ], 'A reply or a send is a later call only if they asked to reply or send.'),
+  DeskApp('teams', [
+    'microsoft teams',
+    'on teams',
+  ], 'A message is a later call only if they asked to send one.'),
+  DeskApp(
+    'one-drive',
+    ['onedrive', 'one drive', 'one-drive'],
+    'Opening or creating a file is a later call only if they asked for a file.',
+  ),
+  DeskApp(
+    'dropbox',
+    ['dropbox'],
+    'Opening or creating a file is a later call only if they asked for a file.',
+  ),
+  DeskApp('asana', [
+    'asana',
+  ], 'A new or completed task is a later call only if they asked for it.'),
+  DeskApp('todoist', [
+    'todoist',
+  ], 'A new or completed task is a later call only if they asked for it.'),
+  DeskApp('airtable', [
+    'airtable',
+  ], 'A new or edited row is a later call only if they asked to change it.'),
+  DeskApp('jira', [
+    'jira',
+  ], 'A new issue is a later call only if they asked to write one.'),
+  DeskApp('trello', [
+    'trello',
+  ], 'A new card is a later call only if they asked to write one.'),
+  DeskApp('click-up', [
+    'clickup',
+    'click up',
+    'click-up',
+  ], 'A new task is a later call only if they asked to write one.'),
+  DeskApp('calendly', [
+    'calendly',
+  ], 'A new booking is a later call only if they asked to book it.'),
+  DeskApp('hubspot', [
+    'hubspot',
+  ], 'A new or edited record is a later call only if they asked to change it.'),
+  DeskApp('stripe', [
+    'stripe',
+  ], 'A refund or a charge is a later call only if they asked for it.'),
+  DeskApp('sentry', [
+    'sentry',
+  ], 'Resolving an issue is a later call only if they asked to change it.'),
+  DeskApp('vercel', [
+    'vercel',
+  ], 'A deploy is a later call only if they asked to start one.'),
+  DeskApp('cloudflare', [
+    'cloudflare',
+  ], 'A DNS or config change is a later call only if they asked for it.'),
+  DeskApp('discord', [
+    'discord',
+  ], 'A message is a later call only if they asked to send one.'),
+  DeskApp('intercom', [
+    'intercom',
+  ], 'A reply is a later call only if they asked to send one.'),
+];
+
+/// The one line the model reads after a page comes back.
+String nextStep(String platform) {
+  for (final app in deskApps) {
+    if (app.slug == platform) return app.next;
+  }
+  return 'A change is a later call only if they asked for the change.';
+}
 
 /// A known account read. Sync stays on the model, because that is a
-/// different job. Anything else is not a graph.
+/// different job. A memory question stays on memory.
 Playbook? playbookFor(String text) {
   final lower = text.toLowerCase();
   if (RegExp(r'\bsync\b').hasMatch(lower)) return null;
-  final apps = [
-    for (final platform in _platforms)
-      if (_mentions(lower, platform)) platform,
-  ];
+  if (lower.contains('what do you remember')) return null;
+  final hits = <({int at, String slug})>[];
+  for (final app in deskApps) {
+    var at = -1;
+    for (final phrase in app.phrases) {
+      final found = lower.indexOf(phrase);
+      if (found >= 0 && (at < 0 || found < at)) at = found;
+    }
+    if (at >= 0) hits.add((at: at, slug: app.slug));
+  }
+  hits.sort((a, b) => a.at.compareTo(b.at));
+  final apps = [for (final hit in hits) hit.slug];
+  if (apps.isEmpty) {
+    final named = _namedSlug(lower);
+    if (named != null) apps.add(named);
+  }
   if (apps.isEmpty || !_isRead(lower)) return null;
   return Playbook('account-read', [
     GraphNode(
@@ -160,16 +371,105 @@ Playbook? playbookFor(String text) {
   ]);
 }
 
-bool _mentions(String lower, String platform) {
-  return switch (platform) {
-    'github' => lower.contains('github'),
-    'gmail' =>
-      lower.contains('gmail') ||
-          lower.contains('inbox') ||
-          lower.contains('latest email'),
-    'calendar' => lower.contains('calendar'),
-    _ => false,
-  };
+/// They told us to change the account, not only to look.
+bool asksToChange(String text) {
+  final lower = text.toLowerCase();
+  if (lower.contains('should i') || lower.contains('should we')) return false;
+  if (RegExp(r'\b(send|reply|draft|book|create|reschedule|invite|write)\b')
+      .hasMatch(lower)) {
+    return true;
+  }
+  return RegExp(r'\b(schedule|move)\s+(a|an|the|this|it|me|my)\b')
+      .hasMatch(lower);
+}
+
+const _memoryStops = {
+  'about',
+  'remember',
+  'memory',
+  'memories',
+  'something',
+  'anything',
+  'nothing',
+  'please',
+  'search',
+  'would',
+  'could',
+  'should',
+  'there',
+  'their',
+  'which',
+  'where',
+  'what',
+  'that',
+  'this',
+  'with',
+  'from',
+  'have',
+  'your',
+  'word',
+  'words',
+  'email',
+  'inbox',
+  'account',
+  'login',
+  'latest',
+  'read',
+  'return',
+  'returned',
+  'connector',
+  'tools',
+  'tool',
+  'does',
+  'dont',
+  'didnt',
+  'they',
+  'them',
+  'into',
+  'call',
+  'calls',
+  'again',
+  'page',
+  'once',
+  'fails',
+  'fail',
+  'invent',
+  'repository',
+  'repositories',
+  'subject',
+  'sent',
+  'name',
+  'named',
+};
+
+/// Words that have to appear in a memory before it counts as this ask.
+List<String> distinctiveWords(String query) {
+  final words = query.toLowerCase().split(RegExp('[^a-z0-9]+'));
+  return [
+    for (final word in words)
+      if (word.length >= 5 && !_memoryStops.contains(word)) word,
+  ];
+}
+
+String _rowText(Map<String, dynamic> row) {
+  return '${row['title'] ?? ''} ${row['body'] ?? ''}'.toLowerCase();
+}
+
+/// Drops nearest neighbors that do not contain the asked word.
+/// On an account read, prior notes are not the account either.
+List<Map<String, dynamic>> memoriesForAsk(
+  String query,
+  List<Map<String, dynamic>> rows,
+) {
+  final words = distinctiveWords(query);
+  var kept = words.isEmpty
+      ? rows
+      : [
+          for (final row in rows)
+            if (words.any((word) => _rowText(row).contains(word))) row,
+        ];
+  if (playbookFor(query) != null) return const [];
+  return kept;
 }
 
 bool _isRead(String lower) {
@@ -183,12 +483,49 @@ bool _isRead(String lower) {
     'latest',
     'what is in',
     "what's in",
+    'what is on',
+    "what's on",
     'read',
+    'today',
+    'tomorrow',
+    'plan',
+    'open',
+    'find',
+    'show',
+    'list',
+    'check',
+    'unread',
+    'meeting',
   ];
   for (final cue in cues) {
     if (lower.contains(cue)) return true;
   }
   return false;
+}
+
+/// A connector slug written in the message, for a tool with no phrase yet.
+/// One's directory is about a thousand tools. Naming the slug is enough.
+String? _namedSlug(String lower) {
+  final match = RegExp(r'\b[a-z0-9]+(?:-[a-z0-9]+){1,4}\b').firstMatch(lower);
+  if (match == null) return null;
+  final slug = match.group(0)!;
+  if (slug.length < 5) return null;
+  if (deskApps.any((app) => app.slug == slug || app.phrases.contains(slug))) {
+    return null;
+  }
+  const ordinary = {
+    'well-known',
+    'non-empty',
+    'follow-up',
+    'long-term',
+    'real-time',
+    'built-in',
+    'high-level',
+    'day-to-day',
+    'e-mail',
+  };
+  if (ordinary.contains(slug)) return null;
+  return slug;
 }
 
 /// Runs [book] in supersteps. Independent nodes share a wave.

@@ -1,4 +1,5 @@
-const WRITE = /\b(create|send|delete|update|post|write|comment|close|merge|push)\b/i;
+const WRITE =
+  /\b(create|send|delete|update|post|write|comment|close|merge|push|reply|draft|book|reschedule|invite)\b|\b(schedule|move)\s+(a|an|the|this|it|me|my)\b/i;
 
 function methodOf(action) {
   return String(action?.method || "GET").toUpperCase();

@@ -122,7 +122,8 @@ void main() {
     expect(prompt, contains('computer'));
     expect(prompt, contains('cred_'));
     expect(prompt, contains('did not return'));
-    expect(prompt, contains('able to return'));
+    expect(prompt, contains('Do not describe the tool'));
+    expect(prompt, isNot(contains('able to return')));
   });
 
   test('a printed tool call is not a sentence', () {

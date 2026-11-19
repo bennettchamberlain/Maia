@@ -10,6 +10,7 @@ class ChatTurnBenchCase {
     this.noTool = false,
     this.toolsBefore = const [],
     this.mustNotTool = const [],
+    this.toolTextMustNotInclude = const [],
   });
 
   final String id;
@@ -27,7 +28,14 @@ class ChatTurnBenchCase {
   /// Tools that fail the case when the turn calls them.
   final List<String> mustNotTool;
 
-  String? checkReply(String reply, {Iterable<String> toolNames = const []}) {
+  /// Substrings that must be absent from the joined tool results.
+  final List<String> toolTextMustNotInclude;
+
+  String? checkReply(
+    String reply, {
+    Iterable<String> toolNames = const [],
+    String toolText = '',
+  }) {
     final text = reply.trim();
     final names = toolNames.toList();
     if (exact != null && text != exact) {
@@ -59,6 +67,12 @@ class ChatTurnBenchCase {
       final want = toolsBefore.join(' then ');
       return 'tools ${names.join(", ")} did not follow $want';
     }
+    final shownTools = toolText.toLowerCase();
+    for (final needle in toolTextMustNotInclude) {
+      if (shownTools.contains(needle.toLowerCase())) {
+        return 'tool result must not contain "$needle"';
+      }
+    }
     return null;
   }
 }
@@ -81,37 +95,57 @@ const chatTurnBenchCases = <ChatTurnBenchCase>[
   ),
   ChatTurnBenchCase(
     id: 'quorinth',
-    prompt: 'What do you remember about the word quorinth? If memory has nothing, say you do not have it. Do not search the web.',
+    prompt:
+        'What do you remember about the word quorinth? '
+        'If memory has nothing, say you do not have it. '
+        'Do not search the web.',
     mustInclude: ['quorinth', 'do not have'],
     mustNotInclude: ['what would you like', 'action_id'],
     mustNotTool: ['web_search', 'url_read', 'computer'],
+    toolTextMustNotInclude: ['oauth', 'supabase'],
   ),
   ChatTurnBenchCase(
-    id: 'capability',
-    prompt: 'The GitHub read did not return. Say what that tool is able to return, and say you do not have the account. Do not invent a login or a repository.',
-    mustInclude: ['able', 'do not have'],
+    id: 'github-login',
+    prompt:
+        'What is my GitHub login? If the read returns a repository, '
+        'name one. If it does not return, say you do not have it. '
+        'Do not describe the tool.',
     mustNotInclude: [
+      'able to',
+      'the connector can',
       'action_id',
       'conn_mod',
-      'Call connector',
       'what would you like',
+      'call connector',
     ],
     toolsBefore: ['memory_search', 'connector'],
-    mustNotTool: ['web_search', 'computer'],
+    mustNotTool: ['web_search', 'url_read', 'computer'],
   ),
   ChatTurnBenchCase(
-    id: 'one-read',
-    prompt: 'Read my GitHub account once. If the read fails, do not search the web and do not try again. Say that you do not have the account.',
-    mustInclude: ['github', 'do not have'],
-    mustNotInclude: ['action_id', 'conn_mod', 'what would you like'],
+    id: 'gmail-latest',
+    prompt:
+        'Who sent my latest Gmail, and what is the subject? '
+        'If the read does not return, say you do not have it. '
+        'Do not describe the tool.',
+    mustNotInclude: [
+      'able to',
+      'the connector can',
+      'action_id',
+      'conn_mod',
+      'what would you like',
+      'which of these',
+    ],
     toolsBefore: ['memory_search', 'connector'],
     mustNotTool: ['web_search', 'url_read', 'computer'],
   ),
   ChatTurnBenchCase(
     id: 'two-apps',
-    prompt: 'What is my GitHub login, and who sent my latest Gmail? They do not depend on each other. For whichever call does not return, say you do not have that one. Do not invent it.',
-    mustInclude: ['github', 'gmail', 'do not have'],
+    prompt:
+        'What is my GitHub login, and who sent my latest Gmail? '
+        'For whichever call does not return, say you do not have that one.',
     mustNotInclude: [
+      'able to',
+      'the connector can',
       'action_id',
       'conn_mod',
       'Call connector',

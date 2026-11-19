@@ -1,14 +1,23 @@
+import 'package:maia_app/ui/glass.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 /// Bridges leftover Material widgets (scaffold, ink, refresh) onto the
 /// shadcn slate palette. [ShadApp] does not install a `material_ui` theme.
-Widget maiaMaterialTheme(BuildContext context, Widget? child) {
+///
+/// [field] leaves the scaffold clear so the mark shows in the gaps.
+Widget maiaMaterialTheme(
+  BuildContext context,
+  Widget? child, {
+  bool field = false,
+}) {
   final scheme = ShadTheme.of(context).colorScheme;
+  final paper = field ? Colors.transparent : scheme.background;
   return Theme(
     data: ThemeData(
       useMaterial3: true,
-      scaffoldBackgroundColor: scheme.background,
+      scaffoldBackgroundColor: paper,
+      canvasColor: paper,
       dividerColor: scheme.border,
       colorScheme: ColorScheme.light(
         primary: scheme.primary,
@@ -83,11 +92,22 @@ class MaiaScrollFill extends StatelessWidget {
 /// Header and footer scroll inside a capped slice when the window is too
 /// short for them, so a small desktop window cannot overflow the column.
 class MaiaPane extends StatelessWidget {
-  const new({required this.body, super.key, this.header, this.footer});
+  const new({
+    required this.body,
+    super.key,
+    this.header,
+    this.footer,
+    this.plate = true,
+  });
 
   final Widget? header;
   final Widget body;
   final Widget? footer;
+
+  /// When the field is on, the body sits on a dense glass sheet and the
+  /// header and footer sit on a thinner one. A sidebar passes false
+  /// because it already has its own glass.
+  final bool plate;
 
   @override
   Widget build(BuildContext context) {
@@ -97,10 +117,31 @@ class MaiaPane extends StatelessWidget {
           return const SizedBox.shrink();
         }
         final cap = constraints.maxHeight * 0.45;
+        final field = watchField(context);
         Widget chrome(Widget child) {
-          return ConstrainedBox(
+          final capped = ConstrainedBox(
             constraints: BoxConstraints(maxHeight: cap),
             child: SingleChildScrollView(child: child),
+          );
+          if (!field || !plate) return capped;
+          return MaiaGlass(
+            opacity: 0.52,
+            sigma: 16,
+            border: false,
+            child: capped,
+          );
+        }
+
+        Widget sheet(Widget child) {
+          if (!field || !plate) return child;
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+            child: MaiaGlass(
+              opacity: 0.84,
+              sigma: 20,
+              radius: 18,
+              child: child,
+            ),
           );
         }
 
@@ -109,7 +150,7 @@ class MaiaPane extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (header != null) chrome(header!),
-              Expanded(child: body),
+              Expanded(child: sheet(body)),
               if (footer != null) chrome(footer!),
             ],
           ),
@@ -136,9 +177,10 @@ class MaiaHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
+    final field = watchField(context);
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: theme.colorScheme.background,
+        color: field ? Colors.transparent : theme.colorScheme.background,
         border: Border(bottom: BorderSide(color: theme.colorScheme.border)),
       ),
       child: SafeArea(

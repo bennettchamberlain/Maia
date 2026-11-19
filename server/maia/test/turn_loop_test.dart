@@ -272,6 +272,7 @@ void main() {
       'memory_search',
       'connector',
     ]);
+    expect(turn.tools.first['result'], contains('no memories'));
     expect(turn.text, contains('do not have'));
   });
 
@@ -347,6 +348,7 @@ void main() {
       ];
       expect(systems.join('\n'), contains('did not return'));
       expect(systems.join('\n'), contains('do not have'));
+      expect(systems.join('\n'), isNot(contains('able to')));
       expect(body['tools'], isNull);
       return _say(
         'GitHub is able to return a login. I do not have the account.',

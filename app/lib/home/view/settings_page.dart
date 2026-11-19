@@ -1,3 +1,5 @@
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:maia_app/config/field_cubit.dart';
 import 'package:maia_app/ui/chrome.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -11,6 +13,7 @@ class SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
+    final field = context.watch<FieldCubit>().state;
     return Scaffold(
       body: MaiaPane(
         header: MaiaHeader(
@@ -23,6 +26,15 @@ class SettingsPage extends StatelessWidget {
         body: ListView(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
           children: [
+            ShadCheckbox(
+              value: field,
+              onChanged: (value) => context.read<FieldCubit>().setOn(value),
+              label: const Text('Field behind the app'),
+              sublabel: const Text(
+                'The mark plays in the open. Glass covers what you read.',
+              ),
+            ),
+            const SizedBox(height: 20),
             Row(
               children: [
                 Text('Storage', style: theme.textTheme.h4),
@@ -62,11 +74,7 @@ class SettingsPage extends StatelessWidget {
 }
 
 class _StorageRow extends StatelessWidget {
-  const new({
-    required this.label,
-    required this.detail,
-    required this.value,
-  });
+  const new({required this.label, required this.detail, required this.value});
 
   final String label;
   final String detail;

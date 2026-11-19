@@ -1,12 +1,13 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:maia_api_client/maia_api_client.dart';
 import 'package:maia_app/config/app_config.dart';
 import 'package:maia_app/config/server_cubit.dart';
 import 'package:maia_app/session/session.dart';
 import 'package:maia_app/sign_in/sign_in.dart';
 import 'package:maia_app/ui/chrome.dart';
+import 'package:maia_app/ui/glass.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 class SignInPage extends StatelessWidget {
@@ -27,6 +28,39 @@ class SignInView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final muted = ShadTheme.of(context).textTheme.muted;
+    final field = watchField(context);
+    final card = ShadCard(
+      title: const Text('Maia'),
+      description: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Memento mori.',
+            style: muted.copyWith(fontStyle: FontStyle.italic),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Twenty-four hours. That is the whole day. '
+            'This machine remembers so you can spend what is left.',
+            style: muted,
+          ),
+        ],
+      ),
+      child: const Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _ServerField(),
+          SizedBox(height: 12),
+          _HandleField(),
+          SizedBox(height: 12),
+          _PasswordField(),
+          SizedBox(height: 16),
+          _ErrorText(),
+          _SubmitButton(),
+        ],
+      ),
+    );
     return BlocListener<SignInBloc, SignInState>(
       listenWhen: (p, c) => c.status == SignInStatus.success,
       listener: (context, state) {
@@ -37,38 +71,9 @@ class SignInView extends StatelessWidget {
           child: MaiaScrollFill(
             padding: const EdgeInsets.all(24),
             maxWidth: 400,
-            child: ShadCard(
-              title: const Text('Maia'),
-              description: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Memento mori.',
-                    style: muted.copyWith(fontStyle: FontStyle.italic),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Twenty-four hours. That is the whole day. '
-                    'This machine remembers so you can spend what is left.',
-                    style: muted,
-                  ),
-                ],
-              ),
-              child: const Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _ServerField(),
-                  SizedBox(height: 12),
-                  _HandleField(),
-                  SizedBox(height: 12),
-                  _PasswordField(),
-                  SizedBox(height: 16),
-                  _ErrorText(),
-                  _SubmitButton(),
-                ],
-              ),
-            ),
+            child: field
+                ? MaiaGlass(opacity: 0.9, sigma: 22, radius: 16, child: card)
+                : card,
           ),
         ),
       ),
@@ -108,7 +113,7 @@ class _ServerFieldState extends State<_ServerField> {
           autocorrect: false,
           keyboardType: TextInputType.url,
           leading: const Icon(LucideIcons.server, size: 16),
-          placeholder: Text(AppConfig.apiUrl),
+          placeholder: const Text(AppConfig.apiUrl),
           onChanged: (v) => context.read<ServerCubit>().set(v),
         ),
         const SizedBox(height: 6),

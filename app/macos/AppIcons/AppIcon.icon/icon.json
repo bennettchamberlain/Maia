@@ -10,7 +10,7 @@
   ],
   "groups": [
     {
-      "blur-material": 0.5,
+      "blur-material": 0,
       "layers": [
         {
           "fill-specializations": [
@@ -28,7 +28,7 @@
             }
           ],
           "glass": false,
-          "image-name": "Logo.svg",
+          "image-name": "Field.png",
           "name": "Logo",
           "position": {
             "scale": 1,
@@ -40,14 +40,15 @@
         }
       ],
       "lighting": "individual",
+      "name": "Logo",
       "shadow": {
         "kind": "neutral",
-        "opacity": 0.5
+        "opacity": 0
       },
-      "specular": true,
+      "specular": false,
       "translucency": {
-        "enabled": true,
-        "value": 0.5
+        "enabled": false,
+        "value": 0
       }
     }
   ],

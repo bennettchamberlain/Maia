@@ -8,26 +8,50 @@ void main() {
     expect(c.checkReply('Checkpoint '), isNotNull);
   });
 
-  test('a failed github read must stay inside the graph', () {
-    final c = chatTurnBenchCases.firstWhere((c) => c.id == 'capability');
+  test('a github read must call the account and not describe the tool', () {
+    final c = chatTurnBenchCases.firstWhere((c) => c.id == 'github-login');
     expect(
       c.checkReply(
-        'GitHub is able to return a login. I do not have the account.',
+        'Your login is bennettchamberlain. One repository is maia.',
         toolNames: ['memory_search', 'connector'],
       ),
       isNull,
     );
     expect(
       c.checkReply(
-        'GitHub is able to return a login. I do not have the account.',
-        toolNames: ['web_search'],
+        'I do not have the GitHub account.',
+        toolNames: ['memory_search', 'connector'],
+      ),
+      isNull,
+    );
+    expect(
+      c.checkReply(
+        'The connector can return a login. I do not have the account.',
+        toolNames: ['memory_search', 'connector'],
       ),
       isNotNull,
     );
     expect(
+      c.checkReply('I do not have the account.', toolNames: ['memory_search']),
+      isNotNull,
+    );
+  });
+
+  test('quorinth memory must not be the nearest mailbox', () {
+    final c = chatTurnBenchCases.firstWhere((c) => c.id == 'quorinth');
+    expect(
       c.checkReply(
-        'Call connector for action_id conn_mod. I do not have it.',
-        toolNames: ['memory_search', 'connector'],
+        'I do not have any memories of the word quorinth.',
+        toolNames: ['memory_search'],
+        toolText: '{"type":"text","text":"no memories"}',
+      ),
+      isNull,
+    );
+    expect(
+      c.checkReply(
+        'I do not have any memories of the word quorinth.',
+        toolNames: ['memory_search'],
+        toolText: 'OAuth Application Approval from Supabase',
       ),
       isNotNull,
     );
@@ -37,7 +61,7 @@ void main() {
     final c = chatTurnBenchCases.firstWhere((c) => c.id == 'two-apps');
     expect(
       c.checkReply(
-        'I do not have GitHub or Gmail.',
+        'Your GitHub login is ada. The latest Gmail is from Lin.',
         toolNames: ['memory_search', 'connector', 'connector'],
       ),
       isNull,

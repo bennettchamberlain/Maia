@@ -13,6 +13,17 @@ test("a read question skips writes", () => {
   assert.deepEqual(ranked.map((action) => action._id), ["list"]);
 });
 
+test("scheduling keeps the write", () => {
+  const ranked = rankActions(
+    [
+      { _id: "create", method: "POST" },
+      { _id: "list", method: "GET" },
+    ],
+    "schedule a meeting tomorrow",
+  );
+  assert.equal(ranked[0]._id, "create");
+});
+
 test("a write question keeps the write", () => {
   const ranked = rankActions(
     [

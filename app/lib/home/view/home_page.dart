@@ -1,7 +1,6 @@
 import 'dart:math' as math;
 
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:maia_app/chat/chat.dart';
 import 'package:maia_app/chat/view/chat_bench_strip.dart';
 import 'package:maia_app/home/view/settings_page.dart';
@@ -10,7 +9,9 @@ import 'package:maia_app/memory/memory.dart';
 import 'package:maia_app/session/session.dart';
 import 'package:maia_app/tools/tools.dart';
 import 'package:maia_app/ui/chrome.dart';
+import 'package:maia_app/ui/glass.dart';
 import 'package:maia_models/maia_models.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 /// Shell with one destination per feature. Chat, memory and jobs are live;
@@ -125,38 +126,51 @@ class _Sidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        border: Border(right: BorderSide(color: theme.colorScheme.border)),
-      ),
-      child: SizedBox(
-        width: 220,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: MaiaPane(
-            header: Text('Maia', style: theme.textTheme.small),
-            body: ListView(
-              padding: const EdgeInsets.only(top: 16),
-              children: [
-                for (var i = 0; i < _HomePageState._destinations.length; i++)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: _NavButton(
-                      icon: _HomePageState._destinations[i].icon,
-                      label: _HomePageState._destinations[i].label,
-                      selected: !settings && index == i,
-                      onPressed: () => onSelected(i),
-                    ),
+    final field = watchField(context);
+    final column = SizedBox(
+      width: 220,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: MaiaPane(
+          plate: false,
+          header: Text('Maia', style: theme.textTheme.small),
+          body: ListView(
+            padding: const EdgeInsets.only(top: 16),
+            children: [
+              for (var i = 0; i < _HomePageState._destinations.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: _NavButton(
+                    icon: _HomePageState._destinations[i].icon,
+                    label: _HomePageState._destinations[i].label,
+                    selected: !settings && index == i,
+                    onPressed: () => onSelected(i),
                   ),
-              ],
-            ),
-            footer: _UserMenu(
-              person: person,
-              settings: settings,
-              onSettings: onSettings,
-            ),
+                ),
+            ],
+          ),
+          footer: _UserMenu(
+            person: person,
+            settings: settings,
+            onSettings: onSettings,
           ),
         ),
+      ),
+    );
+    final border = Border(right: BorderSide(color: theme.colorScheme.border));
+    if (!field) {
+      return DecoratedBox(
+        decoration: BoxDecoration(border: border),
+        child: column,
+      );
+    }
+    return MaiaGlass(
+      opacity: 0.5,
+      sigma: 16,
+      border: false,
+      child: DecoratedBox(
+        decoration: BoxDecoration(border: border),
+        child: column,
       ),
     );
   }
@@ -171,9 +185,10 @@ class _BottomNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    return DecoratedBox(
+    final field = watchField(context);
+    final bar = DecoratedBox(
       decoration: BoxDecoration(
-        color: theme.colorScheme.background,
+        color: field ? Colors.transparent : theme.colorScheme.background,
         border: Border(top: BorderSide(color: theme.colorScheme.border)),
       ),
       child: SafeArea(
@@ -215,6 +230,8 @@ class _BottomNav extends StatelessWidget {
         ),
       ),
     );
+    if (!field) return bar;
+    return MaiaGlass(opacity: 0.62, border: false, child: bar);
   }
 }
 

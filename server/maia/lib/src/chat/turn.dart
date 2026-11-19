@@ -28,6 +28,8 @@ runChatTurn({
   var corrected = false;
   var memoryChecked = false;
   var graphDone = false;
+  var followUp = false;
+  var missing = false;
   String? lastKey;
   final opening = _latestUser(messages);
   final tools = toolbox;
@@ -42,19 +44,34 @@ runChatTurn({
     );
     _commitGraph(messages, used, emit, checkpoint);
     messages.add({'role': 'system', 'content': checkpoint.note});
-    graphDone = true;
+    missing = checkpoint.needsAnotherWay;
+    followUp = asksToChange(opening) || missing;
+    graphDone = !followUp;
     memoryChecked = true;
   }
 
   for (var round = 0; round < chatStepBudget; round++) {
     final hostTools = toolbox != null && !harness.keepsOwnHistory;
-    final offered = hostTools && !graphDone ? toolbox.definitions : null;
+    final offered = !hostTools || graphDone
+        ? null
+        : followUp
+        ? [
+            for (final tool in toolbox.definitions)
+              if (tool['function'] is Map &&
+                  (tool['function'] as Map)['name'] == 'connector')
+                tool,
+          ]
+        : toolbox.definitions;
     final names = offered == null ? const <String>[] : toolNames(offered);
     final request = [for (final m in messages) Map<String, dynamic>.from(m)];
     if (hostTools && used.isNotEmpty) {
       request.add({
         'role': 'system',
-        'content': graphDone ? graphAnswerCue : answerCue,
+        'content': followUp
+            ? (missing ? graphMissingCue : graphChangeCue)
+            : graphDone
+            ? graphAnswerCue
+            : answerCue,
       });
     }
     final calls = <AgentToolCall>[];

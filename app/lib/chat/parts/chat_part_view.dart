@@ -5,6 +5,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:maia_app/chat/bloc/chat_bloc.dart';
+import 'package:maia_app/chat/memory_match.dart';
 import 'package:maia_app/chat/parts/chat_part.dart';
 import 'package:maia_app/graph/ontology_view.dart';
 import 'package:maia_app/chat/parts/you_search.dart';
@@ -24,19 +25,22 @@ class ChatMessageBody extends StatelessWidget {
     required this.foreground,
     this.tools = const [],
     this.streaming = false,
-    this.contextMenuBuilder,
+    this.ask = '',
   });
 
   final String text;
   final Color foreground;
   final List<ChatToolCall> tools;
   final bool streaming;
-  final Widget Function(BuildContext, EditableTextState)? contextMenuBuilder;
+
+  /// The user message this reply is answering. Memory cards that do not
+  /// contain that ask are not shown.
+  final String ask;
 
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    final segments = parseChatSegments(text, tools: tools);
+    final segments = _shown(parseChatSegments(text, tools: tools), ask);
     if (segments.isEmpty && streaming) {
       return const SizedBox(width: 72, child: ShadProgress(minHeight: 6));
     }
@@ -56,11 +60,9 @@ class ChatMessageBody extends StatelessWidget {
               children: [
                 for (final segment in segments) ...[
                   switch (segment) {
-                    ChatProse(:final text) => SelectableText(
+                    ChatProse(:final text) => Text(
                       _plain(text),
                       style: theme.textTheme.p.copyWith(color: foreground),
-                      textWidthBasis: TextWidthBasis.parent,
-                      contextMenuBuilder: contextMenuBuilder,
                     ),
                     ChatBlock(:final part) => ChatPartView(part),
                     ChatBlockPending() => const SizedBox(
@@ -85,6 +87,23 @@ class ChatMessageBody extends StatelessWidget {
       },
     );
   }
+}
+
+List<ChatSegment> _shown(List<ChatSegment> segments, String ask) {
+  final shown = <ChatSegment>[];
+  for (final segment in segments) {
+    switch (segment) {
+      case ChatProse(:final text):
+        final clean = replyWithoutToolLecture(text);
+        if (clean.trim().isNotEmpty) shown.add(ChatProse(clean));
+      case ChatBlock(:final part):
+        final trimmed = withoutUnrelatedMemory(part, ask);
+        if (trimmed != null) shown.add(ChatBlock(trimmed));
+      case ChatBlockPending():
+        shown.add(segment);
+    }
+  }
+  return shown;
 }
 
 class ChatPartView extends StatelessWidget {
@@ -244,54 +263,57 @@ class _MapView extends StatelessWidget {
     final points = [
       for (final marker in markers) LatLng(marker.lat, marker.lng),
     ];
-    return SizedBox(
-      height: 220,
-      child: ClipRRect(
-        borderRadius: const BorderRadius.all(Radius.circular(12)),
-        child: Stack(
-          children: [
-            FlutterMap(
-              options: MapOptions(
-                initialCenter: points.first,
-                initialZoom: 13,
-                initialCameraFit: points.length < 2
-                    ? null
-                    : CameraFit.bounds(
-                        bounds: LatLngBounds.fromPoints(points),
-                        padding: const EdgeInsets.all(36),
-                        maxZoom: 14,
-                      ),
+    return SelectionContainer.disabled(
+      child: SizedBox(
+        height: 220,
+        child: ClipRRect(
+          borderRadius: const BorderRadius.all(Radius.circular(12)),
+          child: Stack(
+            children: [
+              FlutterMap(
+                options: MapOptions(
+                  initialCenter: points.first,
+                  initialZoom: 13,
+                  initialCameraFit: points.length < 2
+                      ? null
+                      : CameraFit.bounds(
+                          bounds: LatLngBounds.fromPoints(points),
+                          padding: const EdgeInsets.all(36),
+                          maxZoom: 14,
+                        ),
+                ),
+                children: [
+                  TileLayer(
+                    urlTemplate:
+                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'com.maia.app',
+                  ),
+                  MarkerLayer(
+                    markers: [
+                      for (final marker in markers)
+                        Marker(
+                          point: LatLng(marker.lat, marker.lng),
+                          width: 140,
+                          height: 48,
+                          alignment: Alignment.topCenter,
+                          child: _MapPin(marker.title),
+                        ),
+                    ],
+                  ),
+                ],
               ),
-              children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.maia.app',
-                ),
-                MarkerLayer(
-                  markers: [
-                    for (final marker in markers)
-                      Marker(
-                        point: LatLng(marker.lat, marker.lng),
-                        width: 140,
-                        height: 48,
-                        alignment: Alignment.topCenter,
-                        child: _MapPin(marker.title),
-                      ),
-                  ],
-                ),
-              ],
-            ),
-            Positioned(
-              right: 6,
-              bottom: 4,
-              child: Text(
-                '© OpenStreetMap',
-                style: theme.textTheme.small.copyWith(
-                  color: theme.colorScheme.foreground,
+              Positioned(
+                right: 6,
+                bottom: 4,
+                child: Text(
+                  '© OpenStreetMap',
+                  style: theme.textTheme.small.copyWith(
+                    color: theme.colorScheme.foreground,
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:maia_api_client/maia_api_client.dart';
 import 'package:maia_app/chat/attach.dart';
@@ -128,6 +129,7 @@ class _ConversationState extends State<_Conversation> {
   final _scroll = ScrollController();
   var _picking = false;
   String? _notice;
+  String _selected = '';
 
   @override
   void dispose() {
@@ -250,35 +252,67 @@ class _ConversationState extends State<_Conversation> {
               ),
               body: state.status == ChatStatus.loading && state.messages.isEmpty
                   ? const MaiaSkeleton()
-                  : ListView(
-                      controller: _scroll,
-                      padding: const EdgeInsets.all(12),
-                      children: [
-                        if (state.messages.isEmpty && !state.sending)
-                          const _Hint(),
-                        for (final m in state.messages) _Bubble.message(m),
-                        if (state.sending)
-                          _Bubble.draft(
-                            state.draftReply,
-                            tools: state.draftTools,
-                          ),
-                        Builder(
-                          builder: (context) {
-                            final line = context.select<VoiceCubit, String>((
-                              v,
-                            ) {
-                              final heard = v.state.liveLine.trim();
-                              if (heard.isEmpty) return '';
-                              if (v.state.capture != VoiceCapture.transcribe) {
-                                return '';
-                              }
-                              return quotedSpeech(heard);
-                            });
-                            if (line.isEmpty) return const SizedBox.shrink();
-                            return _Bubble.live(line);
-                          },
+                  : Shortcuts(
+                      shortcuts: const <ShortcutActivator, Intent>{
+                        SingleActivator(LogicalKeyboardKey.keyA, control: true):
+                            SelectAllTextIntent(SelectionChangedCause.keyboard),
+                        SingleActivator(LogicalKeyboardKey.keyA, meta: true):
+                            SelectAllTextIntent(SelectionChangedCause.keyboard),
+                      },
+                      child: SelectionArea(
+                        onSelectionChanged: (content) {
+                          _selected = content?.plainText ?? '';
+                        },
+                        contextMenuBuilder: (context, region) {
+                          return maiaRegionMenu(
+                            context,
+                            region,
+                            selected: _selected,
+                            messageId: _messageFor(state.messages, _selected),
+                          );
+                        },
+                        child: ListView(
+                          controller: _scroll,
+                          padding: const EdgeInsets.all(12),
+                          children: [
+                            if (state.messages.isEmpty && !state.sending)
+                              const _Hint(),
+                            for (var i = 0; i < state.messages.length; i++)
+                              _Bubble.message(
+                                state.messages[i],
+                                ask: _askBefore(state.messages, i),
+                              ),
+                            if (state.sending)
+                              _Bubble.draft(
+                                state.draftReply,
+                                tools: state.draftTools,
+                                ask: _askBefore(
+                                  state.messages,
+                                  state.messages.length,
+                                ),
+                              ),
+                            Builder(
+                              builder: (context) {
+                                final line = context.select<VoiceCubit, String>(
+                                  (v) {
+                                    final heard = v.state.liveLine.trim();
+                                    if (heard.isEmpty) return '';
+                                    if (v.state.capture !=
+                                        VoiceCapture.transcribe) {
+                                      return '';
+                                    }
+                                    return quotedSpeech(heard);
+                                  },
+                                );
+                                if (line.isEmpty) {
+                                  return const SizedBox.shrink();
+                                }
+                                return _Bubble.live(line);
+                              },
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
               footer: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -472,15 +506,38 @@ class _TalkingBubble extends StatelessWidget {
   }
 }
 
+String _askBefore(List<ChatMessage> messages, int index) {
+  for (var i = index - 1; i >= 0; i--) {
+    if (messages[i].role == 'user') return messages[i].content;
+  }
+  return '';
+}
+
+/// The one message that wholly contains [selected], when there is one.
+String? _messageFor(List<ChatMessage> messages, String selected) {
+  final needle = selected.trim();
+  if (needle.length < 2) return null;
+  String? id;
+  for (final message in messages) {
+    final content = message.content.trim();
+    if (content.isEmpty) continue;
+    final inside = content.contains(needle) || needle.contains(content);
+    if (!inside) continue;
+    if (id != null) return null;
+    id = message.id;
+  }
+  return id;
+}
+
 class _Bubble extends StatelessWidget {
-  new message(ChatMessage m)
+  new message(ChatMessage m, {this.ask = ''})
     : messageId = m.id,
       role = m.role,
       text = m.content,
       tools = m.toolCalls ?? const [],
       streaming = false;
 
-  const new draft(this.text, {this.tools = const []})
+  const new draft(this.text, {this.tools = const [], this.ask = ''})
     : messageId = null,
       role = 'assistant',
       streaming = true;
@@ -489,11 +546,13 @@ class _Bubble extends StatelessWidget {
     : messageId = null,
       role = 'quote',
       tools = const [],
+      ask = '',
       streaming = true;
 
   final String? messageId;
   final String role;
   final String text;
+  final String ask;
   final List<ChatToolCall> tools;
   final bool streaming;
 
@@ -505,16 +564,7 @@ class _Bubble extends StatelessWidget {
         alignment: Alignment.centerLeft,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 6),
-          child: SelectableText(
-            text,
-            style: theme.textTheme.p,
-            contextMenuBuilder: (context, state) => maiaTextMenu(
-              context,
-              state,
-              fallbackText: text,
-              messageId: messageId,
-            ),
-          ),
+          child: Text(text, style: theme.textTheme.p),
         ),
       );
     }
@@ -567,24 +617,13 @@ class _Bubble extends StatelessWidget {
                   ? FileAwareText(
                       text: text,
                       style: theme.textTheme.p.copyWith(color: foreground),
-                      contextMenuBuilder: (context, state) => maiaTextMenu(
-                        context,
-                        state,
-                        fallbackText: text,
-                        messageId: messageId,
-                      ),
                     )
                   : ChatMessageBody(
                       text: text,
                       foreground: foreground,
                       tools: tools,
                       streaming: streaming,
-                      contextMenuBuilder: (context, state) => maiaTextMenu(
-                        context,
-                        state,
-                        fallbackText: text,
-                        messageId: messageId,
-                      ),
+                      ask: ask,
                     ),
             ),
           ),

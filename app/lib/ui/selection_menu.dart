@@ -25,6 +25,70 @@ void maiaSelectionHaptic(TargetPlatform platform) {
   HapticFeedback.mediumImpact();
 }
 
+/// Copy, select all, and file actions for one conversation selection.
+Widget maiaRegionMenu(
+  BuildContext context,
+  SelectableRegionState region, {
+  required String selected,
+  String? messageId,
+}) {
+  maiaSelectionHaptic(Theme.of(context).platform);
+  final text = selected.trim();
+  return AdaptiveTextSelectionToolbar.buttonItems(
+    anchors: region.contextMenuAnchors,
+    buttonItems: [
+      ...region.contextMenuButtonItems,
+      if (messageId != null && text.isNotEmpty)
+        ContextMenuButtonItem(
+          label: 'Fork into new chat',
+          onPressed: () {
+            ContextMenuController.removeAny();
+            final session = context.read<ChatBloc>().state.open;
+            if (session == null) return;
+            context.read<ChatBloc>().add(
+              ChatForkRequested(
+                sessionId: session.id,
+                messageId: messageId,
+                selection: text,
+              ),
+            );
+          },
+        ),
+      if (text.isNotEmpty)
+        ContextMenuButtonItem(
+          label: 'Add to file',
+          onPressed: () {
+            ContextMenuController.removeAny();
+            final session = context.read<ChatBloc>().state.open;
+            unawaited(
+              _addToFile(
+                context,
+                text,
+                sessionId: session?.id,
+                messageId: messageId,
+              ),
+            );
+          },
+        ),
+      if (text.isNotEmpty)
+        ContextMenuButtonItem(
+          label: 'New file',
+          onPressed: () {
+            ContextMenuController.removeAny();
+            final session = context.read<ChatBloc>().state.open;
+            context.read<ChatBloc>().add(
+              ChatFileSaved(
+                text: text,
+                sessionId: session?.id,
+                messageId: messageId,
+              ),
+            );
+          },
+        ),
+    ],
+  );
+}
+
 /// The text toolbar plus fork and file actions.
 Widget maiaTextMenu(
   BuildContext context,

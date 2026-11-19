@@ -112,8 +112,16 @@ class _ChatBenchStripState extends State<ChatBenchStrip> {
         final last = done.messages.last;
         final stored = last.toolCalls?.map((call) => call.name) ?? const [];
         final names = stored.isEmpty ? tools : stored;
+        final calls = last.toolCalls;
+        final toolText = calls == null
+            ? ''
+            : [for (final call in calls) call.result ?? ''].join('\n');
         final note = last.role == 'assistant'
-            ? item.checkReply(last.content, toolNames: names)
+            ? item.checkReply(
+                last.content,
+                toolNames: names,
+                toolText: toolText,
+              )
             : (done.error ?? 'no reply');
         if (mounted) setState(() => _notes[item.id] = note);
       } on Object catch (e) {

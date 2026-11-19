@@ -1197,7 +1197,11 @@ class MaiaApp {
     if (status >= 400 || map['error'] != null) {
       final error = '${map['error'] ?? 'failed'}';
       final text = error == 'reconnect_required'
-          ? '$platform needs a reconnect in One.'
+          ? '$platform needs a reconnect on the Connectors screen.'
+          : error.startsWith('no grant')
+          ? '$platform is not connected. Tell the person to connect it '
+                'on the Connectors screen. If another connected app could '
+                'hold this, try that one. Do not invent the page.'
           : 'One could not read $platform ($error).';
       return jsonEncode({'type': 'text', 'text': text});
     }

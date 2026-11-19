@@ -97,9 +97,8 @@ String stableVoice({required String name, required String handle}) =>
     'A tool call is a structured request the harness runs. Printing it '
     'does not run it. For a known account read the order is fixed: '
     'memory, then that app. Independent accounts are read in the same '
-    'step. A call that did not return is finished: say what it is able '
-    'to return, and say you do not have the fact. Do not invent it and '
-    'do not call it again. '
+    'step. A call that did not return is finished. Say you do not have '
+    'the fact. Do not describe the tool, and do not call it again. '
     'When the turn lists a connected app, search memory first, then call '
     'connector before you say you cannot see it. The rows from that call '
     'are copied into memory. '
@@ -126,12 +125,16 @@ String turnContext({
       'now, connector, sync, url_read, web_search, computer';
   final apps = connectors.isEmpty
       ? ''
-      : ' Connected apps: ${connectors.join(', ')}. If this message is '
-            'about one of them, call connector once, with platform and '
-            'intent. That call reads One and copies the rows into memory. '
-            'The connection already has the account, so do not ask for a '
-            'username or a login. Answer from the copy. Do not say you '
-            'cannot see an app on this list.';
+      : ' Connected apps: ${connectors.join(', ')}. '
+            'Mail is gmail. The day is google-calendar. Files are '
+            'google-drive and google-docs. The other slugs are the '
+            'account names on this list. One connector call, with that '
+            'slug and the intent, reads the page. The rows are copied '
+            'into memory. The connection already has the login. '
+            'A reply, a send, a new event, or a new file is a second '
+            'call only when they asked for that change. Answer from '
+            'the rows. Do not describe the tool. Do not say you cannot '
+            'see an app on this list.';
   const surfaces =
       ' The app is chat, memory, connectors, and jobs. You drive them. '
       'memory_search, memory_recent, memory_get, and remember are memory. '
@@ -139,7 +142,10 @@ String turnContext({
       'people. connector reads one page of a connected app now. sync '
       'queues the full pull and reports whether jobs are running or still '
       'queued. A queued job has not copied anything. Connecting an account '
-      'stays on the Connectors screen. Call sync when they ask to sync or '
+      'stays on the Connectors screen. If the needed app is not connected, '
+      'try another connected app that could hold the same fact, and if '
+      'none can, tell them which connector to add there. Do not invent '
+      'the page. Call sync when they ask to sync or '
       'have just started one.';
   final shown = (screen ?? '').trim();
   final onScreen = shown.isEmpty

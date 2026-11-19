@@ -5,6 +5,7 @@ import 'package:maia_api_client/maia_api_client.dart';
 import 'package:maia_app/app/bloc/app_bloc.dart';
 import 'package:maia_app/chat/voice_cubit.dart';
 import 'package:maia_app/config/chat_settings_cubit.dart';
+import 'package:maia_app/config/field_cubit.dart';
 import 'package:maia_app/config/server_cubit.dart';
 import 'package:maia_app/ghost/ghost_layer.dart';
 import 'package:maia_app/home/home.dart';
@@ -13,6 +14,8 @@ import 'package:maia_app/one/callback_forwarder.dart';
 import 'package:maia_app/session/session.dart';
 import 'package:maia_app/sign_in/sign_in.dart';
 import 'package:maia_app/ui/chrome.dart';
+import 'package:maia_app/ui/field_backdrop.dart';
+import 'package:maia_app/ui/glass.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -43,6 +46,7 @@ class App extends StatelessWidget {
         ),
         BlocProvider(create: (_) => ServerCubit(prefs: prefs)),
         BlocProvider(create: (_) => ChatSettingsCubit(prefs: prefs)),
+        BlocProvider(create: (_) => FieldCubit(prefs: prefs)),
       ],
       child: Builder(
         builder: (context) {
@@ -128,10 +132,30 @@ class AppView extends StatelessWidget {
           theme: Theme.of(context),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
-          builder: (context, child) => ShadAppBuilder(
-            builder: maiaMaterialTheme,
-            child: GhostLayer(child: child ?? const SizedBox.shrink()),
-          ),
+          builder: (context, child) {
+            final field = context.watch<FieldCubit>().state;
+            return ShadAppBuilder(
+              builder: (context, built) {
+                final themed = field
+                    ? ShadTheme(
+                        data: maiaFieldTheme(ShadTheme.of(context)),
+                        child: maiaMaterialTheme(context, built, field: true),
+                      )
+                    : maiaMaterialTheme(context, built);
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (field)
+                      const Positioned.fill(
+                        child: IgnorePointer(child: FieldBackdrop()),
+                      ),
+                    themed,
+                  ],
+                );
+              },
+              child: GhostLayer(child: child ?? const SizedBox.shrink()),
+            );
+          },
           home: switch (status) {
             SessionStatus.starting => const Scaffold(body: MaiaSkeleton()),
             SessionStatus.authenticated => const HomePage(),

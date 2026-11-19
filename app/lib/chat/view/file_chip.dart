@@ -5,12 +5,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 
 /// The name the user sees for a stored file, with a small preview.
 class FileChip extends StatelessWidget {
-  const new({
-    required this.file,
-    this.onRemove,
-    this.foreground,
-    super.key,
-  });
+  const new({required this.file, this.onRemove, this.foreground, super.key});
 
   final StoredChatFile file;
   final VoidCallback? onRemove;
@@ -58,16 +53,10 @@ class FileChip extends StatelessWidget {
 
 /// Renders a stored message: file tokens become chips, the path stays hidden.
 class FileAwareText extends StatelessWidget {
-  const new({
-    required this.text,
-    required this.style,
-    this.contextMenuBuilder,
-    super.key,
-  });
+  const new({required this.text, required this.style, super.key});
 
   final String text;
   final TextStyle style;
-  final Widget Function(BuildContext, EditableTextState)? contextMenuBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -84,10 +73,6 @@ class FileAwareText extends StatelessWidget {
           ),
         },
     ];
-    return SelectableText.rich(
-      TextSpan(style: style, children: spans),
-      textWidthBasis: TextWidthBasis.parent,
-      contextMenuBuilder: contextMenuBuilder,
-    );
+    return Text.rich(TextSpan(style: style, children: spans));
   }
 }

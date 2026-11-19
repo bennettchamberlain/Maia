@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:gel/gel.dart' as gel;
 import 'package:http/http.dart' as http;
 import 'package:maia_api/src/agent.dart';
+import 'package:maia_api/src/chat/graphs.dart';
 import 'package:maia_api/src/chat/senses.dart';
 
 /// Host tools the chat model can call. OpenClaw keeps its own; Parasail
@@ -386,10 +387,13 @@ class ChatToolbox {
           'text': readableClock(DateTime.now()),
         }),
         'memory_search' => formatMemories(
-          await searchMemory(
-            c,
+          memoriesForAsk(
             '${args['query'] ?? ''}',
-            _int(args['limit'], 8),
+            await searchMemory(
+              c,
+              '${args['query'] ?? ''}',
+              _int(args['limit'], 8),
+            ),
           ),
         ),
         'memory_recent' => formatMemories(

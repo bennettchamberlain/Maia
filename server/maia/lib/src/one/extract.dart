@@ -94,7 +94,9 @@ String connectorActionPrompt(
       _text(action['knowledge'] ?? action['description'] ?? ''),
       180,
     );
-    lines.add(hint.isEmpty ? '$title. action_id: $id' : '$title. action_id: $id. $hint');
+    lines.add(
+      hint.isEmpty ? '$title. action_id: $id' : '$title. action_id: $id. $hint',
+    );
   }
   if (lines.isEmpty) {
     return 'No One action matched $platform. Say that and stop.';
@@ -137,6 +139,8 @@ String publicChatText(String text) {
     RegExp(r'\s*What would you like to do\??', caseSensitive: false),
     '',
   );
+  final lecture = t.toLowerCase().indexOf('the connector can return');
+  if (lecture >= 0) t = t.substring(0, lecture);
   return t.trimRight();
 }
 
@@ -238,8 +242,14 @@ DateTime? _time(Object? value) {
 }
 
 String _kind(String platform) => switch (platform) {
-  'gmail' => 'email',
-  'google-calendar' => 'event',
+  'gmail' || 'outlook-mail' => 'email',
+  'google-calendar' || 'outlook-calendar' => 'event',
+  'google-drive' ||
+  'google-docs' ||
+  'google-sheets' ||
+  'google-slides' ||
+  'one-drive' ||
+  'dropbox' => 'file',
   _ => 'note',
 };
 

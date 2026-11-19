@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Maia</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #F2F0EB;
+    overflow: hidden;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  #tune {
+    display: none;
+    position: fixed;
+    left: 16px;
+    bottom: 14px;
+    color: #8a8a8a;
+    font: 12px/1.6 ui-sans-serif, system-ui, sans-serif;
+  }
+  body.show #tune { display: block; }
+  #tune label { display: flex; gap: 8px; align-items: center; }
+  #tune input { width: 140px; }
+  #err {
+    position: fixed;
+    left: 16px;
+    top: 16px;
+    color: #4A0C56;
+    font: 12px/1.4 ui-monospace, monospace;
+    white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="tune">
+  <label>speed <input id="speed" type="range" min="0" max="2.5" step="0.01" value="1" /></label>
+  <label>relief <input id="relief" type="range" min="0" max="3.6" step="0.005" value="0.46" /></label>
+  <label>grain <input id="grain" type="range" min="0.4" max="4.8" step="0.01" value="1" /></label>
+  <label>yaw <input id="spin" type="range" min="0" max="0.4" step="0.005" value="0.04" /></label>
+  <label>mud <input id="mud" type="range" min="0" max="2" step="0.01" value="0" /></label>
+</div>
+<div id="err"></div>
+<script>
+// Maia mark, a point cloud on a globe.
+//
+// Sampling is a fan of meridians crossed by parallels. Each grain is
+// stepped along its line, then offset by less than one step, so the
+// drawing is a mesh with a memory of the lines.
+//
+// Height is a sheet of traveling cosines plus ridges. One ridge is the
+// localized maximum: long along the crest, short across it. It rises
+// as the waves line up, then eases off. Grains crawl along the mesh.
+//
+// Color is the diffraction sunset. Cold on the morning limb, gold on
+// the crest. The hottest stop stays a pale yellow so a dot can still
+// sit on white. Press T to tune, space to hold, G for the whole globe.
+
+const canvas = document.getElementById('c');
+const errBox = document.getElementById('err');
+const params = new URLSearchParams(location.search);
+const hold = params.has('t') ? Number(params.get('t')) : null;
+
+const gl = canvas.getContext('webgl2', {
+  alpha: false,
+  antialias: false,
+  depth: false,
+  stencil: false,
+  preserveDrawingBuffer: true,
+});
+if (!gl) {
+  errBox.textContent = 'WebGL2 is missing.';
+  throw new Error('webgl2');
+}
+
+const vsSource = `#version 300 es
+precision highp float;
+
+in vec2 a_p;
+in float a_seed;
+in float a_along;
+
+uniform mat4 u_view;
+uniform mat4 u_proj;
+uniform vec3 u_eye;
+uniform float u_time;
+uniform float u_amp;
+uniform float u_size;
+uniform float u_yaw;
+uniform float u_dpr;
+uniform float u_globe;
+uniform float u_mud;
+
+out vec3 v_color;
+out float v_alpha;
+
+float hash(float n) {
+  return fract(sin(n * 127.1 + 311.7) * 43758.5453123);
+}
+
+float hash2(vec2 p) {
+  vec3 q = fract(vec3(p.xyx) * 0.1031);
+  q += dot(q, q.yzx + 33.33);
+  return fract((q.x + q.y) * q.z);
+}
+
+// Distance to the nearest random site. The tip is sharp, the sides are a gradient.
+float worley(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  float d = 1.0;
+  for (int j = -1; j <= 1; j++) {
+    for (int k = -1; k <= 1; k++) {
+      vec2 g = vec2(float(k), float(j));
+      vec2 cell = i + g;
+      vec2 o = vec2(hash2(cell), hash2(cell + vec2(19.1, 7.3)));
+      vec2 r = g + o - f;
+      d = min(d, dot(r, r));
+    }
+  }
+  return sqrt(d);
+}
+
+float spikes(vec2 p) {
+  float broad = worley(p);
+  float fine = worley(p * 2.25 + vec2(4.7, 1.9));
+  float a = pow(1.0 - smoothstep(0.02, 0.58, broad), 2.8);
+  float b = pow(1.0 - smoothstep(0.0, 0.34, fine), 3.6);
+  return a * 0.72 + b * 0.4;
+}
+
+float gauss(float x, float y, float cx, float cy, float ax, float ay) {
+  float dx = x - cx;
+  float dy = y - cy;
+  return exp(-(dx * dx * ax + dy * dy * ay));
+}
+
+float hill(float x, float y, float cx, float cy, float ax, float ay, float sharp) {
+  return pow(gauss(x, y, cx, cy, ax, ay), sharp);
+}
+
+float terrain(float x, float y, float t) {
+  float culminate = 0.84 + 0.16 * cos(t * 0.30);
+  // Rolls run across the range. They texture the sheet. They do not draw the skyline.
+  float h =
+      0.10 * cos(y * 6.2 + t * 0.42)
+    + 0.07 * cos(y * 3.1 + x * 0.7 - t * 0.22 + 0.5)
+    + 0.04 * cos(x * 9.0 + y * 8.0 + t * 0.55)
+    + 0.025 * cos(x * 15.0 - y * 11.0 - t * 0.37);
+
+  // Narrow crests. The center stays tall, the shoulders fall off fast.
+  h += hill(x, y,  0.42,  0.04, 26.0, 42.0, 1.85) * 1.05 * culminate;
+  h += hill(x, y, -0.32,  0.08,  8.0, 18.0, 1.45) * 0.70;
+  h += hill(x, y, -1.05,  0.02,  6.0, 15.0, 1.35) * 0.55;
+  h += hill(x, y,  1.05,  0.00,  7.5, 18.0, 1.45) * 0.48;
+  h += hill(x, y, -0.05, -0.32,  9.0, 16.0, 1.3) * 0.42;
+  h += hill(x, y,  0.15,  0.36,  6.5, 13.0, 1.3) * 0.36;
+  h += hill(x, y,  2.40,  0.12,  6.0, 15.0, 1.4) * 0.70;
+  h += hill(x, y, -2.20,  0.10,  5.2, 13.0, 1.35) * 0.58;
+  h += hill(x, y,  3.20,  0.02,  5.6, 12.0, 1.35) * 0.52;
+  return h;
+}
+
+vec3 sunset(float t) {
+  vec3 c0 = vec3(0.031, 0.016, 0.055); // #08040E black
+  vec3 c1 = vec3(0.227, 0.216, 0.235); // #3A373C dark grey
+  vec3 c2 = vec3(0.220, 0.200, 0.480); // a tad of blue into the violet
+  vec3 c3 = vec3(0.290, 0.047, 0.337); // #4A0C56
+  vec3 c4 = vec3(0.690, 0.090, 0.780);
+  vec3 c5 = vec3(1.000, 0.165, 0.416); // #FF2A6A
+  vec3 c6 = vec3(1.000, 0.361, 0.141); // #FF5C24
+  vec3 c7 = vec3(1.000, 0.729, 0.251); // #FFBA40
+  vec3 c8 = vec3(1.000, 0.957, 0.878); // #FFF4E0 only past the last threshold
+  float s0 = 0.12, s1 = 0.24, s2 = 0.34, s3 = 0.46, s4 = 0.58, s5 = 0.70, s6 = 0.84, s7 = 0.97;
+  if (t < s0) return mix(c0, c1, t / s0);
+  if (t < s1) return mix(c1, c2, (t - s0) / (s1 - s0));
+  if (t < s2) return mix(c2, c3, (t - s1) / (s2 - s1));
+  if (t < s3) return mix(c3, c4, (t - s2) / (s3 - s2));
+  if (t < s4) return mix(c4, c5, (t - s3) / (s4 - s3));
+  if (t < s5) return mix(c5, c6, (t - s4) / (s5 - s4));
+  if (t < s6) return mix(c6, c7, (t - s5) / (s6 - s5));
+  if (t < s7) return mix(c7, c8, (t - s6) / (s7 - s6));
+  return c8;
+}
+
+void main() {
+  float lat0 = a_p.y;
+  float x0 = atan(sin(a_p.x + u_yaw), cos(a_p.x + u_yaw));
+  // Lower on the sheet, slower clock. The crest keeps the full speed.
+  float mass = terrain(x0, lat0, 0.0);
+  float pace = mix(0.14, 1.0, smoothstep(0.02, 0.72, max(mass, 0.0)));
+  float t = u_time * pace;
+
+  float crawl = sin(a_along * 13.0 + t * 0.62 + a_seed * 6.28318);
+  float drift = cos(a_along * 8.0 - t * 0.36 + a_seed * 11.0);
+  float lon = a_p.x + u_yaw + crawl * 0.018;
+  float lat = a_p.y + drift * 0.012;
+  float x = atan(sin(lon), cos(lon));
+  float y = lat;
+
+  float h = terrain(x, y, t);
+  // Sharp local peaks on a flowing skirt, plus a small coin flip per grain.
+  // Spikes sit on the sheet. They do not raise a whole patch.
+  vec2 mudP = vec2(x, y) * 2.5 + vec2(t * 0.035, -t * 0.02);
+  float spike = spikes(mudP);
+  float flip = hash(a_seed * 17.13) - 0.5;
+  h += (spike * 0.32 + flip * 0.045) * u_mud;
+  float keep = mix(0.16, 1.0, smoothstep(0.0, 0.28, h));
+  if (hash(a_seed + 1.7) > keep) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    gl_PointSize = 0.0;
+    v_color = vec3(1.0);
+    v_alpha = 0.0;
+    return;
+  }
+
+  // Relief is the span from the floor of the signal to its crest.
+  // The floor is the base plane, and that plane does not climb.
+  float span = max(h + 0.28, 0.0);
+  float lifted = span * u_amp * 0.28;
+
+  vec3 p;
+  vec3 nrm;
+  if (u_globe > 0.5) {
+    float cl = cos(y);
+    nrm = vec3(cl * sin(lon), sin(y), cl * cos(lon));
+    p = nrm * (1.0 + lifted * 0.35);
+  } else {
+    // Landscape on a shallow arc. x runs the range, y is depth, height is up.
+    p = vec3(x * 0.92, lifted - 0.52 - 0.06 * x * x, -y * 1.15);
+    nrm = normalize(vec3(-0.24 * x, 1.0, 0.2));
+  }
+
+  float dust = smoothstep(0.62, 0.96, hash(a_seed + 3.3));
+  p.y -= dust * max(0.0, 0.22 - h) * 0.09;
+  p += nrm * (hash(a_seed + 9.0) - 0.5) * mix(0.055, 0.012, clamp(h, 0.0, 1.0));
+
+  // Logo view stays on the facing arc. The limb of the ball is not the drawing.
+  if (u_globe < 0.5 && cos(x) < 0.2) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    gl_PointSize = 0.0;
+    v_color = vec3(1.0);
+    v_alpha = 0.0;
+    return;
+  }
+
+  vec3 toEye = normalize(u_eye - p);
+  float facing = dot(toEye, nrm);
+  float faceCut = mix(0.02, -0.25, u_globe);
+  if (facing < faceCut) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    gl_PointSize = 0.0;
+    v_color = vec3(1.0);
+    v_alpha = 0.0;
+    return;
+  }
+
+  gl_Position = u_proj * u_view * vec4(p, 1.0);
+
+  float crest = smoothstep(-0.22, 1.2, h);
+  float warm = clamp(sin(x) * 0.5 + 0.5, 0.0, 1.0);
+  float heat = crest + (warm - 0.5) * crest * crest * 0.16;
+  heat += (hash(a_seed + 4.2) - 0.5) * 0.02;
+  heat += spike * u_mud * 0.05;
+  v_color = sunset(clamp(heat, 0.0, 1.0));
+
+  float band = mix(1.0 - smoothstep(0.62, 1.05, abs(y)), 1.0, u_globe);
+  float side = mix(1.0 - smoothstep(1.2, 1.6, abs(x)), 1.0, u_globe);
+  vec2 ndc = gl_Position.xy / gl_Position.w;
+  float vignette = 1.0 - smoothstep(1.05, 1.45, max(abs(ndc.x), abs(ndc.y)));
+  float facingFade = mix(smoothstep(0.02, 0.28, facing), smoothstep(-0.2, 0.15, facing), u_globe);
+  float alpha = mix(0.9, 0.96, smoothstep(-0.05, 0.7, h));
+  alpha *= facingFade * band * side * vignette;
+  v_alpha = alpha;
+
+  float dist = max(0.8, length(u_eye - p));
+  // Sparse floor gets the large grains. Overlapping crests stay small.
+  // The slider is the exponent on that ratio, not a flat scale.
+  float byHeight = 1.0 - smoothstep(-0.2, 0.9, h);
+  float byScreen = 1.0 - smoothstep(-0.9, 0.45, ndc.y);
+  float sparse = clamp(byHeight * 0.7 + byScreen * 0.3, 0.0, 1.0);
+  float ratio = pow(1.28, u_size);
+  float crestPx = 2.35;
+  float px = mix(crestPx, crestPx * ratio, sparse);
+  px *= mix(0.82, 1.18, hash(a_seed + 8.0));
+  gl_PointSize = px * u_dpr * (2.15 / dist);
+}
+`;
+
+const fsSource = `#version 300 es
+precision highp float;
+
+in vec3 v_color;
+in float v_alpha;
+out vec4 frag;
+
+void main() {
+  vec2 q = gl_PointCoord - vec2(0.5);
+  float r = length(q);
+  if (r > 0.5) discard;
+  float edge = smoothstep(0.5, 0.3, r);
+  frag = vec4(v_color, v_alpha * edge);
+}
+`;
+
+function compile(type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    const log = gl.getShaderInfoLog(shader);
+    errBox.textContent = log;
+    throw new Error(log);
+  }
+  return shader;
+}
+
+const program = gl.createProgram();
+gl.attachShader(program, compile(gl.VERTEX_SHADER, vsSource));
+gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fsSource));
+gl.linkProgram(program);
+if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+  const log = gl.getProgramInfoLog(program);
+  errBox.textContent = log;
+  throw new Error(log);
+}
+gl.useProgram(program);
+
+function hash(i) {
+  let x = Math.imul(i | 0, 0x9e3779b1);
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x7feb352d);
+  x ^= x >>> 15;
+  x = Math.imul(x, 0x846ca68b);
+  x ^= x >>> 16;
+  return (x >>> 0) / 4294967296;
+}
+
+const coord = [];
+const seed = [];
+const along = [];
+let serial = 1;
+
+function push(lon, lat, s, a) {
+  coord.push(lon, lat);
+  seed.push(s);
+  along.push(a);
+}
+
+const twoPi = Math.PI * 2;
+const meridians = 1120;
+const latSteps = 150;
+const lat0 = -1.05;
+const lat1 = 1.15;
+
+for (let m = 0; m < meridians; m++) {
+  for (let s = 0; s < latSteps; s++) {
+    const id = serial++;
+    const lat = lat0 + ((s + 0.5) / latSteps) * (lat1 - lat0);
+    const weight = Math.cos(Math.max(-1.2, Math.min(1.2, lat))) * 0.85 + 0.15;
+    if (hash(id) > weight) continue;
+    const jlon = (hash(id + 17) - 0.5) * (twoPi / meridians) * 1.05;
+    const jlat = (hash(id + 91) - 0.5) * ((lat1 - lat0) / latSteps) * 1.05;
+    const lon = (m / meridians) * twoPi + jlon + Math.sin(lat * 2.0) * 0.03;
+    push(lon, lat + jlat, hash(id + 5), s / latSteps);
+  }
+}
+
+const rings = 110;
+const around = 840;
+for (let ring = 0; ring < rings; ring++) {
+  for (let a = 0; a < around; a++) {
+    const id = serial++;
+    const lat = lat0 + ((ring + 0.5) / rings) * (lat1 - lat0);
+    const weight = Math.cos(Math.max(-1.2, Math.min(1.2, lat))) * 0.85 + 0.15;
+    if (hash(id) > weight) continue;
+    const jlon = (hash(id + 17) - 0.5) * (twoPi / around) * 1.05;
+    const jlat = (hash(id + 91) - 0.5) * ((lat1 - lat0) / rings) * 1.05;
+    push((a / around) * twoPi + jlon, lat + jlat, hash(id + 5), a / around);
+  }
+}
+
+function fan(lon, lat, rays, steps, spreadLon, spreadLat) {
+  for (let ray = 0; ray < rays; ray++) {
+    const theta = (ray / rays) * twoPi;
+    for (let step = 0; step < steps; step++) {
+      const id = serial++;
+      const u = Math.pow(step / (steps - 1), 0.62);
+      const jt = (hash(id) - 0.5) * (twoPi / rays) * 0.9;
+      const jr = (hash(id + 13) - 0.5) * 0.04;
+      const ang = theta + jt;
+      const radius = u + jr;
+      push(
+        lon + Math.cos(ang) * radius * spreadLon,
+        lat + Math.sin(ang) * radius * spreadLat,
+        hash(id + 5),
+        u,
+      );
+    }
+  }
+}
+
+fan(0.42, 0.04, 520, 72, 0.42, 0.26);
+fan(-0.32, 0.08, 340, 50, 0.46, 0.28);
+fan(-1.05, 0.02, 300, 44, 0.5, 0.28);
+fan(1.05, 0.0, 280, 42, 0.44, 0.26);
+fan(2.35, 0.1, 320, 46, 0.5, 0.3);
+
+const count = seed.length;
+const interleaved = new Float32Array(count * 4);
+for (let i = 0; i < count; i++) {
+  interleaved[i * 4] = coord[i * 2];
+  interleaved[i * 4 + 1] = coord[i * 2 + 1];
+  interleaved[i * 4 + 2] = seed[i];
+  interleaved[i * 4 + 3] = along[i];
+}
+
+const buffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+gl.bufferData(gl.ARRAY_BUFFER, interleaved, gl.STATIC_DRAW);
+const stride = 16;
+function attrib(name, size, offset) {
+  const loc = gl.getAttribLocation(program, name);
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, size, gl.FLOAT, false, stride, offset);
+}
+attrib('a_p', 2, 0);
+attrib('a_seed', 1, 8);
+attrib('a_along', 1, 12);
+
+const uView = gl.getUniformLocation(program, 'u_view');
+const uProj = gl.getUniformLocation(program, 'u_proj');
+const uEye = gl.getUniformLocation(program, 'u_eye');
+const uTime = gl.getUniformLocation(program, 'u_time');
+const uAmp = gl.getUniformLocation(program, 'u_amp');
+const uSize = gl.getUniformLocation(program, 'u_size');
+const uYaw = gl.getUniformLocation(program, 'u_yaw');
+const uDpr = gl.getUniformLocation(program, 'u_dpr');
+const uGlobe = gl.getUniformLocation(program, 'u_globe');
+const uMud = gl.getUniformLocation(program, 'u_mud');
+
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+gl.clearColor(0.949, 0.941, 0.922, 1);
+
+function sub(a, b) {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+function dot(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+function cross(a, b) {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+function normalize(a) {
+  const l = Math.hypot(a[0], a[1], a[2]) || 1;
+  return [a[0] / l, a[1] / l, a[2] / l];
+}
+function lookAt(eye, target, up) {
+  const z = normalize(sub(eye, target));
+  const x = normalize(cross(up, z));
+  const y = cross(z, x);
+  return new Float32Array([
+    x[0], y[0], z[0], 0,
+    x[1], y[1], z[1], 0,
+    x[2], y[2], z[2], 0,
+    -dot(x, eye), -dot(y, eye), -dot(z, eye), 1,
+  ]);
+}
+function perspective(fov, aspect, near, far) {
+  const f = 1 / Math.tan(fov / 2);
+  const nf = 1 / (near - far);
+  return new Float32Array([
+    f / aspect, 0, 0, 0,
+    0, f, 0, 0,
+    0, 0, (far + near) * nf, -1,
+    0, 0, (2 * far * near) * nf, 0,
+  ]);
+}
+
+function num(name, fallback) {
+  if (!params.has(name)) return fallback;
+  const n = Number(params.get(name));
+  return Number.isFinite(n) ? n : fallback;
+}
+
+let globe = params.get('view') === 'globe';
+const shot = params.get('frame') || (params.has('bg') ? 'bg' : '');
+let speed = num('speed', 1);
+let relief = num('relief', 0.46);
+let grain = num('grain', 1);
+let spin = num('yaw', 0.04);
+let mud = num('mud', 0);
+let paused = false;
+let elapsed = 0;
+let last = performance.now();
+let dpr = 1;
+
+if (matchMedia('(prefers-reduced-motion: reduce)').matches) speed = 0;
+
+function resize() {
+  dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = canvas.clientWidth || innerWidth;
+  const h = canvas.clientHeight || innerHeight;
+  canvas.width = Math.max(1, Math.round(w * dpr));
+  canvas.height = Math.max(1, Math.round(h * dpr));
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+addEventListener('resize', resize);
+resize();
+
+function draw(time) {
+  let eye = [0.02, 0.18, 3.2];
+  let target = [0.08, -0.16, 0.04];
+  let fovDeg = 30;
+  if (globe) {
+    eye = [0.4, 0.42, 4.7];
+    target = [0, -0.02, 0];
+    fovDeg = 32;
+  } else if (shot === 'icon') {
+    eye = [0.2, -0.04, 1.72];
+    target = [0.18, -0.06, 0.02];
+    fovDeg = 26;
+  } else if (shot === 'bg') {
+    eye = [0.02, 0.24, 3.7];
+    target = [0.06, -0.28, 0.02];
+    fovDeg = 32;
+  }
+  const fov = fovDeg * Math.PI / 180;
+  const aspect = canvas.width / canvas.height;
+  gl.uniformMatrix4fv(uView, false, lookAt(eye, target, [0, 1, 0]));
+  gl.uniformMatrix4fv(uProj, false, perspective(fov, aspect, 0.1, 40));
+  gl.uniform3f(uEye, eye[0], eye[1], eye[2]);
+  gl.uniform1f(uTime, time);
+  gl.uniform1f(uAmp, relief);
+  gl.uniform1f(uSize, grain);
+  gl.uniform1f(uYaw, time * spin);
+  gl.uniform1f(uDpr, dpr);
+  gl.uniform1f(uGlobe, globe ? 1 : 0);
+  gl.uniform1f(uMud, mud);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.drawArrays(gl.POINTS, 0, count);
+}
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (!paused && hold === null) elapsed += dt * speed;
+  draw(hold === null ? elapsed : hold);
+  requestAnimationFrame(frame);
+}
+draw(hold === null ? 0 : hold);
+requestAnimationFrame(frame);
+
+addEventListener('keydown', (event) => {
+  if (event.key === 't' || event.key === 'T') {
+    document.body.classList.toggle('show');
+  } else if (event.key === ' ') {
+    event.preventDefault();
+    paused = !paused;
+  } else if (event.key === 'g' || event.key === 'G') {
+    globe = !globe;
+  }
+});
+
+for (const [id, value, apply] of [
+  ['speed', speed, (v) => { speed = v; }],
+  ['relief', relief, (v) => { relief = v; }],
+  ['grain', grain, (v) => { grain = v; }],
+  ['spin', spin, (v) => { spin = v; }],
+  ['mud', mud, (v) => { mud = v; }],
+]) {
+  const input = document.getElementById(id);
+  input.value = String(value);
+  input.addEventListener('input', () => apply(Number(input.value)));
+}
+</script>
+</body>
+</html>
