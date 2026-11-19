@@ -9,23 +9,30 @@ import 'package:maie_app/chat/attach.dart';
 import 'package:maie_app/chat/chat.dart';
 import 'package:maie_app/chat/parts/chat_part_view.dart';
 import 'package:maie_app/chat/quote.dart';
-import 'package:maie_app/chat/view/chat_bench_strip.dart';
+import 'package:maie_app/chat/view/chat_inspector.dart';
 import 'package:maie_app/chat/view/composer.dart';
 import 'package:maie_app/chat/view/file_chip.dart';
+import 'package:maie_app/chat/view/session_rail.dart';
 import 'package:maie_app/chat/view/timeline_column.dart';
 import 'package:maie_app/config/chat_settings_cubit.dart';
 import 'package:maie_app/ui/chrome.dart';
-import 'package:maie_app/ui/maie_cloud.dart';
 import 'package:maie_app/ui/fault.dart';
+import 'package:maie_app/ui/maie_cloud.dart';
 import 'package:maie_app/ui/selection_menu.dart';
+import 'package:maie_app/ui/span.dart';
 import 'package:maie_models/maie_models.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
-/// Chat with the Maie agent. Phone: list of conversations, tap to open.
-/// Wide: list on the left, conversation on the right.
+/// Chat with the Maie agent.
+///
+/// The column count follows [maieSpan]: one column, an icon rail and the
+/// thread, the list and the thread, or those two plus the side panel.
 class ChatPage extends StatelessWidget {
-  const new({super.key});
+  const new({super.key, this.railFooter});
+
+  /// Shown under the conversation marks on the icon rail.
+  final Widget? railFooter;
 
   @override
   Widget build(BuildContext context) {
@@ -34,7 +41,7 @@ class ChatPage extends StatelessWidget {
         api: context.read<MaieApiClient>(),
         provider: () => context.read<ChatSettingsCubit>().state,
       )..add(const ChatStarted()),
-      child: const _CloseWhenPaused(child: ChatView()),
+      child: _CloseWhenPaused(child: ChatView(railFooter: railFooter)),
     );
     try {
       context.read<VoiceCubit>();
@@ -49,55 +56,45 @@ class ChatPage extends StatelessWidget {
 }
 
 class ChatView extends StatelessWidget {
-  const new({super.key});
+  const new({this.railFooter, super.key});
+
+  final Widget? railFooter;
 
   @override
   Widget build(BuildContext context) {
-    final wide = MediaQuery.sizeOf(context).width >= 700;
+    final span = maieSpan(MediaQuery.sizeOf(context).width);
     final hasOpen = context.select<ChatBloc, bool>((b) => b.state.open != null);
-    if (wide) {
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          final available = math.max(0, constraints.maxWidth) * 0.42;
-          final listWidth = math.min(300, available).toDouble();
-          return Row(
-            children: [
-              SizedBox(width: listWidth, child: const TimelineColumn()),
-              const MaieDivider.vertical(),
-              const Expanded(child: _BenchColumn(child: _WideConversation())),
-            ],
-          );
-        },
-      );
-    }
-    return _BenchColumn(
-      child: hasOpen
+    if (span == MaieSpan.stack) {
+      return hasOpen
           ? const _Conversation(showBack: true)
-          : const TimelineColumn(),
-    );
-  }
-}
-
-/// The checks list sits above the conversation when the window is tall
-/// enough for both. A short window keeps the conversation.
-class _BenchColumn extends StatelessWidget {
-  const new({required this.child});
-
-  final Widget child;
-
-  static const _minHeight = 360.0;
-
-  @override
-  Widget build(BuildContext context) {
+          : const TimelineColumn();
+    }
     return LayoutBuilder(
       builder: (context, constraints) {
-        final tall =
-            constraints.maxHeight.isFinite &&
-            constraints.maxHeight >= _minHeight;
-        return Column(
+        final thread = _WideConversation(
+          hideVoiceChips: span == MaieSpan.desk,
+        );
+        if (span == MaieSpan.rail) {
+          return Row(
+            children: [
+              SessionRail(footer: railFooter),
+              const MaieDivider.vertical(),
+              Expanded(child: thread),
+            ],
+          );
+        }
+        final width = math.max(0, constraints.maxWidth);
+        final listWidth = math.min(300, width * 0.34).toDouble();
+        final inspectorWidth = math.min(300, width * 0.28).toDouble();
+        return Row(
           children: [
-            if (tall) const ChatBenchStrip(),
-            Expanded(child: child),
+            SizedBox(width: listWidth, child: const TimelineColumn()),
+            const MaieDivider.vertical(),
+            Expanded(child: thread),
+            if (span == MaieSpan.desk) ...[
+              const MaieDivider.vertical(),
+              SizedBox(width: inspectorWidth, child: const ChatInspector()),
+            ],
           ],
         );
       },
@@ -106,19 +103,24 @@ class _BenchColumn extends StatelessWidget {
 }
 
 class _WideConversation extends StatelessWidget {
-  const new();
+  const new({this.hideVoiceChips = false});
+
+  final bool hideVoiceChips;
 
   @override
   Widget build(BuildContext context) {
     final hasOpen = context.select<ChatBloc, bool>((b) => b.state.open != null);
-    return hasOpen ? const _Conversation() : const _EmptyConversation();
+    return hasOpen
+        ? _Conversation(hideVoiceChips: hideVoiceChips)
+        : const _EmptyConversation();
   }
 }
 
 class _Conversation extends StatefulWidget {
-  const new({this.showBack = false});
+  const new({this.showBack = false, this.hideVoiceChips = false});
 
   final bool showBack;
+  final bool hideVoiceChips;
 
   @override
   State<_Conversation> createState() => _ConversationState();
@@ -217,7 +219,7 @@ class _ConversationState extends State<_Conversation> {
             }
             return;
           }
-          if (chatBenchRunning || state.messages.isEmpty) return;
+          if (state.messages.isEmpty) return;
           final last = state.messages.last;
           if (last.role != 'assistant') return;
           unawaited(voice.speakReply(last.id, last.content));
@@ -330,10 +332,11 @@ class _ConversationState extends State<_Conversation> {
                     ),
                   const _VoiceStatusLine(),
                   const _TalkingBubble(),
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(12, 0, 12, 0),
-                    child: _ComposerActions(),
-                  ),
+                  if (!widget.hideVoiceChips)
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(12, 0, 12, 0),
+                      child: _ComposerActions(),
+                    ),
                   SafeArea(
                     top: false,
                     child: Padding(

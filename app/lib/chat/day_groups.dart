@@ -58,8 +58,7 @@ String dayLabel(DateTime day, DateTime today) {
 String formatSpan(DateTime start, DateTime end) {
   final a = start.toLocal();
   final b = end.toLocal();
-  final sameDay =
-      a.year == b.year && a.month == b.month && a.day == b.day;
+  final sameDay = a.year == b.year && a.month == b.month && a.day == b.day;
   if (sameDay) return '${_clock(a)} – ${_clock(b)}';
   return '${_dayClock(a)} – ${_dayClock(b)}';
 }
@@ -87,6 +86,15 @@ String _clock(DateTime time) {
   final minute = time.minute.toString().padLeft(2, '0');
   final suffix = time.hour < 12 ? 'AM' : 'PM';
   return '$hour:$minute $suffix';
+}
+
+/// `2:35 PM`, `Yesterday`, or `Tue 10 Nov`. The time on a conversation row.
+String shortWhen(DateTime time, DateTime now) {
+  final local = time.toLocal();
+  final day = DateTime(local.year, local.month, local.day);
+  final today = DateTime(now.year, now.month, now.day);
+  if (day == today) return _clock(local);
+  return dayLabel(day, today);
 }
 
 /// Account line for a connector card. Empty for a chat.

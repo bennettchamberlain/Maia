@@ -36,30 +36,25 @@ class _TimelineColumnState extends State<TimelineColumn> {
     return Scaffold(
       body: MaiePane(
         header: MaieHeader(
-          title: 'Memory',
+          title: 'Maie',
           actions: [
             ShadIconButton.ghost(
               key: const Key('chat_new_button'),
-              icon: const Icon(LucideIcons.squarePen, size: 16),
-              onPressed: () => context.read<ChatBloc>().add(
-                const ChatNewSessionRequested(),
-              ),
+              icon: const Icon(LucideIcons.plus, size: 16),
+              onPressed: () =>
+                  context.read<ChatBloc>().add(const ChatNewSessionRequested()),
             ),
           ],
         ),
-        body: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-              child: ShadInput(
-                key: const Key('memory_search'),
-                controller: _search,
-                placeholder: const Text('Search memory…'),
-                onChanged: (_) => setState(() {}),
-              ),
-            ),
-            Expanded(child: _body(context, state, entries)),
-          ],
+        body: _body(context, state, entries),
+        footer: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          child: ShadInput(
+            key: const Key('memory_search'),
+            controller: _search,
+            placeholder: const Text('Search'),
+            onChanged: (_) => setState(() {}),
+          ),
         ),
       ),
     );
@@ -71,8 +66,8 @@ class _TimelineColumnState extends State<TimelineColumn> {
     List<TimelineEntry> entries,
   ) {
     return switch (state.status) {
-      ChatStatus.initial ||
-      ChatStatus.loading when state.entries.isEmpty && state.sessions.isEmpty =>
+      ChatStatus.initial || ChatStatus.loading
+          when state.entries.isEmpty && state.sessions.isEmpty =>
         const MaieSkeleton(),
       ChatStatus.failure when state.entries.isEmpty && state.sessions.isEmpty =>
         MaieFailure(
@@ -111,16 +106,14 @@ class _TimelineColumnState extends State<TimelineColumn> {
           for (final entry in group.entries)
             _Card(
               entry: entry,
-              selected: entry.sessionId != null &&
-                  entry.sessionId == state.open?.id,
+              selected:
+                  entry.sessionId != null && entry.sessionId == state.open?.id,
               expanded: _open.contains(entry.id),
               onToggle: () => setState(() {
                 if (!_open.add(entry.id)) _open.remove(entry.id);
               }),
               onOpen: () => _openEntry(context, state, entry),
-              onRename: entry.isSession
-                  ? () => _rename(context, entry)
-                  : null,
+              onRename: entry.isSession ? () => _rename(context, entry) : null,
               onDelete: entry.isSession
                   ? () {
                       final session = _session(state, entry);
@@ -204,74 +197,112 @@ class _Card extends StatelessWidget {
     final theme = ShadTheme.of(context);
     final account = entryAccountLine(entry);
     final hasTopics = entry.topics.isNotEmpty;
+    final title = entry.title ?? 'New chat';
+    final preview = _preview(entry, account);
+    final when = shortWhen(entry.endedAt, DateTime.now());
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 2),
       child: Material(
-        color: selected ? theme.colorScheme.accent : theme.colorScheme.muted,
-        borderRadius: const BorderRadius.all(Radius.circular(12)),
+        color: selected ? theme.colorScheme.accent : Colors.transparent,
+        borderRadius: const BorderRadius.all(Radius.circular(10)),
         child: InkWell(
-          borderRadius: const BorderRadius.all(Radius.circular(12)),
+          borderRadius: const BorderRadius.all(Radius.circular(10)),
           onTap: onOpen,
           onLongPress: onRename ?? onDelete,
           onSecondaryTap: onRename ?? onDelete,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            child: Row(
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (entry.platform != null &&
-                        entry.platform!.isNotEmpty) ...[
-                      CompanyLogo(slug: entry.platform, size: 22),
-                      const SizedBox(width: 8),
+                _RowMark(entry: entry, title: title),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.small.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            when,
+                            style: theme.textTheme.muted.copyWith(fontSize: 11),
+                          ),
+                        ],
+                      ),
+                      if (preview.isNotEmpty)
+                        Text(
+                          preview,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.muted,
+                        ),
+                      if (expanded)
+                        for (final topic in entry.topics)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(topic, style: theme.textTheme.small),
+                          ),
                     ],
-                    Expanded(
-                      child: Text(
-                        entry.title ?? 'New chat',
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.p.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    if (hasTopics)
-                      ShadIconButton.ghost(
-                        icon: Icon(
-                          expanded
-                              ? LucideIcons.chevronDown
-                              : LucideIcons.chevronRight,
-                          size: 16,
-                        ),
-                        onPressed: onToggle,
-                      ),
-                  ],
-                ),
-                if (account.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(account, style: theme.textTheme.muted),
-                  ),
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    formatSpan(entry.startedAt, entry.endedAt),
-                    style: theme.textTheme.muted,
                   ),
                 ),
-                if (expanded)
-                  for (final topic in entry.topics)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Text(topic, style: theme.textTheme.small),
+                if (hasTopics)
+                  ShadIconButton.ghost(
+                    icon: Icon(
+                      expanded
+                          ? LucideIcons.chevronDown
+                          : LucideIcons.chevronRight,
+                      size: 14,
                     ),
+                    onPressed: onToggle,
+                  ),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+String _preview(TimelineEntry entry, String account) {
+  final body = entry.body?.trim() ?? '';
+  if (body.isNotEmpty) return body;
+  if (account.isNotEmpty) return account;
+  return entry.topics.join(', ');
+}
+
+class _RowMark extends StatelessWidget {
+  const new({required this.entry, required this.title});
+
+  final TimelineEntry entry;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    if (entry.platform != null && entry.platform!.isNotEmpty) {
+      return CompanyLogo(slug: entry.platform, size: 36);
+    }
+    final theme = ShadTheme.of(context);
+    final letter = title.trim().isEmpty ? 'M' : title.trim().substring(0, 1);
+    return Container(
+      width: 36,
+      height: 36,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        borderRadius: const BorderRadius.all(Radius.circular(10)),
+        border: Border.all(color: theme.colorScheme.border),
+      ),
+      child: Text(letter.toUpperCase(), style: theme.textTheme.small),
     );
   }
 }

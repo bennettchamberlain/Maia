@@ -2,14 +2,13 @@ import 'dart:math' as math;
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:maie_app/chat/chat.dart';
-import 'package:maie_app/chat/view/chat_bench_strip.dart';
 import 'package:maie_app/home/view/settings_page.dart';
 import 'package:maie_app/jobs/jobs.dart';
 import 'package:maie_app/memory/memory.dart';
 import 'package:maie_app/session/session.dart';
 import 'package:maie_app/tools/tools.dart';
-import 'package:maie_app/ui/chrome.dart';
 import 'package:maie_app/ui/glass.dart';
+import 'package:maie_app/ui/span.dart';
 import 'package:maie_models/maie_models.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -26,37 +25,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   var _index = 0;
   var _settings = false;
-
-  @override
-  void initState() {
-    super.initState();
-    chatBenchShow.addListener(_showChat);
-  }
-
-  @override
-  void dispose() {
-    chatBenchShow.removeListener(_showChat);
-    super.dispose();
-  }
-
-  void _showChat() {
-    if (!mounted) return;
-    setState(() {
-      _index = 0;
-      _settings = false;
-    });
-  }
-
-  static const _pages = <Widget>[
-    ChatPage(),
-    MemoryPage(),
-    ToolsPage(),
-    JobsPage(),
-    // PositionsPage(),   // background location + presence overlap
-    // PeoplePage(),      // relationships, tiers, consent grants
-    // AsksPage(),        // ask a friend; disclosure ladder
-    // SettingsPage(),
-  ];
+  var _account = false;
 
   static const _destinations = <({IconData icon, String label})>[
     (icon: LucideIcons.messageCircle, label: 'Chat'),
@@ -68,109 +37,222 @@ class _HomePageState extends State<HomePage> {
     // Asks:   LucideIcons.messageSquare
   ];
 
+  void _select(int index) {
+    setState(() {
+      _index = index;
+      _settings = false;
+      _account = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final person = context.select<SessionCubit, Person?>((c) => c.state.person);
-    final wide = MediaQuery.sizeOf(context).width >= 700;
+    final span = maieSpan(MediaQuery.sizeOf(context).width);
+    final chatRail = span == MaieSpan.rail && !_settings && _index == 0;
+    final icons = _DockIcons(
+      index: _index,
+      settings: _settings,
+      person: person,
+      fill: !chatRail,
+      onSelected: _select,
+      onAccount: () => setState(() => _account = !_account),
+    );
+    final pages = <Widget>[
+      ChatPage(railFooter: chatRail ? icons : null),
+      const MemoryPage(),
+      const ToolsPage(),
+      const JobsPage(),
+    ];
     final body = _settings
         ? SettingsPage(onClose: () => setState(() => _settings = false))
-        : IndexedStack(index: _index, children: _pages);
+        : IndexedStack(index: _index, children: pages);
 
-    if (wide) {
+    if (span == MaieSpan.stack) {
       return Scaffold(
-        body: SafeArea(
-          child: Row(
-            children: [
-              _Sidebar(
-                person: person,
-                index: _index,
-                settings: _settings,
-                onSelected: (i) => setState(() {
-                  _index = i;
-                  _settings = false;
-                }),
-                onSettings: () => setState(() => _settings = !_settings),
-              ),
-              Expanded(child: body),
-            ],
-          ),
-        ),
+        body: SafeArea(bottom: false, child: body),
+        bottomNavigationBar: _BottomNav(index: _index, onSelected: _select),
       );
     }
 
     return Scaffold(
-      body: SafeArea(bottom: false, child: body),
-      bottomNavigationBar: _BottomNav(
-        index: _index,
-        onSelected: (i) => setState(() => _index = i),
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Row(
+              children: [
+                if (!chatRail) icons,
+                Expanded(child: body),
+              ],
+            ),
+            if (_account)
+              Positioned(
+                left: 80,
+                bottom: 12,
+                width: 220,
+                child: _AccountCard(
+                  settings: _settings,
+                  onSettings: () => setState(() {
+                    _settings = !_settings;
+                    _account = false;
+                  }),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
 }
 
-class _Sidebar extends StatelessWidget {
+class _DockIcons extends StatelessWidget {
   const new({
-    required this.person,
     required this.index,
     required this.settings,
+    required this.person,
+    required this.fill,
     required this.onSelected,
-    required this.onSettings,
+    required this.onAccount,
   });
 
-  final Person? person;
   final int index;
   final bool settings;
+  final Person? person;
+  final bool fill;
   final ValueChanged<int> onSelected;
+  final VoidCallback onAccount;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    final handle = person?.handle ?? 'Maie';
+    final initial = handle.isEmpty ? 'M' : handle.substring(0, 1).toUpperCase();
+    final buttons = <Widget>[
+      for (var i = 0; i < _HomePageState._destinations.length; i++)
+        _DockButton(
+          icon: _HomePageState._destinations[i].icon,
+          label: _HomePageState._destinations[i].label,
+          selected: !settings && index == i,
+          onPressed: () => onSelected(i),
+        ),
+      _DockButton(
+        icon: LucideIcons.circleUser,
+        label: handle,
+        selected: settings,
+        onPressed: onAccount,
+        mark: initial,
+      ),
+      const SizedBox(height: 8),
+    ];
+    if (!fill) return Column(mainAxisSize: MainAxisSize.min, children: buttons);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border(right: BorderSide(color: theme.colorScheme.border)),
+      ),
+      child: SizedBox(
+        width: 72,
+        child: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final height = constraints.maxHeight.isFinite
+                  ? constraints.maxHeight
+                  : 0.0;
+              return SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: height),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: buttons,
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DockButton extends StatelessWidget {
+  const new({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onPressed,
+    this.mark,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+  final String? mark;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Tooltip(
+        message: label,
+        child: Material(
+          color: selected ? theme.colorScheme.accent : Colors.transparent,
+          borderRadius: const BorderRadius.all(Radius.circular(10)),
+          child: InkWell(
+            onTap: onPressed,
+            borderRadius: const BorderRadius.all(Radius.circular(10)),
+            child: SizedBox(
+              width: 44,
+              height: 44,
+              child: Center(
+                child: mark == null
+                    ? Icon(icon, size: 18)
+                    : Text(mark!, style: theme.textTheme.small),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AccountCard extends StatelessWidget {
+  const new({required this.settings, required this.onSettings});
+
+  final bool settings;
   final VoidCallback onSettings;
 
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    final field = watchField(context);
-    final column = SizedBox(
-      width: 220,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: MaiePane(
-          plate: false,
-          header: Text('Maie', style: theme.textTheme.small),
-          body: ListView(
-            padding: const EdgeInsets.only(top: 16),
-            children: [
-              for (var i = 0; i < _HomePageState._destinations.length; i++)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: _NavButton(
-                    icon: _HomePageState._destinations[i].icon,
-                    label: _HomePageState._destinations[i].label,
-                    selected: !settings && index == i,
-                    onPressed: () => onSelected(i),
-                  ),
-                ),
-            ],
-          ),
-          footer: _UserMenu(
-            person: person,
-            settings: settings,
-            onSettings: onSettings,
-          ),
-        ),
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.background,
+        borderRadius: const BorderRadius.all(Radius.circular(10)),
+        border: Border.all(color: theme.colorScheme.border),
       ),
-    );
-    final border = Border(right: BorderSide(color: theme.colorScheme.border));
-    if (!field) {
-      return DecoratedBox(
-        decoration: BoxDecoration(border: border),
-        child: column,
-      );
-    }
-    return MaieGlass(
-      opacity: 0.5,
-      sigma: 16,
-      border: false,
-      child: DecoratedBox(
-        decoration: BoxDecoration(border: border),
-        child: column,
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _NavButton(
+              icon: LucideIcons.settings,
+              label: 'Settings',
+              selected: settings,
+              onPressed: onSettings,
+            ),
+            const SizedBox(height: 4),
+            _NavButton(
+              icon: LucideIcons.logOut,
+              label: 'Sign out',
+              selected: false,
+              onPressed: () => context.read<SessionCubit>().signedOut(),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -289,108 +371,6 @@ class _NavButton extends StatelessWidget {
                 ),
         ),
       ),
-    );
-  }
-}
-
-class _UserMenu extends StatefulWidget {
-  const new({
-    required this.person,
-    required this.settings,
-    required this.onSettings,
-  });
-
-  final Person? person;
-  final bool settings;
-  final VoidCallback onSettings;
-
-  @override
-  State<_UserMenu> createState() => _UserMenuState();
-}
-
-class _UserMenuState extends State<_UserMenu> {
-  var _open = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
-    final handle = widget.person?.handle ?? 'Maie';
-    final initial = handle.substring(0, 1).toUpperCase();
-    final detail = widget.person?.email ?? widget.person?.displayName;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        MaieExpand(
-          expanded: _open,
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Column(
-              children: [
-                _NavButton(
-                  icon: LucideIcons.settings,
-                  label: 'Settings',
-                  selected: widget.settings,
-                  onPressed: widget.onSettings,
-                ),
-                const SizedBox(height: 4),
-                _NavButton(
-                  icon: LucideIcons.logOut,
-                  label: 'Sign out',
-                  selected: false,
-                  onPressed: () => context.read<SessionCubit>().signedOut(),
-                ),
-              ],
-            ),
-          ),
-        ),
-        Material(
-          color: _open ? theme.colorScheme.accent : Colors.transparent,
-          borderRadius: const BorderRadius.all(Radius.circular(6)),
-          child: InkWell(
-            onTap: () => setState(() => _open = !_open),
-            borderRadius: const BorderRadius.all(Radius.circular(6)),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-              child: Row(
-                children: [
-                  ShadAvatar(
-                    null,
-                    size: const Size.square(28),
-                    placeholder: Text(initial, style: theme.textTheme.small),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          handle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.small,
-                        ),
-                        if (detail != null && detail.isNotEmpty)
-                          Text(
-                            detail,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.muted.copyWith(fontSize: 11),
-                          ),
-                      ],
-                    ),
-                  ),
-                  Icon(
-                    _open ? LucideIcons.chevronDown : LucideIcons.chevronUp,
-                    size: 14,
-                    color: theme.colorScheme.mutedForeground,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
     );
   }
 }
