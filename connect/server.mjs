@@ -10,14 +10,14 @@ import { accountLogin, fillPathParams } from "./path_params.mjs";
 loadEnv({ path: join(dirname(fileURLToPath(import.meta.url)), "..", ".env") });
 
 const PORT = Number(process.env.CONNECT_PORT || 8788);
-const MAIA = (process.env.MAIA_API_URL || "http://127.0.0.1:8080").replace(/\/$/, "");
-const INTERNAL = process.env.MAIA_INTERNAL_SECRET || "";
+const MAIE = (process.env.MAIE_API_URL || "http://127.0.0.1:8080").replace(/\/$/, "");
+const INTERNAL = process.env.MAIE_INTERNAL_SECRET || "";
 const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "public", "index.html"), "utf8");
 
 const PERSON = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// OAuth state -> Maia person. The callback URL has no ?person=, and
-// folded Set-Cookie headers can drop maia_person. The PKCE cookie is
+// OAuth state -> Maie person. The callback URL has no ?person=, and
+// folded Set-Cookie headers can drop maie_person. The PKCE cookie is
 // enough for One; this map is enough for us.
 const pendingPeople = new Map();
 
@@ -49,9 +49,9 @@ function personId(req) {
   const url = new URL(req.url, "http://local");
   const fromQuery = url.searchParams.get("person") || "";
   if (PERSON.test(fromQuery)) return fromQuery;
-  const fromCookie = readCookie(req, "maia_person");
+  const fromCookie = readCookie(req, "maie_person");
   if (PERSON.test(fromCookie)) return fromCookie;
-  const fromHeader = req.headers["x-maia-person"] || "";
+  const fromHeader = req.headers["x-maie-person"] || "";
   if (PERSON.test(fromHeader)) return fromHeader;
   const state = url.searchParams.get("state") || "";
   const pending = state ? pendingPeople.get(state) : "";
@@ -76,9 +76,9 @@ async function postGrant(person, reference, connections) {
       access: row.access ?? null,
     }));
   }
-  const r = await fetch(`${MAIA}/internal/one/grant`, {
+  const r = await fetch(`${MAIE}/internal/one/grant`, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-maia-internal": INTERNAL },
+    headers: { "content-type": "application/json", "x-maie-internal": INTERNAL },
     body: JSON.stringify(body),
   });
   if (!r.ok) console.warn("One grant save:", r.status, await r.text());
@@ -89,9 +89,9 @@ const userStore = {
     await postGrant(appUserId, reference, null);
   },
   async loadUser(appUserId) {
-    const r = await fetch(`${MAIA}/internal/one/grant`, {
+    const r = await fetch(`${MAIE}/internal/one/grant`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-maia-internal": INTERNAL },
+      headers: { "content-type": "application/json", "x-maie-internal": INTERNAL },
       body: JSON.stringify({ person_id: appUserId, lookup: true }),
     });
     if (!r.ok) return null;
@@ -104,9 +104,9 @@ const userStore = {
     return null;
   },
   async clearUser(appUserId) {
-    await fetch(`${MAIA}/internal/one/grant`, {
+    await fetch(`${MAIE}/internal/one/grant`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-maia-internal": INTERNAL },
+      headers: { "content-type": "application/json", "x-maie-internal": INTERNAL },
       body: JSON.stringify({ person_id: appUserId, revoked: true }),
     });
   },
@@ -481,7 +481,7 @@ const server = createServer(async (req, res) => {
       if (action === "authorize") {
         const person = url.searchParams.get("person");
         if (person && PERSON.test(person)) {
-          const extra = `maia_person=${encodeURIComponent(person)}; Path=${cookiePath()}; Max-Age=1800; HttpOnly; SameSite=Lax`;
+          const extra = `maie_person=${encodeURIComponent(person)}; Path=${cookiePath()}; Max-Age=1800; HttpOnly; SameSite=Lax`;
           const orig = res.setHeader;
           res.setHeader = function setHeader(name, value) {
             if (String(name).toLowerCase() === "location") {
@@ -512,8 +512,8 @@ const server = createServer(async (req, res) => {
     res.end(`<!doctype html><meta charset="utf-8"><title>One Connect</title>
 <body style="font:16px/1.4 system-ui;max-width:36rem;margin:3rem auto">
 <h1>One is not configured</h1>
-<p>This Maia has no <code>ONE_CLIENT_ID</code> / <code>ONE_CONNECT_KEY</code> yet, so there is nothing to authorize.</p>
-<p>From <code>connect/</code>, run <code>one connect create</code>, approve Maia in the browser, and put the client secret and connect key in <code>.env</code>. Then restart Connect.</p>
+<p>This Maie has no <code>ONE_CLIENT_ID</code> / <code>ONE_CONNECT_KEY</code> yet, so there is nothing to authorize.</p>
+<p>From <code>connect/</code>, run <code>one connect create</code>, approve Maie in the browser, and put the client secret and connect key in <code>.env</code>. Then restart Connect.</p>
 </body>`);
     return;
   }

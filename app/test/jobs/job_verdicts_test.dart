@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:maia_app/jobs/job_verdicts.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_app/jobs/job_verdicts.dart';
+import 'package:maie_models/maie_models.dart';
 
 JobRecord _job(
   String name,

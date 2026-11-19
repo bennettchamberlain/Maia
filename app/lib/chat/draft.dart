@@ -1,4 +1,4 @@
-/// A file copied into Maia's own storage. The chat sees [path]. The user
+/// A file copied into Maie's own storage. The chat sees [path]. The user
 /// sees [name].
 class StoredChatFile {
   const new({required this.name, required this.path});

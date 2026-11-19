@@ -3,10 +3,10 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:http/http.dart' as http;
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_models/maie_models.dart';
 
-/// A second client of the Maia server the desktop app already uses.
+/// A second client of the Maie server the desktop app already uses.
 ///
 /// `setup` makes the `eval` person and checks that two connections see the
 /// same session while the desktop person does not. `send` runs one turn on
@@ -30,7 +30,7 @@ Future<void> main(List<String> args) async {
         stderr.writeln('use: chat_eval setup [--url URI] | send [--url URI] <message>');
         exitCode = 64;
     }
-  } on MaiaApiException catch (e) {
+  } on MaieApiException catch (e) {
     stderr.writeln('server ${e.statusCode}: ${e.message}');
     exitCode = 1;
   }
@@ -65,7 +65,7 @@ _Flags _flags(List<String> args) {
 
 Future<void> _setup(_Flags flags) async {
   final saved = _readLocal();
-  final url = _normalise(flags.url ?? saved['MAIA_EVAL_URL'] ?? await _desktopUrl());
+  final url = _normalise(flags.url ?? saved['MAIE_EVAL_URL'] ?? await _desktopUrl());
   if (url == null) {
     stderr.writeln('No server URL. Pass --url, or sign the desktop app into one.');
     exitCode = 64;
@@ -73,8 +73,8 @@ Future<void> _setup(_Flags flags) async {
   }
   final health = await _health(url);
   final handle = flags.handle;
-  final savedPassword = saved['MAIA_EVAL_HANDLE'] == handle
-      ? saved['MAIA_EVAL_PASSWORD']
+  final savedPassword = saved['MAIE_EVAL_HANDLE'] == handle
+      ? saved['MAIE_EVAL_PASSWORD']
       : null;
   final password = savedPassword ?? _password();
 
@@ -83,7 +83,7 @@ Future<void> _setup(_Flags flags) async {
   try {
     session = await first.api.signIn(handle: handle, password: password);
     first.token = session.token;
-  } on MaiaApiException catch (e) {
+  } on MaieApiException catch (e) {
     if (e.statusCode != 401 || savedPassword != null) rethrow;
     await _createPerson(url, handle, password);
     session = await first.api.signIn(handle: handle, password: password);
@@ -101,7 +101,7 @@ Future<void> _setup(_Flags flags) async {
   }
 
   final desktop = _client(url);
-  final owner = await desktop.api.signIn(handle: 'maia', password: 'maia-admin');
+  final owner = await desktop.api.signIn(handle: 'maie', password: 'maie-admin');
   desktop.token = owner.token;
   final theirs = await desktop.api.chatSessions();
   if (theirs.any((s) => s.id == probe.id)) {
@@ -121,10 +121,10 @@ Future<void> _setup(_Flags flags) async {
 
 Future<void> _send(_Flags flags, String text) async {
   final saved = _readLocal();
-  final url = _normalise(flags.url ?? saved['MAIA_EVAL_URL']);
+  final url = _normalise(flags.url ?? saved['MAIE_EVAL_URL']);
   final handle = flags.handle;
-  final password = saved['MAIA_EVAL_PASSWORD'];
-  if (url == null || password == null || saved['MAIA_EVAL_HANDLE'] != handle) {
+  final password = saved['MAIE_EVAL_PASSWORD'];
+  if (url == null || password == null || saved['MAIE_EVAL_HANDLE'] != handle) {
     stderr.writeln('Run setup first.');
     exitCode = 64;
     return;
@@ -163,13 +163,13 @@ Future<void> _send(_Flags flags, String text) async {
 
 class _Held {
   _Held(String url) {
-    api = MaiaApiClient(
+    api = MaieApiClient(
       baseUrl: Uri.parse(url),
       tokenProvider: () => token,
     );
   }
 
-  late final MaiaApiClient api;
+  late final MaieApiClient api;
   String? token;
 }
 
@@ -189,7 +189,7 @@ Future<Map<String, dynamic>> _health(String url) async {
 
 Future<void> _createPerson(String url, String handle, String password) async {
   final admin = _client(url);
-  final session = await admin.api.signIn(handle: 'maia', password: 'maia-admin');
+  final session = await admin.api.signIn(handle: 'maie', password: 'maie-admin');
   admin.token = session.token;
   final res = await http.post(
     Uri.parse('${url}admin/people'),
@@ -215,13 +215,13 @@ Future<String?> _desktopUrl() async {
   final home = Platform.environment['HOME'];
   if (home == null) return null;
   final plist = File(
-    '$home/Library/Containers/com.maia.app.dev/Data/Library/Preferences/com.maia.app.dev.plist',
+    '$home/Library/Containers/com.maie.app.dev/Data/Library/Preferences/com.maie.app.dev.plist',
   );
   if (!plist.existsSync()) return null;
   final result = await Process.run('defaults', [
     'read',
     plist.path,
-    'flutter.maia.server_url',
+    'flutter.maie.server_url',
   ]);
   if (result.exitCode != 0) return null;
   final url = (result.stdout as String).trim();
@@ -248,7 +248,7 @@ Future<void> _writeLocal(String url, String handle, String password) async {
       : _local;
   await file.parent.create(recursive: true);
   await file.writeAsString(
-    'MAIA_EVAL_URL=$url\nMAIA_EVAL_HANDLE=$handle\nMAIA_EVAL_PASSWORD=$password\n',
+    'MAIE_EVAL_URL=$url\nMAIE_EVAL_HANDLE=$handle\nMAIE_EVAL_PASSWORD=$password\n',
   );
   if (!Platform.isWindows) {
     await Process.run('chmod', ['600', file.path]);

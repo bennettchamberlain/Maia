@@ -1,6 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:maia_app/config/field_cubit.dart';
-import 'package:maia_app/ui/chrome.dart';
+import 'package:maie_app/config/field_cubit.dart';
+import 'package:maie_app/ui/chrome.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -15,8 +15,8 @@ class SettingsPage extends StatelessWidget {
     final theme = ShadTheme.of(context);
     final field = context.watch<FieldCubit>().state;
     return Scaffold(
-      body: MaiaPane(
-        header: MaiaHeader(
+      body: MaiePane(
+        header: MaieHeader(
           title: 'Settings',
           leading: ShadIconButton.ghost(
             onPressed: onClose,

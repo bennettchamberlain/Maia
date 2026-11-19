@@ -1,7 +1,7 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:maia_app/config/field_cubit.dart';
+import 'package:maie_app/config/field_cubit.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -23,7 +23,7 @@ bool watchField(BuildContext context) {
 
 /// Frosted bone. [opacity] is the fill. A lower one is chrome, a higher
 /// one is a surface you read.
-class MaiaGlass extends StatelessWidget {
+class MaieGlass extends StatelessWidget {
   const new({
     required this.child,
     this.opacity = 0.72,
@@ -64,7 +64,7 @@ class MaiaGlass extends StatelessWidget {
 /// shadcn colors while the field is on. Fills go translucent so the blur
 /// under them reads as glass. Ink on a primary button stays dark enough
 /// to hit.
-ShadThemeData maiaFieldTheme(ShadThemeData theme) {
+ShadThemeData maieFieldTheme(ShadThemeData theme) {
   final veil = bone.withValues(alpha: 0.58);
   final panel = bone.withValues(alpha: 0.84);
   final reading = bone.withValues(alpha: 0.92);

@@ -1,12 +1,12 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/chat/day_groups.dart';
-import 'package:maia_app/graph/ontology_view.dart';
-import 'package:maia_app/memory/memory.dart';
-import 'package:maia_app/memory/memory_filter.dart';
-import 'package:maia_app/ui/chrome.dart';
-import 'package:maia_app/ui/company_logo.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/chat/day_groups.dart';
+import 'package:maie_app/graph/ontology_view.dart';
+import 'package:maie_app/memory/memory.dart';
+import 'package:maie_app/memory/memory_filter.dart';
+import 'package:maie_app/ui/chrome.dart';
+import 'package:maie_app/ui/company_logo.dart';
+import 'package:maie_models/maie_models.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -17,7 +17,7 @@ class MemoryPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocProvider(
       create: (context) =>
-          MemoryBloc(api: context.read<MaiaApiClient>())
+          MemoryBloc(api: context.read<MaieApiClient>())
             ..add(const MemoryFetched()),
       child: const MemoryView(),
     );
@@ -30,8 +30,8 @@ class MemoryView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: MaiaPane(
-        header: MaiaHeader(
+      body: MaiePane(
+        header: MaieHeader(
           title: 'Memory',
           actions: [
             ShadIconButton.ghost(
@@ -171,9 +171,9 @@ class _MemoryBodyState extends State<_MemoryBody> {
     switch (state.status) {
       case MemoryStatus.initial:
       case MemoryStatus.loading:
-        return const MaiaSkeleton();
+        return const MaieSkeleton();
       case MemoryStatus.failure when state.timelines.isEmpty:
-        return MaiaFailure(
+        return MaieFailure(
           message: state.error ?? 'Could not load memory',
           onRetry: () =>
               context.read<MemoryBloc>().add(const MemoryRefreshed()),
@@ -181,7 +181,7 @@ class _MemoryBodyState extends State<_MemoryBody> {
       case MemoryStatus.failure:
       case MemoryStatus.success:
         if (state.busy && state.entries.isEmpty) {
-          return const MaiaSkeleton();
+          return const MaieSkeleton();
         }
         if (entries.isEmpty) {
           final message = filtered
@@ -189,7 +189,7 @@ class _MemoryBodyState extends State<_MemoryBody> {
               : 'Nothing on this timeline yet.';
           return RefreshIndicator(
             onRefresh: () => _refresh(context),
-            child: MaiaScrollFill(
+            child: MaieScrollFill(
               padding: const EdgeInsets.all(24),
               child: Text(
                 message,

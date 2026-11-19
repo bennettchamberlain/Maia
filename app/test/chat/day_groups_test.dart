@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:maia_app/chat/day_groups.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_app/chat/day_groups.dart';
+import 'package:maie_models/maie_models.dart';
 
 TimelineEntry entry(String id, DateTime ended) => TimelineEntry(
   id: id,

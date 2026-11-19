@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:maia_app/chat/bloc/chat_bloc.dart';
-import 'package:maia_app/chat/chat_turn_bench.dart';
+import 'package:maie_app/chat/bloc/chat_bloc.dart';
+import 'package:maie_app/chat/chat_turn_bench.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -46,7 +46,7 @@ class _ChatBenchStripState extends State<ChatBenchStrip> {
   void _registerStart() {
     if (_extensionReady) return;
     _extensionReady = true;
-    developer.registerExtension('ext.maia.bench', (method, params) async {
+    developer.registerExtension('ext.maie.bench', (method, params) async {
       final live = _live;
       if (live != null && live.mounted && !live._running) {
         unawaited(live._run());

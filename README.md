@@ -1,8 +1,8 @@
-# Maia
+# Maie
 
 A personal digital memory and a personal AI that lives on your machine.
 
-Maia remembers people, work, places, and the next honest hour so you do not
+Maie remembers people, work, places, and the next honest hour so you do not
 have to keep it all in your head. The graph and the policies stay on your
 hardware. Cloud services are invited in only when they earn it: cheaper
 inference, better search, and connectors you do not want to build yourself.
@@ -12,7 +12,7 @@ Memento mori. Twenty-four hours. That is the whole day.
 ## Why it is split this way
 
 Most “personal AI” products either upload your life to someone else’s cluster
-or they starve on a laptop. Maia does neither as a religion.
+or they starve on a laptop. Maie does neither as a religion.
 
 **On prem, by default.** Memories, people, places, grants, and the life graph
 live in Napalm (Gel on Postgres). Access control is in the schema, not in a
@@ -21,7 +21,7 @@ middleware afterthought. If the laptop is closed, the private store is closed.
 **Cloud, on purpose.** Parasail runs the large chat and embedding models so a
 phone or a thin box is not paying for a 70B locally. You.com grounds a turn
 in the live web. withone.ai connects Gmail, Calendar, and GitHub without
-Maia holding those OAuth tokens. MCP lets the same tools show up in Cursor
+Maie holding those OAuth tokens. MCP lets the same tools show up in Cursor
 or any other agent host.
 
 You keep the source of truth. You rent the horsepower.
@@ -55,7 +55,7 @@ tree (cards, lists, search results, graph edges, checks) that the Flutter
 client draws. A web search is a set of cards. A weave is edges you can
 confirm. The model can talk, and the screen can show the structure it used.
 
-## Cloud services Maia actually uses
+## Cloud services Maie actually uses
 
 ### You.com
 
@@ -67,7 +67,7 @@ Grounding, not a second brain.
   `https://you.com/docs/_mcp/server` for You.com’s own docs.
 - **Plugins / skills:** the repo ships You.com-oriented skills (search,
   research, finance, discover) so an editor agent can use the same endpoints
-  Maia’s chat tool uses.
+  Maie’s chat tool uses.
 
 A You.com key can live in `.env` or be pasted from the app. It never becomes
 the memory store.
@@ -77,8 +77,8 @@ the memory store.
 Connectors without becoming a Google/GitHub OAuth shop.
 
 - **Connect:** the `connect/` sidecar speaks `@withone/connect`. The Flutter
-  app stays on the Maia API host (`/one/authorize`, `/one/connect`,
-  `/one/sync`). Tokens stay at One. Maia stores a grant pointer and
+  app stays on the Maie API host (`/one/authorize`, `/one/connect`,
+  `/one/sync`). Tokens stay at One. Maie stores a grant pointer and
   platforms (Gmail, Google Calendar, GitHub).
 - **MCP:** `https://mcp.withone.ai/mcp` so the same connections are usable
   from an MCP client.
@@ -98,13 +98,13 @@ curve.
 - Voice brain: PersonaVoice can think on Parasail while speech stays on the
   device or a local sidecar.
 
-`MAIA_CHAT_PROVIDER=auto` prefers Parasail, then Ollama. The graph does
+`MAIE_CHAT_PROVIDER=auto` prefers Parasail, then Ollama. The graph does
 not move just because the model did.
 
 ### MCP and plugins
 
 `.cursor/mcp.json` wires You.com and One into Cursor. The tree also has an
-MCP server/client path so Maia can host tools and consume other people’s
+MCP server/client path so Maie can host tools and consume other people’s
 servers. Plugins and skills in `.agents/skills` are how editor agents share
 the same You.com / One / payments contracts as the running app.
 
@@ -121,7 +121,7 @@ swarm/      Weaver (Parasail + You.com)
 ```
 
 Older application code also lives under `frontend/` and `backend/`. The
-product you run for Maia is the schema / server / Flutter stack above.
+product you run for Maie is the schema / server / Flutter stack above.
 
 ## Run
 
@@ -131,14 +131,14 @@ cp .env.example .env
 
 set -a && source .env && set +a
 export HACKATHON_ROOT="$PWD"
-export MAIA_PYTHON="$PWD/.venv/bin/python"
-export MAIA_QUERIES_DIR="$PWD/schema/queries"
-export MAIA_PORT=8090
-cd server/maia && dart run bin/main.dart
+export MAIE_PYTHON="$PWD/.venv/bin/python"
+export MAIE_QUERIES_DIR="$PWD/schema/queries"
+export MAIE_PORT=8090
+cd server/maie && dart run bin/main.dart
 ```
 
 Flutter talks to `http://localhost:8090` on the same machine, or the Mac’s
-Tailscale/LAN address from a phone. Handle `maia`, password `maia-admin`
+Tailscale/LAN address from a phone. Handle `maie`, password `maie-admin`
 on a fresh local box.
 
 ```sh

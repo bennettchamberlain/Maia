@@ -2,14 +2,14 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/app/app.dart';
-import 'package:maia_app/home/home.dart';
-import 'package:maia_app/session/session.dart';
-import 'package:maia_app/sign_in/sign_in.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/app/app.dart';
+import 'package:maie_app/home/home.dart';
+import 'package:maie_app/session/session.dart';
+import 'package:maie_app/sign_in/sign_in.dart';
+import 'package:maie_models/maie_models.dart';
 
-class _MockApi extends Mock implements MaiaApiClient;
+class _MockApi extends Mock implements MaieApiClient;
 
 void main() {
   group('App', () {
@@ -18,11 +18,11 @@ void main() {
       registerFallbackValue(Uri.parse('http://100.86.127.113:8090/'));
       when(() => api.baseUrl = any())
           .thenReturn(Uri.parse('http://100.86.127.113:8090/'));
-      when(() => api.signIn(handle: 'maia', password: 'maia-admin')).thenAnswer(
+      when(() => api.signIn(handle: 'maie', password: 'maie-admin')).thenAnswer(
         (_) async => Session(
           token: 't',
           expiresAt: DateTime.utc(2030),
-          person: const Person(id: 'p1', handle: 'maia', isSuperadmin: true),
+          person: const Person(id: 'p1', handle: 'maie', isSuperadmin: true),
         ),
       );
       when(api.chatSessions).thenAnswer((_) async => []);

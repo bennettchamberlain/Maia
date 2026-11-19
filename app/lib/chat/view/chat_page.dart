@@ -4,25 +4,25 @@ import 'dart:math' as math;
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/chat/attach.dart';
-import 'package:maia_app/chat/chat.dart';
-import 'package:maia_app/chat/parts/chat_part_view.dart';
-import 'package:maia_app/chat/quote.dart';
-import 'package:maia_app/chat/view/chat_bench_strip.dart';
-import 'package:maia_app/chat/view/composer.dart';
-import 'package:maia_app/chat/view/file_chip.dart';
-import 'package:maia_app/chat/view/timeline_column.dart';
-import 'package:maia_app/config/chat_settings_cubit.dart';
-import 'package:maia_app/ui/chrome.dart';
-import 'package:maia_app/ui/maia_cloud.dart';
-import 'package:maia_app/ui/fault.dart';
-import 'package:maia_app/ui/selection_menu.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/chat/attach.dart';
+import 'package:maie_app/chat/chat.dart';
+import 'package:maie_app/chat/parts/chat_part_view.dart';
+import 'package:maie_app/chat/quote.dart';
+import 'package:maie_app/chat/view/chat_bench_strip.dart';
+import 'package:maie_app/chat/view/composer.dart';
+import 'package:maie_app/chat/view/file_chip.dart';
+import 'package:maie_app/chat/view/timeline_column.dart';
+import 'package:maie_app/config/chat_settings_cubit.dart';
+import 'package:maie_app/ui/chrome.dart';
+import 'package:maie_app/ui/maie_cloud.dart';
+import 'package:maie_app/ui/fault.dart';
+import 'package:maie_app/ui/selection_menu.dart';
+import 'package:maie_models/maie_models.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
-/// Chat with the Maia agent. Phone: list of conversations, tap to open.
+/// Chat with the Maie agent. Phone: list of conversations, tap to open.
 /// Wide: list on the left, conversation on the right.
 class ChatPage extends StatelessWidget {
   const new({super.key});
@@ -31,7 +31,7 @@ class ChatPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final chat = BlocProvider(
       create: (context) => ChatBloc(
-        api: context.read<MaiaApiClient>(),
+        api: context.read<MaieApiClient>(),
         provider: () => context.read<ChatSettingsCubit>().state,
       )..add(const ChatStarted()),
       child: const _CloseWhenPaused(child: ChatView()),
@@ -41,7 +41,7 @@ class ChatPage extends StatelessWidget {
       return chat;
     } on Object {
       return BlocProvider(
-        create: (context) => VoiceCubit(api: context.read<MaiaApiClient>()),
+        create: (context) => VoiceCubit(api: context.read<MaieApiClient>()),
         child: chat,
       );
     }
@@ -63,7 +63,7 @@ class ChatView extends StatelessWidget {
           return Row(
             children: [
               SizedBox(width: listWidth, child: const TimelineColumn()),
-              const MaiaDivider.vertical(),
+              const MaieDivider.vertical(),
               const Expanded(child: _BenchColumn(child: _WideConversation())),
             ],
           );
@@ -154,7 +154,7 @@ class _ConversationState extends State<_Conversation> {
       if (mounted) setState(() => _notice = null);
     } on Object catch (e) {
       if (!mounted) return;
-      rememberFault(context.read<MaiaApiClient>(), 'attach file', e);
+      rememberFault(context.read<MaieApiClient>(), 'attach file', e);
       setState(() => _notice = shownFault(e));
     } finally {
       if (mounted) setState(() => _picking = false);
@@ -226,8 +226,8 @@ class _ConversationState extends State<_Conversation> {
           final open = state.open;
           final theme = ShadTheme.of(context);
           return Scaffold(
-            body: MaiaPane(
-              header: MaiaHeader(
+            body: MaiePane(
+              header: MaieHeader(
                 title: open?.title ?? 'New chat',
                 onTitleTap: open == null
                     ? null
@@ -251,7 +251,7 @@ class _ConversationState extends State<_Conversation> {
                     : null,
               ),
               body: state.status == ChatStatus.loading && state.messages.isEmpty
-                  ? const MaiaSkeleton()
+                  ? const MaieSkeleton()
                   : Shortcuts(
                       shortcuts: const <ShortcutActivator, Intent>{
                         SingleActivator(LogicalKeyboardKey.keyA, control: true):
@@ -264,7 +264,7 @@ class _ConversationState extends State<_Conversation> {
                           _selected = content?.plainText ?? '';
                         },
                         contextMenuBuilder: (context, region) {
-                          return maiaRegionMenu(
+                          return maieRegionMenu(
                             context,
                             region,
                             selected: _selected,
@@ -341,7 +341,7 @@ class _ConversationState extends State<_Conversation> {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          MaiaBusyIcon(
+                          MaieBusyIcon(
                             key: const Key('chat_file_button'),
                             busy: _picking,
                             icon: const Icon(LucideIcons.file, size: 16),
@@ -359,7 +359,7 @@ class _ConversationState extends State<_Conversation> {
                                 final talk =
                                     v.state.listening &&
                                     v.state.capture == VoiceCapture.talk;
-                                if (!talk) return 'Ask Maia…';
+                                if (!talk) return 'Ask Maie…';
                                 final partial = v.state.partial.trim();
                                 return partial.isEmpty ? 'Listening…' : partial;
                               }),
@@ -501,7 +501,7 @@ class _TalkingBubble extends StatelessWidget {
     if (!talking) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Center(child: MaiaCloud(speaking: voice.speaking)),
+      child: Center(child: MaieCloud(speaking: voice.speaking)),
     );
   }
 }
@@ -654,7 +654,7 @@ class _EmptyConversation extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) =>
-      const MaiaEmpty('Pick a chat or start a new one.');
+      const MaieEmpty('Pick a chat or start a new one.');
 }
 
 class _CloseWhenPaused extends StatefulWidget {

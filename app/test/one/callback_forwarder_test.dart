@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:maia_app/one/callback_forwarder.dart';
+import 'package:maie_app/one/callback_forwarder.dart';
 
 void main() {
   test('a local API on the callback port is left alone', () async {

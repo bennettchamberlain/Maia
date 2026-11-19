@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
-import 'package:maia_app/config/app_config.dart';
+import 'package:maie_app/config/app_config.dart';
 
 /// One ranked page from You.com Web Search.
 class YouHit {

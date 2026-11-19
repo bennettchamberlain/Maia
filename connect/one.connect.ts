@@ -5,12 +5,12 @@ import { defineConnectApp } from "@withone/connect/config";
 // on One. Update the live app with `one connect create` from this directory
 // so the old eleven-tool permission set is dropped.
 export default defineConnectApp({
-  name: "Maia",
+  name: "Maie",
   redirectUris: [
     "http://127.0.0.1:8090/one/callback",
     "http://localhost:8090/one/callback",
     "http://127.0.0.1:8788/api/one/callback",
   ],
   reason:
-    "Maia reads the accounts you connect and keeps them in your memory on this machine.",
+    "Maie reads the accounts you connect and keeps them in your memory on this machine.",
 });

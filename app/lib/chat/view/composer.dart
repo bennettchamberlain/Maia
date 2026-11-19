@@ -1,8 +1,8 @@
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/services.dart';
-import 'package:maia_app/chat/draft.dart';
-import 'package:maia_app/chat/store_file.dart';
-import 'package:maia_app/chat/view/file_chip.dart';
+import 'package:maie_app/chat/draft.dart';
+import 'package:maie_app/chat/store_file.dart';
+import 'package:maie_app/chat/view/file_chip.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 

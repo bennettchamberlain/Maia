@@ -1,8 +1,8 @@
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/ui/fault.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/ui/fault.dart';
+import 'package:maie_models/maie_models.dart';
 
 part 'jobs_event.dart';
 part 'jobs_state.dart';
@@ -15,7 +15,7 @@ class JobsBloc extends Bloc<JobsEvent, JobsState> {
     on<JobsFilterChanged>(_onFilterChanged);
   }
 
-  final MaiaApiClient _api;
+  final MaieApiClient _api;
 
   Future<void> _onFetched(JobsFetched e, Emitter<JobsState> emit) async {
     if (state.status == JobsStatus.success) return;
@@ -46,7 +46,7 @@ class JobsBloc extends Bloc<JobsEvent, JobsState> {
           clearError: true,
         ),
       );
-    } on MaiaApiException catch (err) {
+    } on MaieApiException catch (err) {
       emit(
         state.copyWith(
           status: JobsStatus.failure,

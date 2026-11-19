@@ -3,7 +3,7 @@
     "messages": [
       {
         "id": "g-alex-1",
-        "subject": "Maia graph review with Alex",
+        "subject": "Maie graph review with Alex",
         "from": "Alex Chen <alex@example.com>",
         "snippet": "Alex will send the GitHub PR for the weaver before Friday standup.",
         "date": "2026-10-27T16:00:00Z"
@@ -27,7 +27,7 @@
         "id": "gh-1",
         "type": "PullRequestEvent",
         "created_at": "2026-10-27T18:10:00Z",
-        "repo": { "name": "maia/weaver" },
+        "repo": { "name": "maie/weaver" },
         "payload": { "action": "opened", "title": "Alex: life graph weaver" }
       }
     ]

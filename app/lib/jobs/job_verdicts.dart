@@ -1,4 +1,4 @@
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_models/maie_models.dart';
 
 /// How loudly a sentence should read. Worst first.
 enum JobTone { critical, warning, ok }
@@ -110,7 +110,7 @@ List<JobVerdict> jobVerdicts(List<JobRecord> jobs, {DateTime? now}) {
       const JobVerdict(
         tone: JobTone.warning,
         headline: 'No sync has run.',
-        detail: 'Connect an account and Maia starts keeping a copy.',
+        detail: 'Connect an account and Maie starts keeping a copy.',
       ),
     );
   } else if (verdicts.every((verdict) => verdict.tone == JobTone.ok) &&

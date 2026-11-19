@@ -1,4 +1,4 @@
-import 'package:maia_app/chat/parts/chat_part.dart';
+import 'package:maie_app/chat/parts/chat_part.dart';
 
 const _stops = {
   'about',

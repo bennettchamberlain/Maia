@@ -4,16 +4,16 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:maia_app/chat/bloc/chat_bloc.dart';
-import 'package:maia_app/chat/memory_match.dart';
-import 'package:maia_app/chat/parts/chat_part.dart';
-import 'package:maia_app/graph/ontology_view.dart';
-import 'package:maia_app/chat/parts/you_search.dart';
-import 'package:maia_app/chat/voice_cubit.dart';
-import 'package:maia_app/ui/chrome.dart';
-import 'package:maia_app/ui/company_logo.dart';
-import 'package:maia_app/ui/fault.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_app/chat/bloc/chat_bloc.dart';
+import 'package:maie_app/chat/memory_match.dart';
+import 'package:maie_app/chat/parts/chat_part.dart';
+import 'package:maie_app/graph/ontology_view.dart';
+import 'package:maie_app/chat/parts/you_search.dart';
+import 'package:maie_app/chat/voice_cubit.dart';
+import 'package:maie_app/ui/chrome.dart';
+import 'package:maie_app/ui/company_logo.dart';
+import 'package:maie_app/ui/fault.dart';
+import 'package:maie_models/maie_models.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -67,7 +67,7 @@ class ChatMessageBody extends StatelessWidget {
                     ChatBlock(:final part) => ChatPartView(part),
                     ChatBlockPending() => const SizedBox(
                       height: 96,
-                      child: MaiaSkeleton(rows: 2),
+                      child: MaieSkeleton(rows: 2),
                     ),
                   },
                   const SizedBox(height: 8),
@@ -121,7 +121,7 @@ class ChatPartView extends StatelessWidget {
         softWrap: true,
         style: ShadTheme.of(context).textTheme.h4,
       ),
-      ChatDivider() => const MaiaDivider.horizontal(),
+      ChatDivider() => const MaieDivider.horizontal(),
       ChatColumn(:final children) => _ColumnView(children),
       ChatRow(:final children) => SingleChildScrollView(
         scrollDirection: Axis.horizontal,
@@ -137,7 +137,7 @@ class ChatPartView extends StatelessWidget {
         children: [
           for (final child in children) ...[
             ChatPartView(child),
-            const MaiaDivider.horizontal(),
+            const MaieDivider.horizontal(),
           ],
         ],
       ),
@@ -286,7 +286,7 @@ class _MapView extends StatelessWidget {
                   TileLayer(
                     urlTemplate:
                         'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.maia.app',
+                    userAgentPackageName: 'com.maie.app',
                   ),
                   MarkerLayer(
                     markers: [
@@ -836,7 +836,7 @@ class _YouSearchViewState extends State<_YouSearchView> {
       return Text(_error!, style: theme.textTheme.muted);
     }
     if (hits == null) {
-      return const SizedBox(height: 120, child: MaiaSkeleton(rows: 2));
+      return const SizedBox(height: 120, child: MaieSkeleton(rows: 2));
     }
     if (hits.isEmpty) {
       return Text('No results.', style: theme.textTheme.muted);

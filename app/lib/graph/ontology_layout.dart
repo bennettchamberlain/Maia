@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui';
 
-import 'package:maia_app/chat/parts/chat_part.dart';
+import 'package:maie_app/chat/parts/chat_part.dart';
 
 /// Where each term sits, in unit space. Index matches [ChatGraph.nodes].
 ///

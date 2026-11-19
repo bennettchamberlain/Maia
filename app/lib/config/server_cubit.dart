@@ -1,9 +1,9 @@
 import 'package:bloc/bloc.dart';
 import 'package:flutter/foundation.dart';
-import 'package:maia_app/config/app_config.dart';
+import 'package:maie_app/config/app_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Which maia-api the app talks to. Defaults to the build-time
+/// Which maie-api the app talks to. Defaults to the build-time
 /// [AppConfig.apiUrl]; the sign-in screen lets you point at a LAN address
 /// (your Mac/Linux box from a phone) and remembers it.
 class ServerCubit extends Cubit<String> {
@@ -16,7 +16,7 @@ class ServerCubit extends Cubit<String> {
   }
 
   /// Phones cannot reach the Mac via localhost. A device build that
-  /// passed `--dart-define=MAIA_API_URL=...` replaces loopback with that.
+  /// passed `--dart-define=MAIE_API_URL=...` replaces loopback with that.
   static String rewriteLoopback(String url) {
     if (kIsWeb) return url;
     final parsed = Uri.tryParse(url.contains('://') ? url : 'http://$url');
@@ -27,7 +27,7 @@ class ServerCubit extends Cubit<String> {
     return url;
   }
 
-  static const _key = 'maia.server_url';
+  static const _key = 'maie.server_url';
   final SharedPreferences? _prefs;
 
   /// Parsed server, or the build-time default while the field is half-typed.

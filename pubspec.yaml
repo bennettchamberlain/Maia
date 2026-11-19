@@ -1,12 +1,12 @@
 # Pub workspace root for the Dart packages and server. The Flutter app
 # resolves separately: flutter_test needs analyzer >=8, gel 0.6 needs <8.
-name: maia_workspace
+name: maie_workspace
 publish_to: none
 environment:
   sdk: ^3.13.0
 workspace:
-  - packages/maia_models
-  - packages/maia_api_client
-  - packages/maia_jobs
-  - server/maia
+  - packages/maie_models
+  - packages/maie_api_client
+  - packages/maie_jobs
+  - server/maie
   - evals/chat

@@ -6,7 +6,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
-import 'package:maia_app/ghost/ghost_store.dart';
+import 'package:maie_app/ghost/ghost_store.dart';
 import 'package:material_ui/material_ui.dart';
 
 /// Drives the running app the way a person would: a cursor moves, a click
@@ -103,7 +103,7 @@ class _GhostLayerState extends State<_GhostStage>
     final binding = WidgetsBinding.instance.runtimeType.toString();
     if (binding.contains('Test')) return;
     _extensionReady = true;
-    developer.registerExtension('ext.maia.ghost', (method, params) async {
+    developer.registerExtension('ext.maie.ghost', (method, params) async {
       try {
         final op = params['op'] ?? '';
         switch (op) {

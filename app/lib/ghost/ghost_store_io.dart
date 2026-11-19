@@ -3,7 +3,7 @@ import 'dart:io';
 Directory? _dir;
 
 Directory _folder() {
-  final dir = _dir ??= Directory('${Directory.systemTemp.path}/maia-ghost');
+  final dir = _dir ??= Directory('${Directory.systemTemp.path}/maie-ghost');
   if (!dir.existsSync()) dir.createSync(recursive: true);
   return dir;
 }

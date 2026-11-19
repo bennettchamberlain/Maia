@@ -108,7 +108,7 @@ test-results-desktop/
 # Local HBPE model checkpoints pulled out of the container volume for offline eval
 backend/.cache/
 
-# --- Maia (Dart/Flutter monorepo) -----------------------------------------
+# --- Maie (Dart/Flutter monorepo) -----------------------------------------
 .dart_tool/
 .packages
 pubspec.lock
@@ -124,7 +124,7 @@ app/linux/flutter/ephemeral/
 app/macos/Flutter/ephemeral/
 schema/.gel/
 
-# Maia / event local
+# Maie / event local
 .env
 # Eval client of the shared server: URL and the eval person's password.
 evals/chat/*.local

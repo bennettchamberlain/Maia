@@ -1,11 +1,11 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/jobs/jobs.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/jobs/jobs.dart';
+import 'package:maie_models/maie_models.dart';
 
-class _MockApi extends Mock implements MaiaApiClient;
+class _MockApi extends Mock implements MaieApiClient;
 
 JobRecord _job(String id, JobState state) => JobRecord(
   id: id,
@@ -68,7 +68,7 @@ void main() {
       'reports failure',
       setUp: () {
         when(() => api.jobs(limit: 200))
-            .thenThrow(const MaiaApiException(500, 'boom'));
+            .thenThrow(const MaieApiException(500, 'boom'));
       },
       build: () => JobsBloc(api: api),
       act: (b) => b.add(const JobsFetched()),

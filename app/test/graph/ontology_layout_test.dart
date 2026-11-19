@@ -1,16 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:maia_app/chat/parts/chat_part.dart';
-import 'package:maia_app/graph/ontology_layout.dart';
+import 'package:maie_app/chat/parts/chat_part.dart';
+import 'package:maie_app/graph/ontology_layout.dart';
 
 void main() {
   const graph = ChatGraph(
     nodes: [
-      ChatGraphNode(name: 'Maia', kind: 'project', subtitle: 'local memory'),
+      ChatGraphNode(name: 'Maie', kind: 'project', subtitle: 'local memory'),
       ChatGraphNode(name: 'ship chat', kind: 'goal'),
     ],
     edges: [
       ChatGraphLink(
-        source: 'Maia',
+        source: 'Maie',
         target: 'ship chat',
         kind: 'pursues',
         status: 'verified',
@@ -28,7 +28,7 @@ void main() {
 
   test('one term sits in the middle', () {
     final spots = layoutOntology(
-      const ChatGraph(nodes: [ChatGraphNode(name: 'Maia')]),
+      const ChatGraph(nodes: [ChatGraphNode(name: 'Maie')]),
     );
     expect(spots.single.dx, 0.5);
     expect(spots.single.dy, 0.5);

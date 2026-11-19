@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/services.dart';
-import 'package:maia_app/ui/glass.dart';
+import 'package:maie_app/ui/glass.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -33,7 +33,7 @@ class _FieldBackdropState extends State<FieldBackdrop> {
     final controller = WebViewController();
     await controller.setJavaScriptMode(JavaScriptMode.unrestricted);
     await controller.setBackgroundColor(bone);
-    await controller.loadHtmlString(patched, baseUrl: 'https://maia.field');
+    await controller.loadHtmlString(patched, baseUrl: 'https://maie.field');
     if (!mounted) return;
     setState(() => _controller = controller);
   }

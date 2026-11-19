@@ -1,16 +1,16 @@
 import 'dart:math' as math;
 
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:maia_app/chat/chat.dart';
-import 'package:maia_app/chat/view/chat_bench_strip.dart';
-import 'package:maia_app/home/view/settings_page.dart';
-import 'package:maia_app/jobs/jobs.dart';
-import 'package:maia_app/memory/memory.dart';
-import 'package:maia_app/session/session.dart';
-import 'package:maia_app/tools/tools.dart';
-import 'package:maia_app/ui/chrome.dart';
-import 'package:maia_app/ui/glass.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_app/chat/chat.dart';
+import 'package:maie_app/chat/view/chat_bench_strip.dart';
+import 'package:maie_app/home/view/settings_page.dart';
+import 'package:maie_app/jobs/jobs.dart';
+import 'package:maie_app/memory/memory.dart';
+import 'package:maie_app/session/session.dart';
+import 'package:maie_app/tools/tools.dart';
+import 'package:maie_app/ui/chrome.dart';
+import 'package:maie_app/ui/glass.dart';
+import 'package:maie_models/maie_models.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -131,9 +131,9 @@ class _Sidebar extends StatelessWidget {
       width: 220,
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: MaiaPane(
+        child: MaiePane(
           plate: false,
-          header: Text('Maia', style: theme.textTheme.small),
+          header: Text('Maie', style: theme.textTheme.small),
           body: ListView(
             padding: const EdgeInsets.only(top: 16),
             children: [
@@ -164,7 +164,7 @@ class _Sidebar extends StatelessWidget {
         child: column,
       );
     }
-    return MaiaGlass(
+    return MaieGlass(
       opacity: 0.5,
       sigma: 16,
       border: false,
@@ -231,7 +231,7 @@ class _BottomNav extends StatelessWidget {
       ),
     );
     if (!field) return bar;
-    return MaiaGlass(opacity: 0.62, border: false, child: bar);
+    return MaieGlass(opacity: 0.62, border: false, child: bar);
   }
 }
 
@@ -314,14 +314,14 @@ class _UserMenuState extends State<_UserMenu> {
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    final handle = widget.person?.handle ?? 'Maia';
+    final handle = widget.person?.handle ?? 'Maie';
     final initial = handle.substring(0, 1).toUpperCase();
     final detail = widget.person?.email ?? widget.person?.displayName;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        MaiaExpand(
+        MaieExpand(
           expanded: _open,
           child: Padding(
             padding: const EdgeInsets.only(bottom: 4),

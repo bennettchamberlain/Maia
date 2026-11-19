@@ -1,5 +1,5 @@
-import 'package:maia_app/ghost/ghost_store_stub.dart'
-    if (dart.library.io) 'package:maia_app/ghost/ghost_store_io.dart'
+import 'package:maie_app/ghost/ghost_store_stub.dart'
+    if (dart.library.io) 'package:maie_app/ghost/ghost_store_io.dart'
     as store;
 
 /// One png in the tape folder, or null when this platform cannot store it.

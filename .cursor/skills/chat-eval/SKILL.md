@@ -1,7 +1,7 @@
 ---
 name: chat-eval
 description: >-
-  Recursively test a Maia chat feature by connecting another client to the
+  Recursively test a Maie chat feature by connecting another client to the
   server the desktop app already uses, until the required cases pass. Use
   when the user says recursively test chat, eval a chat feature, spin up
   evals, test until it works, set up the test client, or turn a chat PRD
@@ -22,7 +22,7 @@ From the repo root, once, before a loop:
 cd evals/chat && dart run bin/chat_eval.dart setup
 ```
 
-`setup` reads the desktop app's saved server URL, checks `GET /health`, and signs in as `eval`. The first time, it creates that person through the desktop account (`maia`). It then opens two connections as `eval` and one as `maia`, and checks that the second eval connection sees the probe session and `maia` does not. The URL and the eval password go in `evals/chat/client.local`, which is gitignored. Do not print that file.
+`setup` reads the desktop app's saved server URL, checks `GET /health`, and signs in as `eval`. The first time, it creates that person through the desktop account (`maie`). It then opens two connections as `eval` and one as `maie`, and checks that the second eval connection sees the probe session and `maie` does not. The URL and the eval password go in `evals/chat/client.local`, which is gitignored. Do not print that file.
 
 A later case sends as that same client:
 
@@ -34,7 +34,7 @@ cd evals/chat && dart run bin/chat_eval.dart send "the prompt for this case"
 
 Pass `--url` when the desktop app is pointed somewhere else. Pass `--handle eval-<slug>` only for a second eval that must stay out of the first eval's sessions. The server already accepts both at once.
 
-An instabox (`npx instabox@latest sh`, then `instabox ssh`) may run this same client when that box can reach the server URL. It still does not start maia-api. A cloud box cannot see a tailnet address unless Tailscale is up there. Run the driver on the machine that already reaches the server.
+An instabox (`npx instabox@latest sh`, then `instabox ssh`) may run this same client when that box can reach the server URL. It still does not start maie-api. A cloud box cannot see a tailnet address unless Tailscale is up there. Run the driver on the machine that already reaches the server.
 
 A screen check uses the Flutter app pointed at the same URL, signed in as `eval`, not as the desktop person. Restart the process that owns a fix. A server change is a new `dart` process on the server machine. A widget change is a Flutter restart. Hot reload does not count as a rerun.
 
@@ -84,13 +84,13 @@ Include an edge only when this feature can hit it. Mark it `required` or `adviso
 - A second session does not show the first session's messages.
 - Signed-out send is a 401, and the spinner stops.
 - The stream ends with `finish`.
-- The provider the box is actually on (`MAIA_CHAT_PROVIDER` and `/health`). Do not require Parasail on an Ollama box.
+- The provider the box is actually on (`MAIE_CHAT_PROVIDER` and `/health`). Do not require Parasail on an Ollama box.
 
 ## A PRD
 
 Split the PRD into features in order. Each feature gets its own file, `evals/chat/<slug>.md`, and its own loop. Spin another eval by starting that file's loop, not by widening the current one.
 
-Evals share the server. They do not share a person: the default handle is `eval`, and a parallel feature uses `--handle eval-<slug>`. Two features that both edit `server/maia/lib/src/chat/turn.dart` are never parallel.
+Evals share the server. They do not share a person: the default handle is `eval`, and a parallel feature uses `--handle eval-<slug>`. Two features that both edit `server/maie/lib/src/chat/turn.dart` are never parallel.
 
 ## Evidence
 

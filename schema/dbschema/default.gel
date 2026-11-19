@@ -2,7 +2,7 @@ using extension pgvector;
 
 module default {
   # ---------------------------------------------------------------------------
-  # Caller identity. maia-api sets `current_person_id` per request on a
+  # Caller identity. maie-api sets `current_person_id` per request on a
   # non-superuser role. Policies read `current_person` for flags.
   # ---------------------------------------------------------------------------
   global current_person_id: uuid;
@@ -10,7 +10,7 @@ module default {
     select Person filter .id = global current_person_id
   );
 
-  # Set only by the maia-api process for credential lookups. Never by a
+  # Set only by the maie-api process for credential lookups. Never by a
   # caller. Replaced by Napalm LocalAuth (`POST /db/{id}/signin`) once the
   # Napalm server is the runtime.
   global service_mode: bool;
@@ -34,7 +34,7 @@ module default {
 
   scalar type GrantMode extending enum<auto, review, block>;
 
-  # Disclosure ladder, coarsest first. Applied in maia-api, stored here.
+  # Disclosure ladder, coarsest first. Applied in maie-api, stored here.
   scalar type Disclosure extending enum<
     none, boolean, count, summary, redacted, full
   >;
@@ -105,7 +105,7 @@ module default {
       allow select
       using (exists global current_person_id);
 
-    # maia-api resolves handle -> person during sign-in, before anyone
+    # maie-api resolves handle -> person during sign-in, before anyone
     # is signed in. Only the service role gets this; it reads, never writes.
     access policy service_reads
       allow select
@@ -135,7 +135,7 @@ module default {
   }
 
   # Long-lived bearer credential for machines (the OpenClaw memory plugin,
-  # scripts). Only the hash is stored; maia-api resolves hash -> person in
+  # scripts). Only the hash is stored; maie-api resolves hash -> person in
   # service_mode, exactly like LocalCredential. Owner can list/revoke.
   type ApiKey {
     required person: Person;
@@ -611,7 +611,7 @@ module default {
     };
   }
 
-  # A stream about another Maia person.
+  # A stream about another Maie person.
   type PersonTimeline extending Timeline {
     required subject: Person {
       on target delete delete source;
@@ -767,7 +767,7 @@ module default {
   }
 
   # A failure someone hit. `summary` is the short line they saw. `detail`
-  # is the raw error. maia-api writes these; people do not.
+  # is the raw error. maie-api writes these; people do not.
   type ClientFault {
     required ref: str { constraint exclusive };
     required kind: str;

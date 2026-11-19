@@ -7,7 +7,7 @@ class FieldCubit extends Cubit<bool> {
     : _prefs = prefs,
       super(initial ?? prefs?.getBool(_key) ?? false);
 
-  static const _key = 'maia.field_background';
+  static const _key = 'maie.field_background';
   final SharedPreferences? _prefs;
 
   Future<void> setOn(bool value) async {

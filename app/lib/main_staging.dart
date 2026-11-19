@@ -1,6 +1,6 @@
 import 'package:flutter/widgets.dart';
-import 'package:maia_app/app/app.dart';
-import 'package:maia_app/bootstrap.dart';
+import 'package:maie_app/app/app.dart';
+import 'package:maie_app/bootstrap.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Future<void> main() async {

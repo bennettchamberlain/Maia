@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:maia_app/chat/attach.dart';
+import 'package:maie_app/chat/attach.dart';
 
 void main() {
   test('text files are quoted, binary files are only named', () {

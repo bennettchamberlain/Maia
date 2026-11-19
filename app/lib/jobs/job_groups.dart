@@ -1,4 +1,4 @@
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_models/maie_models.dart';
 
 /// One row on the jobs page. Runs of the same work sit together.
 class JobGroup {

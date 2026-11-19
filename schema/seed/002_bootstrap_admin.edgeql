@@ -4,8 +4,8 @@
 
 configure session set apply_access_policies := false;
 insert Person {
-  handle := 'maia',
-  display_name := 'Maia',
+  handle := 'maie',
+  display_name := 'Maie',
   is_superadmin := true,
 }
 unless conflict on .handle;

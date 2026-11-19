@@ -2,10 +2,10 @@ import 'dart:async';
 
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/chat/parts/chat_part.dart';
-import 'package:maia_app/ui/fault.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/chat/parts/chat_part.dart';
+import 'package:maie_app/ui/fault.dart';
+import 'package:maie_models/maie_models.dart';
 
 part 'chat_event.dart';
 part 'chat_state.dart';
@@ -29,7 +29,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     on<ChatLeft>(_onLeft);
   }
 
-  final MaiaApiClient _api;
+  final MaieApiClient _api;
   final String Function()? provider;
   final _closing = <String>{};
 
@@ -249,7 +249,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     }
     try {
       await _api.chatSteer(open.id, text);
-    } on MaiaApiException catch (err) {
+    } on MaieApiException catch (err) {
       if (err.statusCode == 409) {
         add(ChatMessageSent(text));
         return;
@@ -377,7 +377,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     );
     final replied = next.skip(userAt + 1).any((m) => m.role == 'assistant');
     if (!replied) {
-      final fence = maiaWebSearchFence(query);
+      final fence = maieWebSearchFence(query);
       final content = partial.trim().isEmpty
           ? fence
           : '${partial.trim()}\n\n$fence';

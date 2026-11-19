@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:maia_app/chat/parts/chat_part.dart';
-import 'package:maia_app/graph/ontology_view.dart';
+import 'package:maie_app/chat/parts/chat_part.dart';
+import 'package:maie_app/graph/ontology_view.dart';
 
 import '../helpers/pump_app.dart';
 
@@ -9,12 +9,12 @@ void main() {
   testWidgets('selecting the busiest term shows what it means', (tester) async {
     const graph = ChatGraph(
       nodes: [
-        ChatGraphNode(name: 'Maia', kind: 'project', subtitle: 'local memory'),
+        ChatGraphNode(name: 'Maie', kind: 'project', subtitle: 'local memory'),
         ChatGraphNode(name: 'ship chat', kind: 'goal', subtitle: 'the phone'),
       ],
       edges: [
         ChatGraphLink(
-          source: 'Maia',
+          source: 'Maie',
           target: 'ship chat',
           kind: 'pursues',
           status: 'verified',
@@ -30,9 +30,9 @@ void main() {
       ),
     );
 
-    expect(find.text('Maia'), findsOneWidget);
+    expect(find.text('Maie'), findsOneWidget);
     expect(find.text('local memory'), findsOneWidget);
-    expect(find.text('Maia pursues ship chat'), findsOneWidget);
+    expect(find.text('Maie pursues ship chat'), findsOneWidget);
   });
 
   testWidgets('an empty graph says so', (tester) async {

@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:maia_app/chat/memory_match.dart';
-import 'package:maia_app/chat/parts/chat_part.dart';
+import 'package:maie_app/chat/memory_match.dart';
+import 'package:maie_app/chat/parts/chat_part.dart';
 
 void main() {
   test('quorinth does not show the nearest mailbox', () {

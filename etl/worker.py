@@ -40,8 +40,8 @@ def main() -> int:
     platform = str(data.get("platform") or "")
     person_id = str(data.get("person_id") or "")
 
-    base = os.environ.get("MAIA_API_URL", "http://127.0.0.1:8080").rstrip("/")
-    token = str(data.get("token") or os.environ.get("MAIA_API_TOKEN") or "").strip()
+    base = os.environ.get("MAIE_API_URL", "http://127.0.0.1:8080").rstrip("/")
+    token = str(data.get("token") or os.environ.get("MAIE_API_TOKEN") or "").strip()
     headers = {"authorization": f"Bearer {token}"} if token else {}
 
     result: dict[str, Any] = {"platform": platform, "upserted": 0, "calls": 0}
@@ -372,14 +372,14 @@ def _pause(calls: int) -> None:
 
 
 def _pull_fixture(platform: str) -> object:
-    fixture = os.environ.get("MAIA_ETL_FIXTURE")
+    fixture = os.environ.get("MAIE_ETL_FIXTURE")
     if fixture:
         data = json.loads(Path(fixture).read_text())
         if isinstance(data, dict) and platform in data:
             return data[platform]
         return data
     if not os.environ.get("ONE_SECRET") and not os.environ.get("ONE_CONNECTION_KEYS"):
-        raise RuntimeError("ONE_SECRET not set; connect One or set MAIA_ETL_FIXTURE")
+        raise RuntimeError("ONE_SECRET not set; connect One or set MAIE_ETL_FIXTURE")
     intent, task = INTENTS.get(
         platform,
         ("list recent records", f"pull recent {platform} records into memory"),

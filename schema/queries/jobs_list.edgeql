@@ -1,4 +1,4 @@
-# Jobs the caller can see, newest first. maia-api inserts the record at
+# Jobs the caller can see, newest first. maie-api inserts the record at
 # enqueue; the worker updates it by pgboss_id as it runs.
 # variables: $states (array<str>, optional), $limit (int64)
 with states := <optional array<str>>$states

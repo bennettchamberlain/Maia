@@ -1,9 +1,9 @@
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/config/app_config.dart';
-import 'package:maia_app/config/server_cubit.dart';
-import 'package:maia_app/session/session.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/config/app_config.dart';
+import 'package:maie_app/config/server_cubit.dart';
+import 'package:maie_app/session/session.dart';
 
 part 'app_event.dart';
 
@@ -24,7 +24,7 @@ class AppBloc extends Bloc<AppEvent, AppState> {
     on<AppStarted>(_onStarted);
   }
 
-  final MaiaApiClient _api;
+  final MaieApiClient _api;
   final ServerCubit _server;
   final SessionCubit _session;
 

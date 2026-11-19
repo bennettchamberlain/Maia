@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:maia_app/memory/memory_filter.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_app/memory/memory_filter.dart';
+import 'package:maie_models/maie_models.dart';
 
 void main() {
   final now = DateTime(2026, 11, 18, 9);

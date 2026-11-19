@@ -2,17 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/chat/bloc/chat_bloc.dart';
-import 'package:maia_app/ui/fault.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/chat/bloc/chat_bloc.dart';
+import 'package:maie_app/ui/fault.dart';
+import 'package:maie_models/maie_models.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 DateTime? _lastHaptic;
 
 /// Long-press haptic. Right-click does not call this.
-void maiaSelectionHaptic(TargetPlatform platform) {
+void maieSelectionHaptic(TargetPlatform platform) {
   if (platform != TargetPlatform.iOS && platform != TargetPlatform.android) {
     return;
   }
@@ -26,13 +26,13 @@ void maiaSelectionHaptic(TargetPlatform platform) {
 }
 
 /// Copy, select all, and file actions for one conversation selection.
-Widget maiaRegionMenu(
+Widget maieRegionMenu(
   BuildContext context,
   SelectableRegionState region, {
   required String selected,
   String? messageId,
 }) {
-  maiaSelectionHaptic(Theme.of(context).platform);
+  maieSelectionHaptic(Theme.of(context).platform);
   final text = selected.trim();
   return AdaptiveTextSelectionToolbar.buttonItems(
     anchors: region.contextMenuAnchors,
@@ -90,13 +90,13 @@ Widget maiaRegionMenu(
 }
 
 /// The text toolbar plus fork and file actions.
-Widget maiaTextMenu(
+Widget maieTextMenu(
   BuildContext context,
   EditableTextState state, {
   required String fallbackText,
   String? messageId,
 }) {
-  maiaSelectionHaptic(Theme.of(context).platform);
+  maieSelectionHaptic(Theme.of(context).platform);
   final selected = _selected(state, fallbackText);
   return AdaptiveTextSelectionToolbar.buttonItems(
     anchors: state.contextMenuAnchors,
@@ -158,7 +158,7 @@ Future<void> _addToFile(
   String? messageId,
 }) {
   final bloc = context.read<ChatBloc>();
-  final api = context.read<MaiaApiClient>();
+  final api = context.read<MaieApiClient>();
   return showShadDialog<void>(
     context: context,
     builder: (dialogContext) => _AddToFileDialog(
@@ -192,7 +192,7 @@ class _AddToFileDialog extends StatefulWidget {
     this.messageId,
   });
 
-  final MaiaApiClient api;
+  final MaieApiClient api;
   final ChatBloc bloc;
   final String text;
   final String? sessionId;

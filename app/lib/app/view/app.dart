@@ -1,21 +1,21 @@
 import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/app/bloc/app_bloc.dart';
-import 'package:maia_app/chat/voice_cubit.dart';
-import 'package:maia_app/config/chat_settings_cubit.dart';
-import 'package:maia_app/config/field_cubit.dart';
-import 'package:maia_app/config/server_cubit.dart';
-import 'package:maia_app/ghost/ghost_layer.dart';
-import 'package:maia_app/home/home.dart';
-import 'package:maia_app/l10n/l10n.dart';
-import 'package:maia_app/one/callback_forwarder.dart';
-import 'package:maia_app/session/session.dart';
-import 'package:maia_app/sign_in/sign_in.dart';
-import 'package:maia_app/ui/chrome.dart';
-import 'package:maia_app/ui/field_backdrop.dart';
-import 'package:maia_app/ui/glass.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/app/bloc/app_bloc.dart';
+import 'package:maie_app/chat/voice_cubit.dart';
+import 'package:maie_app/config/chat_settings_cubit.dart';
+import 'package:maie_app/config/field_cubit.dart';
+import 'package:maie_app/config/server_cubit.dart';
+import 'package:maie_app/ghost/ghost_layer.dart';
+import 'package:maie_app/home/home.dart';
+import 'package:maie_app/l10n/l10n.dart';
+import 'package:maie_app/one/callback_forwarder.dart';
+import 'package:maie_app/session/session.dart';
+import 'package:maie_app/sign_in/sign_in.dart';
+import 'package:maie_app/ui/chrome.dart';
+import 'package:maie_app/ui/field_backdrop.dart';
+import 'package:maie_app/ui/glass.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,7 +24,7 @@ class App extends StatelessWidget {
   const new({super.key, this.apiClient, this.prefs, this.autoSignIn = true});
 
   /// Injected in tests; built from [ServerCubit] otherwise.
-  final MaiaApiClient? apiClient;
+  final MaieApiClient? apiClient;
 
   /// Persisted settings (server URL). Null in tests.
   final SharedPreferences? prefs;
@@ -52,21 +52,21 @@ class App extends StatelessWidget {
         builder: (context) {
           final session = context.read<SessionCubit>();
           final server = context.read<ServerCubit>();
-          return RepositoryProvider<MaiaApiClient>(
+          return RepositoryProvider<MaieApiClient>(
             create: (_) =>
                 apiClient ??
-                MaiaApiClient(
+                MaieApiClient(
                   baseUrl: server.uri,
                   tokenProvider: () => session.token,
                 ),
             child: BlocProvider(
               create: (context) =>
-                  VoiceCubit(api: context.read<MaiaApiClient>(), prefs: prefs),
+                  VoiceCubit(api: context.read<MaieApiClient>(), prefs: prefs),
               child: BlocProvider(
                 lazy: false,
                 create: (context) {
                   final bloc = AppBloc(
-                    api: context.read<MaiaApiClient>(),
+                    api: context.read<MaieApiClient>(),
                     server: context.read<ServerCubit>(),
                     session: context.read<SessionCubit>(),
                   );
@@ -108,7 +108,7 @@ class _ServerBridgeState extends State<_ServerBridge> {
       listener: (context, raw) {
         final next = ServerCubit.tryNormalise(raw);
         if (next == null) return;
-        context.read<MaiaApiClient>().baseUrl = next;
+        context.read<MaieApiClient>().baseUrl = next;
         unawaited(OneCallbackForwarder.instance.follow(next));
       },
       child: const AppView(),
@@ -127,7 +127,7 @@ class AppView extends StatelessWidget {
     return ShadApp.custom(
       appBuilder: (context) {
         return MaterialApp(
-          title: 'Maia',
+          title: 'Maie',
           debugShowCheckedModeBanner: false,
           theme: Theme.of(context),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -138,10 +138,10 @@ class AppView extends StatelessWidget {
               builder: (context, built) {
                 final themed = field
                     ? ShadTheme(
-                        data: maiaFieldTheme(ShadTheme.of(context)),
-                        child: maiaMaterialTheme(context, built, field: true),
+                        data: maieFieldTheme(ShadTheme.of(context)),
+                        child: maieMaterialTheme(context, built, field: true),
                       )
-                    : maiaMaterialTheme(context, built);
+                    : maieMaterialTheme(context, built);
                 return Stack(
                   fit: StackFit.expand,
                   children: [
@@ -157,7 +157,7 @@ class AppView extends StatelessWidget {
             );
           },
           home: switch (status) {
-            SessionStatus.starting => const Scaffold(body: MaiaSkeleton()),
+            SessionStatus.starting => const Scaffold(body: MaieSkeleton()),
             SessionStatus.authenticated => const HomePage(),
             SessionStatus.unauthenticated => const SignInPage(),
           },

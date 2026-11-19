@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:equatable/equatable.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_models/maie_models.dart';
 
 /// One node in a chat surface. Parts nest, the same way a catalog widget
 /// would, but the set is the one this app renders.
@@ -374,19 +374,19 @@ final class ChatBlockPending extends ChatSegment {
 const _searchTools = {'web_search', 'you_search', 'you_web_search'};
 
 /// Fence the model, or a dropped connection, uses to ask for a live search.
-String maiaWebSearchFence(String query) {
+String maieWebSearchFence(String query) {
   final body = jsonEncode({'type': 'webSearch', 'query': query});
-  return '```maia\n$body\n```';
+  return '```maie\n$body\n```';
 }
 
-/// Splits [content] into prose and ```maia fenced parts. [tools] named
+/// Splits [content] into prose and ```maie fenced parts. [tools] named
 /// `web_search` (or the You.com aliases) append a search surface.
 List<ChatSegment> parseChatSegments(
   String content, {
   List<ChatToolCall> tools = const [],
 }) {
   final segments = <ChatSegment>[];
-  final complete = RegExp('```maia[ \t]*\r?\n?([\\s\\S]*?)```');
+  final complete = RegExp('```maie[ \t]*\r?\n?([\\s\\S]*?)```');
   var cursor = 0;
   for (final match in complete.allMatches(content)) {
     _addProse(segments, content.substring(cursor, match.start));
@@ -394,10 +394,10 @@ List<ChatSegment> parseChatSegments(
     cursor = match.end;
   }
   final rest = content.substring(cursor);
-  final pendingAt = rest.indexOf('```maia');
+  final pendingAt = rest.indexOf('```maie');
   final afterOpen = pendingAt < 0
       ? ''
-      : rest.substring(pendingAt + '```maia'.length);
+      : rest.substring(pendingAt + '```maie'.length);
   if (pendingAt >= 0 && !afterOpen.contains('```')) {
     _addProse(segments, rest.substring(0, pendingAt));
     segments.add(const ChatBlockPending());
@@ -531,7 +531,7 @@ ChatPart? partFromJson(Object? raw) {
   };
 }
 
-/// The life graph from `GET /graph` or a ```maia graph fence.
+/// The life graph from `GET /graph` or a ```maie graph fence.
 ChatGraph chatGraphFromJson(Map<String, dynamic> raw) => _graphFromJson(raw);
 
 ChatGraph _graphFromJson(Map<Object?, Object?> raw) {

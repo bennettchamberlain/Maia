@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:maia_app/ghost/ghost_layer.dart';
+import 'package:maie_app/ghost/ghost_layer.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../helpers/pump_app.dart';

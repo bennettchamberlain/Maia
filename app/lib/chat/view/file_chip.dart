@@ -1,5 +1,5 @@
-import 'package:maia_app/chat/draft.dart';
-import 'package:maia_app/chat/store_file.dart';
+import 'package:maie_app/chat/draft.dart';
+import 'package:maie_app/chat/store_file.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 

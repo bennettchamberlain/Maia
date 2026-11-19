@@ -1,4 +1,4 @@
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_models/maie_models.dart';
 
 /// What a memory-page phrase asked for. Empty fields mean "leave that alone".
 class MemoryPhrase {

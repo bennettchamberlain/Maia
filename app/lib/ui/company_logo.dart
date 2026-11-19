@@ -1,4 +1,4 @@
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_models/maie_models.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 

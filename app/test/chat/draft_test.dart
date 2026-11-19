@@ -2,8 +2,8 @@ import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:maia_app/chat/draft.dart';
-import 'package:maia_app/chat/store_file.dart';
+import 'package:maie_app/chat/draft.dart';
+import 'package:maie_app/chat/store_file.dart';
 
 void main() {
   test('a chip in the middle keeps the path and the name', () {
@@ -33,7 +33,7 @@ void main() {
   });
 
   test('picked files are copied into storage under their own name', () async {
-    final root = await Directory.systemTemp.createTemp('maia-files');
+    final root = await Directory.systemTemp.createTemp('maie-files');
     addTearDown(() => root.delete(recursive: true));
     final source = File('${root.path}/note.txt');
     await source.writeAsString('hello');

@@ -1,4 +1,4 @@
-import 'package:maia_app/ui/glass.dart';
+import 'package:maie_app/ui/glass.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -6,7 +6,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 /// shadcn slate palette. [ShadApp] does not install a `material_ui` theme.
 ///
 /// [field] leaves the scaffold clear so the mark shows in the gaps.
-Widget maiaMaterialTheme(
+Widget maieMaterialTheme(
   BuildContext context,
   Widget? child, {
   bool field = false,
@@ -39,7 +39,7 @@ Widget maiaMaterialTheme(
 ///
 /// The child is centered when there is spare room, and forced to the
 /// viewport width so text wraps instead of painting a horizontal overflow.
-class MaiaScrollFill extends StatelessWidget {
+class MaieScrollFill extends StatelessWidget {
   const new({
     super.key,
     required this.child,
@@ -91,7 +91,7 @@ class MaiaScrollFill extends StatelessWidget {
 ///
 /// Header and footer scroll inside a capped slice when the window is too
 /// short for them, so a small desktop window cannot overflow the column.
-class MaiaPane extends StatelessWidget {
+class MaiePane extends StatelessWidget {
   const new({
     required this.body,
     super.key,
@@ -124,7 +124,7 @@ class MaiaPane extends StatelessWidget {
             child: SingleChildScrollView(child: child),
           );
           if (!field || !plate) return capped;
-          return MaiaGlass(
+          return MaieGlass(
             opacity: 0.52,
             sigma: 16,
             border: false,
@@ -136,7 +136,7 @@ class MaiaPane extends StatelessWidget {
           if (!field || !plate) return child;
           return Padding(
             padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-            child: MaiaGlass(
+            child: MaieGlass(
               opacity: 0.84,
               sigma: 20,
               radius: 18,
@@ -160,7 +160,7 @@ class MaiaPane extends StatelessWidget {
   }
 }
 
-class MaiaHeader extends StatelessWidget {
+class MaieHeader extends StatelessWidget {
   const new({
     super.key,
     required this.title,
@@ -225,7 +225,7 @@ class MaiaHeader extends StatelessWidget {
   }
 }
 
-class MaiaDivider extends StatelessWidget {
+class MaieDivider extends StatelessWidget {
   const new vertical({super.key}) : axis = Axis.vertical;
 
   const new horizontal({super.key}) : axis = Axis.horizontal;
@@ -245,7 +245,7 @@ class MaiaDivider extends StatelessWidget {
 }
 
 /// shadcn/ui has no Skeleton widget in 0.57. Muted blocks pulse the same way.
-class MaiaSkeleton extends StatelessWidget {
+class MaieSkeleton extends StatelessWidget {
   const new({super.key, this.rows = 6});
 
   final int rows;
@@ -284,7 +284,7 @@ class MaiaSkeleton extends StatelessWidget {
   }
 }
 
-class MaiaFailure extends StatelessWidget {
+class MaieFailure extends StatelessWidget {
   const new({super.key, required this.message, required this.onRetry});
 
   final String message;
@@ -292,7 +292,7 @@ class MaiaFailure extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaiaScrollFill(
+    return MaieScrollFill(
       padding: const EdgeInsets.all(24),
       maxWidth: 420,
       child: Column(
@@ -311,7 +311,7 @@ class MaiaFailure extends StatelessWidget {
 }
 
 /// A button that keeps its label and shows a spinner while [busy].
-class MaiaBusyButton extends StatelessWidget {
+class MaieBusyButton extends StatelessWidget {
   const new({
     required this.label,
     required this.onPressed,
@@ -379,7 +379,7 @@ class MaiaBusyButton extends StatelessWidget {
 }
 
 /// An icon button whose glyph turns while [busy].
-class MaiaBusyIcon extends StatefulWidget {
+class MaieBusyIcon extends StatefulWidget {
   const new({
     required this.icon,
     required this.onPressed,
@@ -392,10 +392,10 @@ class MaiaBusyIcon extends StatefulWidget {
   final bool busy;
 
   @override
-  State<MaiaBusyIcon> createState() => _MaiaBusyIconState();
+  State<MaieBusyIcon> createState() => _MaieBusyIconState();
 }
 
-class _MaiaBusyIconState extends State<MaiaBusyIcon>
+class _MaieBusyIconState extends State<MaieBusyIcon>
     with SingleTickerProviderStateMixin {
   late final AnimationController _spin = AnimationController(
     vsync: this,
@@ -409,7 +409,7 @@ class _MaiaBusyIconState extends State<MaiaBusyIcon>
   }
 
   @override
-  void didUpdateWidget(MaiaBusyIcon old) {
+  void didUpdateWidget(MaieBusyIcon old) {
     super.didUpdateWidget(old);
     if (widget.busy && !_spin.isAnimating) _spin.repeat();
     if (!widget.busy && _spin.isAnimating) {
@@ -434,14 +434,14 @@ class _MaiaBusyIconState extends State<MaiaBusyIcon>
   }
 }
 
-class MaiaEmpty extends StatelessWidget {
+class MaieEmpty extends StatelessWidget {
   const new(this.message, {super.key});
 
   final String message;
 
   @override
   Widget build(BuildContext context) {
-    return MaiaScrollFill(
+    return MaieScrollFill(
       padding: const EdgeInsets.all(24),
       child: Text(
         message,
@@ -502,7 +502,7 @@ class _PulseState extends State<_Pulse> with SingleTickerProviderStateMixin {
 }
 
 /// Grows and shrinks [child] on a cubic curve.
-class MaiaExpand extends StatelessWidget {
+class MaieExpand extends StatelessWidget {
   const new({required this.expanded, required this.child, super.key});
 
   final bool expanded;

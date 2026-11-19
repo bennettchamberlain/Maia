@@ -1,9 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:maia_app/chat/parts/chat_part.dart';
-import 'package:maia_app/chat/parts/chat_part_view.dart';
-import 'package:maia_app/chat/parts/you_search.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_app/chat/parts/chat_part.dart';
+import 'package:maie_app/chat/parts/chat_part_view.dart';
+import 'package:maie_app/chat/parts/you_search.dart';
+import 'package:maie_models/maie_models.dart';
 
 import '../../helpers/pump_app.dart';
 
@@ -13,7 +13,7 @@ void main() {
       const content = '''
 Look at this.
 
-```maia
+```maie
 {"type":"column","children":[{"type":"card","title":"Place","subtitle":"cafe","detail":{"type":"text","text":"Open late"}}]}
 ```
 ''';
@@ -60,12 +60,12 @@ Look at this.
     });
 
     test('a search fence parses back to the same query', () {
-      final segments = parseChatSegments(maiaWebSearchFence('dart maps'));
+      final segments = parseChatSegments(maieWebSearchFence('dart maps'));
       expect(segments, [const ChatBlock(ChatWebSearch('dart maps'))]);
     });
 
     test('an open fence is a pending block', () {
-      final segments = parseChatSegments('```maia\n{"type":"text"');
+      final segments = parseChatSegments('```maie\n{"type":"text"');
       expect(segments, [const ChatBlockPending()]);
     });
 
@@ -73,7 +73,7 @@ Look at this.
       const content = '''
 Here is the plan.
 
-```maia
+```maie
 {"type":"speech","text":"Dinner is at seven."}
 ```
 ''';
@@ -103,15 +103,15 @@ Here is the plan.
 
     test('memory, place, graph and actions parse from the catalog', () {
       const content = '''
-```maia
+```maie
 {"type":"timeline","title":"Memory","children":[{"type":"memory","id":"m1","title":"Standup","kind":"event","when":"2026-10-28","body":"Alex","place":{"type":"place","name":"Cafe","city":"Oakland"}}]}
 ```
 
-```maia
+```maie
 {"type":"graph","goals":[{"name":"ship chat","why":"the phone"}],"edges":[{"kind":"knows","status":"verified","source":{"name":"Alex"},"target":{"name":"standup"}}]}
 ```
 
-```maia
+```maie
 {"type":"actions","items":[{"label":"Search more","prompt":"search memory for Alex"}]}
 ```
 ''';
@@ -151,7 +151,7 @@ Here is the plan.
 
   test('a map fence keeps each marker', () {
     const content = '''
-```maia
+```maie
 {"type":"map","markers":[{"lat":37.8,"lng":-122.27,"title":"Cafe"},{"latitude":"37.77","longitude":-122.4,"name":"Home"}]}
 ```
 ''';
@@ -169,11 +169,11 @@ Here is the plan.
     const content = '''
 Here is the week.
 
-```maia
+```maie
 {"type":"timeline","title":"Memory","children":[{"type":"memory","title":"Standup","kind":"event"}]}
 ```
 
-```maia
+```maie
 {"type":"graph","entities":[{"name":"Ada","kind":"person"}],"edges":[{"source":"Ada","target":"Standup","kind":"knows","status":"verified"}]}
 ```
 ''';

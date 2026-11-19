@@ -1,8 +1,8 @@
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/ui/fault.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/ui/fault.dart';
+import 'package:maie_models/maie_models.dart';
 
 part 'memory_event.dart';
 part 'memory_state.dart';
@@ -18,7 +18,7 @@ class MemoryBloc extends Bloc<MemoryEvent, MemoryState> {
     on<MemoryNoteAdded>(_onNoteAdded);
   }
 
-  final MaiaApiClient _api;
+  final MaieApiClient _api;
   final int pageSize;
 
   Future<void> _onFetched(MemoryFetched e, Emitter<MemoryState> emit) async {
@@ -58,7 +58,7 @@ class MemoryBloc extends Bloc<MemoryEvent, MemoryState> {
           clearError: true,
         ),
       );
-    } on MaiaApiException catch (err) {
+    } on MaieApiException catch (err) {
       emit(
         state.copyWith(
           status: MemoryStatus.failure,
@@ -122,7 +122,7 @@ class MemoryBloc extends Bloc<MemoryEvent, MemoryState> {
           clearError: true,
         ),
       );
-    } on MaiaApiException catch (err) {
+    } on MaieApiException catch (err) {
       emit(state.copyWith(error: err.shown));
     }
   }
@@ -151,7 +151,7 @@ class MemoryBloc extends Bloc<MemoryEvent, MemoryState> {
           clearError: true,
         ),
       );
-    } on MaiaApiException catch (err) {
+    } on MaieApiException catch (err) {
       emit(
         state.copyWith(
           status: MemoryStatus.failure,
@@ -174,7 +174,7 @@ class MemoryBloc extends Bloc<MemoryEvent, MemoryState> {
   Future<LibraryView> _shelf() async {
     try {
       return await _api.library();
-    } on MaiaApiException {
+    } on MaieApiException {
       return LibraryView.empty;
     } on Exception {
       return LibraryView.empty;

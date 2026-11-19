@@ -31,11 +31,11 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Maia listens on this Mac so you can speak a chat turn.</string>
+	<string>Maie listens on this Mac so you can speak a chat turn.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Maia turns speech into text on this device.</string>
+	<string>Maie turns speech into text on this device.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Maia talks to your Maia server on the local network.</string>
+	<string>Maie talks to your Maie server on the local network.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_http._tcp</string>

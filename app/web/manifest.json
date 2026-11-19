@@ -1,11 +1,11 @@
 {
-    "name": "Maia",
-    "short_name": "Maia",
+    "name": "Maie",
+    "short_name": "Maie",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "Maia memory client",
+    "description": "Maie memory client",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

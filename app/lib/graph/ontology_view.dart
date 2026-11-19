@@ -1,10 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/chat/parts/chat_part.dart';
-import 'package:maia_app/graph/ontology_layout.dart';
-import 'package:maia_app/ui/chrome.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/chat/parts/chat_part.dart';
+import 'package:maie_app/graph/ontology_layout.dart';
+import 'package:maie_app/ui/chrome.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -271,7 +271,7 @@ class _OntologyPageState extends State<OntologyPage> {
   }
 
   Future<void> _load() async {
-    final api = context.read<MaiaApiClient>();
+    final api = context.read<MaieApiClient>();
     setState(() {
       _loading = true;
       _error = null;
@@ -294,9 +294,9 @@ class _OntologyPageState extends State<OntologyPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const MaiaSkeleton(rows: 3);
+    if (_loading) return const MaieSkeleton(rows: 3);
     if (_error != null) {
-      return MaiaFailure(
+      return MaieFailure(
         message: 'Could not load the ontology',
         onRetry: _load,
       );

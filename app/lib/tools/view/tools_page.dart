@@ -1,11 +1,11 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/one/callback_forwarder.dart';
-import 'package:maia_app/ui/chrome.dart';
-import 'package:maia_app/ui/company_logo.dart';
-import 'package:maia_app/ui/fault.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/one/callback_forwarder.dart';
+import 'package:maie_app/ui/chrome.dart';
+import 'package:maie_app/ui/company_logo.dart';
+import 'package:maie_app/ui/fault.dart';
+import 'package:maie_models/maie_models.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -26,7 +26,7 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
   var _query = '';
   var _category = 'all';
 
-  MaiaApiClient get _api => context.read<MaiaApiClient>();
+  MaieApiClient get _api => context.read<MaieApiClient>();
 
   ChatConnection? get _one => _catalog?.connections
       .cast<ChatConnection?>()
@@ -275,8 +275,8 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
     return Scaffold(
-      body: MaiaPane(
-        header: MaiaHeader(
+      body: MaiePane(
+        header: MaieHeader(
           title: 'Connectors',
           actions: [
             Padding(
@@ -288,7 +288,7 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            MaiaBusyIcon(
+            MaieBusyIcon(
               key: const Key('tools_refresh_button'),
               busy: _busy,
               icon: const Icon(LucideIcons.refreshCw, size: 16),
@@ -297,7 +297,7 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
           ],
         ),
         body: _loading && _catalog == null
-            ? const MaiaSkeleton()
+            ? const MaieSkeleton()
             : ListView(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
                 children: [
@@ -334,7 +334,7 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
                   Text(_connectedLabel, style: theme.textTheme.h4),
                   const SizedBox(height: 4),
                   Text(
-                    'One keeps the login. Maia stores the grant and '
+                    'One keeps the login. Maie stores the grant and '
                     'pulls each account into memory.',
                     style: theme.textTheme.muted,
                   ),
@@ -498,7 +498,7 @@ class _ConnectorRow extends StatelessWidget {
                   ),
                 )
               else
-                MaiaBusyButton(
+                MaieBusyButton(
                   label: 'Connect',
                   busyLabel: 'Connecting',
                   busy: busy,
@@ -549,8 +549,8 @@ class _ConnectorDetail extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
     return Scaffold(
-      body: MaiaPane(
-        header: MaiaHeader(
+      body: MaiePane(
+        header: MaieHeader(
           title: item.title,
           leading: ShadIconButton.ghost(
             icon: const Icon(LucideIcons.arrowLeft, size: 16),
@@ -584,14 +584,14 @@ class _ConnectorDetail extends StatelessWidget {
             Align(
               alignment: Alignment.centerLeft,
               child: connected
-                  ? MaiaBusyButton(
+                  ? MaieBusyButton(
                       label: 'Disconnect',
                       busyLabel: 'Disconnecting',
                       busy: busy,
                       outline: true,
                       onPressed: onDisconnect,
                     )
-                  : MaiaBusyButton(
+                  : MaieBusyButton(
                       label: 'Connect',
                       busyLabel: 'Connecting',
                       busy: busy,
@@ -628,7 +628,7 @@ class _ConnectorDetail extends StatelessWidget {
             ),
             if (connected) ...[
               const SizedBox(height: 16),
-              MaiaBusyButton(
+              MaieBusyButton(
                 label: 'Sync now',
                 busyLabel: 'Syncing',
                 busy: busy,
@@ -638,7 +638,7 @@ class _ConnectorDetail extends StatelessWidget {
             ],
             const SizedBox(height: 24),
             Text(
-              'OAuth stays at One. Maia stores a grant pointer, not the token.',
+              'OAuth stays at One. Maie stores a grant pointer, not the token.',
               style: theme.textTheme.muted,
             ),
           ],

@@ -1,6 +1,6 @@
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_models/maie_models.dart';
 
 part 'session_state.dart';
 

@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:maia_app/l10n/l10n.dart';
-import 'package:maia_app/ui/chrome.dart';
+import 'package:maie_app/l10n/l10n.dart';
+import 'package:maie_app/ui/chrome.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 extension PumpApp on WidgetTester {
@@ -15,7 +15,7 @@ extension PumpApp on WidgetTester {
             localizationsDelegates: AppLocalizations.localizationsDelegates,
             supportedLocales: AppLocalizations.supportedLocales,
             builder: (context, child) => ShadAppBuilder(
-              builder: maiaMaterialTheme,
+              builder: maieMaterialTheme,
               child: child,
             ),
             home: widget,

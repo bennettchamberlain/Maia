@@ -1,12 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/config/app_config.dart';
-import 'package:maia_app/config/server_cubit.dart';
-import 'package:maia_app/session/session.dart';
-import 'package:maia_app/sign_in/sign_in.dart';
-import 'package:maia_app/ui/chrome.dart';
-import 'package:maia_app/ui/glass.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/config/app_config.dart';
+import 'package:maie_app/config/server_cubit.dart';
+import 'package:maie_app/session/session.dart';
+import 'package:maie_app/sign_in/sign_in.dart';
+import 'package:maie_app/ui/chrome.dart';
+import 'package:maie_app/ui/glass.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -16,7 +16,7 @@ class SignInPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
-      create: (context) => SignInBloc(api: context.read<MaiaApiClient>()),
+      create: (context) => SignInBloc(api: context.read<MaieApiClient>()),
       child: const SignInView(),
     );
   }
@@ -30,7 +30,7 @@ class SignInView extends StatelessWidget {
     final muted = ShadTheme.of(context).textTheme.muted;
     final field = watchField(context);
     final card = ShadCard(
-      title: const Text('Maia'),
+      title: const Text('Maie'),
       description: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -68,11 +68,11 @@ class SignInView extends StatelessWidget {
       },
       child: Scaffold(
         body: SafeArea(
-          child: MaiaScrollFill(
+          child: MaieScrollFill(
             padding: const EdgeInsets.all(24),
             maxWidth: 400,
             child: field
-                ? MaiaGlass(opacity: 0.9, sigma: 22, radius: 16, child: card)
+                ? MaieGlass(opacity: 0.9, sigma: 22, radius: 16, child: card)
                 : card,
           ),
         ),
@@ -119,7 +119,7 @@ class _ServerFieldState extends State<_ServerField> {
         const SizedBox(height: 6),
         Text(
           kIsWeb
-              ? 'e.g. localhost:8090 (this Maia API)'
+              ? 'e.g. localhost:8090 (this Maie API)'
               : 'This phone cannot use localhost. Use the Mac Tailscale '
                     'or Wi-Fi address, e.g. ${AppConfig.apiUrl}',
           style: muted,
@@ -141,7 +141,7 @@ class _HandleField extends StatelessWidget {
         ShadInput(
           key: const Key('signIn_handle_textField'),
           autocorrect: false,
-          placeholder: const Text('maia'),
+          placeholder: const Text('maie'),
           onChanged: (v) =>
               context.read<SignInBloc>().add(SignInHandleChanged(v)),
         ),
@@ -169,7 +169,7 @@ class _PasswordFieldState extends State<_PasswordField> {
         ShadInput(
           key: const Key('signIn_password_textField'),
           obscureText: _obscure,
-          placeholder: const Text('maia-admin'),
+          placeholder: const Text('maie-admin'),
           onChanged: (v) =>
               context.read<SignInBloc>().add(SignInPasswordChanged(v)),
           onSubmitted: (_) =>
@@ -232,7 +232,7 @@ class _SubmitButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.watch<SignInBloc>().state;
     final submitting = state.status == SignInStatus.submitting;
-    return MaiaBusyButton(
+    return MaieBusyButton(
       key: const Key('signIn_submit_button'),
       width: double.infinity,
       label: 'Sign in',

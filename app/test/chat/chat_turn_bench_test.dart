@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:maia_app/chat/chat_turn_bench.dart';
+import 'package:maie_app/chat/chat_turn_bench.dart';
 
 void main() {
   test('checkpoint case', () {
@@ -12,7 +12,7 @@ void main() {
     final c = chatTurnBenchCases.firstWhere((c) => c.id == 'github-login');
     expect(
       c.checkReply(
-        'Your login is bennettchamberlain. One repository is maia.',
+        'Your login is bennettchamberlain. One repository is maie.',
         toolNames: ['memory_search', 'connector'],
       ),
       isNull,

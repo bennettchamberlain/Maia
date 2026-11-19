@@ -1,9 +1,9 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:maia_app/chat/bloc/chat_bloc.dart';
-import 'package:maia_app/chat/day_groups.dart';
-import 'package:maia_app/ui/chrome.dart';
-import 'package:maia_app/ui/company_logo.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_app/chat/bloc/chat_bloc.dart';
+import 'package:maie_app/chat/day_groups.dart';
+import 'package:maie_app/ui/chrome.dart';
+import 'package:maie_app/ui/company_logo.dart';
+import 'package:maie_models/maie_models.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -34,8 +34,8 @@ class _TimelineColumnState extends State<TimelineColumn> {
         if (_matches(entry, query)) entry,
     ];
     return Scaffold(
-      body: MaiaPane(
-        header: MaiaHeader(
+      body: MaiePane(
+        header: MaieHeader(
           title: 'Memory',
           actions: [
             ShadIconButton.ghost(
@@ -73,13 +73,13 @@ class _TimelineColumnState extends State<TimelineColumn> {
     return switch (state.status) {
       ChatStatus.initial ||
       ChatStatus.loading when state.entries.isEmpty && state.sessions.isEmpty =>
-        const MaiaSkeleton(),
+        const MaieSkeleton(),
       ChatStatus.failure when state.entries.isEmpty && state.sessions.isEmpty =>
-        MaiaFailure(
+        MaieFailure(
           message: state.error ?? 'Could not load memory',
           onRetry: () => context.read<ChatBloc>().add(const ChatStarted()),
         ),
-      _ when entries.isEmpty => const MaiaScrollFill(
+      _ when entries.isEmpty => const MaieScrollFill(
         padding: EdgeInsets.all(24),
         child: Text('Nothing on this timeline yet.'),
       ),

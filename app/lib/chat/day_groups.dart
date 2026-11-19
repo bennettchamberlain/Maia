@@ -1,4 +1,4 @@
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_models/maie_models.dart';
 
 /// One day in the memory column.
 class DayGroup {

@@ -3,11 +3,11 @@ import 'dart:async';
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/chat/chat.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/chat/chat.dart';
+import 'package:maie_models/maie_models.dart';
 
-class _MockApi extends Mock implements MaiaApiClient;
+class _MockApi extends Mock implements MaieApiClient;
 
 void main() {
   final session = ChatSession(id: 's1', createdAt: DateTime.utc(2026));

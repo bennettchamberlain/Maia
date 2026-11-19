@@ -4,11 +4,11 @@ import 'dart:io';
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_models/maia_models.dart';
-import 'package:maia_app/chat/parts/chat_part.dart';
-import 'package:maia_app/chat/quote.dart';
-import 'package:maia_app/ui/fault.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_models/maie_models.dart';
+import 'package:maie_app/chat/parts/chat_part.dart';
+import 'package:maie_app/chat/quote.dart';
+import 'package:maie_app/ui/fault.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
@@ -147,14 +147,14 @@ class VoiceState extends Equatable {
 
 /// Local mouth and ears for chat. Thinking stays on Parasail through the API.
 class VoiceCubit extends Cubit<VoiceState> {
-  VoiceCubit({required MaiaApiClient api, SharedPreferences? prefs})
+  VoiceCubit({required MaieApiClient api, SharedPreferences? prefs})
     : _api = api,
       _prefs = prefs,
       super(VoiceState(enabled: prefs?.getBool(_enabledKey) ?? false));
 
-  static const _enabledKey = 'maia.voice.enabled';
+  static const _enabledKey = 'maie.voice.enabled';
 
-  final MaiaApiClient _api;
+  final MaieApiClient _api;
   final SharedPreferences? _prefs;
   bool _wantListen = false;
   int _pendingSpeech = 0;
@@ -333,7 +333,7 @@ class VoiceCubit extends Cubit<VoiceState> {
       Platform.isMacOS &&
       Platform.environment.containsKey('FLUTTER_ENGINE_SWITCHES');
 
-  /// Asks for speech as Maia, not as the editor. Returns when the grant
+  /// Asks for speech as Maie, not as the editor. Returns when the grant
   /// lands, or when the wait ends without one.
   Future<bool> _grantSpeechOutsideEditor(SpeechToText stt) async {
     emit(
@@ -351,7 +351,7 @@ class VoiceCubit extends Cubit<VoiceState> {
           sttAvailable: false,
           error:
               'Speech is off. Turn on Speech Recognition and the '
-              'Microphone for Maia in System Settings.',
+              'Microphone for Maie in System Settings.',
         ),
       );
       return false;
@@ -361,7 +361,7 @@ class VoiceCubit extends Cubit<VoiceState> {
       '-n',
       bundle,
       '--args',
-      '--maia-speech-prompt',
+      '--maie-speech-prompt',
     ]);
     for (var i = 0; i < 90; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 500));
@@ -373,7 +373,7 @@ class VoiceCubit extends Cubit<VoiceState> {
         sttAvailable: false,
         error:
             'Speech is still off. Turn on Speech Recognition and the '
-            'Microphone for Maia in System Settings.',
+            'Microphone for Maie in System Settings.',
       ),
     );
     return false;

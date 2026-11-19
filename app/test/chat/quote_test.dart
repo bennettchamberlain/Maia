@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:maia_app/chat/quote.dart';
+import 'package:maie_app/chat/quote.dart';
 
 void main() {
   test('one voice is one quote', () {

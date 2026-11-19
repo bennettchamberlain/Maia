@@ -1,8 +1,8 @@
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/ui/fault.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/ui/fault.dart';
+import 'package:maie_models/maie_models.dart';
 
 part 'sign_in_event.dart';
 part 'sign_in_state.dart';
@@ -18,7 +18,7 @@ class SignInBloc extends Bloc<SignInEvent, SignInState> {
     on<SignInSubmitted>(_onSubmitted);
   }
 
-  final MaiaApiClient _api;
+  final MaieApiClient _api;
 
   Future<void> _onSubmitted(
     SignInSubmitted event,
@@ -32,7 +32,7 @@ class SignInBloc extends Bloc<SignInEvent, SignInState> {
         password: state.password,
       );
       emit(state.copyWith(status: SignInStatus.success, session: session));
-    } on MaiaApiException catch (e) {
+    } on MaieApiException catch (e) {
       emit(
         state.copyWith(
           status: SignInStatus.failure,

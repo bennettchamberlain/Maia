@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-/// One always sends the browser to `127.0.0.1:8090`. When Maia itself is
+/// One always sends the browser to `127.0.0.1:8090`. When Maie itself is
 /// on another machine, this process catches that redirect and forwards it
 /// to the API, which already proxies to the connect sidecar.
 class OneCallbackForwarder {
@@ -113,7 +113,7 @@ class OneCallbackForwarder {
         final response = request.response
           ..statusCode = HttpStatus.badGateway
           ..headers.contentType = ContentType.html
-          ..write('Maia could not reach the server to finish One.');
+          ..write('Maie could not reach the server to finish One.');
         await response.close();
       } on Object {
         // The browser already has whatever bytes went out.

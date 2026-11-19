@@ -7,8 +7,8 @@ import Speech
 class AppDelegate: FlutterAppDelegate {
   /// `flutter run` starts the binary as a child of the editor. macOS then
   /// charges speech and microphone prompts to the editor and aborts this
-  /// process. A second launch with this argument asks as Maia itself.
-  static let speechPromptArgument = "--maia-speech-prompt"
+  /// process. A second launch with this argument asks as Maie itself.
+  static let speechPromptArgument = "--maie-speech-prompt"
 
   override func applicationDidFinishLaunching(_ notification: Notification) {
     let args = ProcessInfo.processInfo.arguments
@@ -21,7 +21,7 @@ class AppDelegate: FlutterAppDelegate {
         SFSpeechRecognizer.requestAuthorization { status in
           AVCaptureDevice.requestAccess(for: .audio) { granted in
             NSLog(
-              "maia-speech-prompt speech=%ld mic=%d",
+              "maie-speech-prompt speech=%ld mic=%d",
               status.rawValue,
               granted ? 1 : 0
             )

@@ -1,10 +1,10 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:maia_api_client/maia_api_client.dart';
-import 'package:maia_app/jobs/job_groups.dart';
-import 'package:maia_app/jobs/job_verdicts.dart';
-import 'package:maia_app/jobs/jobs.dart';
-import 'package:maia_app/ui/chrome.dart';
-import 'package:maia_models/maia_models.dart';
+import 'package:maie_api_client/maie_api_client.dart';
+import 'package:maie_app/jobs/job_groups.dart';
+import 'package:maie_app/jobs/job_verdicts.dart';
+import 'package:maie_app/jobs/jobs.dart';
+import 'package:maie_app/ui/chrome.dart';
+import 'package:maie_models/maie_models.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -15,7 +15,7 @@ class JobsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocProvider(
       create: (context) =>
-          JobsBloc(api: context.read<MaiaApiClient>())
+          JobsBloc(api: context.read<MaieApiClient>())
             ..add(const JobsFetched()),
       child: const JobsView(),
     );
@@ -28,11 +28,11 @@ class JobsView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Scaffold(
-      body: MaiaPane(
+      body: MaiePane(
         header: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            MaiaHeader(title: 'Jobs', actions: [_RefreshButton()]),
+            MaieHeader(title: 'Jobs', actions: [_RefreshButton()]),
             _Health(),
             _StateFilter(),
           ],
@@ -51,7 +51,7 @@ class _RefreshButton extends StatelessWidget {
     final refreshing = context.select<JobsBloc, bool>(
       (b) => b.state.refreshing,
     );
-    return MaiaBusyIcon(
+    return MaieBusyIcon(
       key: const Key('jobs_refresh_button'),
       busy: refreshing,
       icon: const Icon(LucideIcons.refreshCw, size: 16),
@@ -185,9 +185,9 @@ class _JobsBody extends StatelessWidget {
     switch (state.status) {
       case JobsStatus.initial:
       case JobsStatus.loading:
-        return const MaiaSkeleton();
+        return const MaieSkeleton();
       case JobsStatus.failure:
-        return MaiaFailure(
+        return MaieFailure(
           message: state.error ?? 'Could not load jobs',
           onRetry: () => context.read<JobsBloc>().add(const JobsRefreshed()),
         );
@@ -199,17 +199,17 @@ class _JobsBody extends StatelessWidget {
                   .toList();
         final groups = groupJobs(shown);
         if (state.jobs.isEmpty) {
-          return const MaiaEmpty(
-            'Nothing is syncing yet. Connect an account and Maia starts '
+          return const MaieEmpty(
+            'Nothing is syncing yet. Connect an account and Maie starts '
             'keeping a copy.',
           );
         }
         if (groups.isEmpty) {
-          return const MaiaEmpty('Nothing in this view.');
+          return const MaieEmpty('Nothing in this view.');
         }
         return ListView.separated(
           itemCount: groups.length,
-          separatorBuilder: (_, _) => const MaiaDivider.horizontal(),
+          separatorBuilder: (_, _) => const MaieDivider.horizontal(),
           itemBuilder: (context, i) => _JobGroupTile(group: groups[i]),
         );
     }
@@ -279,7 +279,7 @@ class _JobGroupTileState extends State<_JobGroupTile> {
             ),
           ),
         ),
-        MaiaExpand(
+        MaieExpand(
           expanded: _open,
           child: Column(
             children: [
