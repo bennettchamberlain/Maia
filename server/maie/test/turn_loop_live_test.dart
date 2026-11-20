@@ -13,12 +13,14 @@ void main() {
   test('$turns live turns take one next step', () async {
     if (Platform.environment['MAIE_LOOP_LIVE'] != '1') {
       markTestSkipped('set MAIE_LOOP_LIVE=1 to run the live loop');
+      return;
     }
     final key =
         Platform.environment['OPENROUTER_API_KEY'] ??
         Platform.environment['OPEN_ROUTER_API_KEY'];
     if (key == null || key.isEmpty) {
       markTestSkipped('OPENROUTER_API_KEY is not set');
+      return;
     }
     final model =
         Platform.environment['OPENROUTER_MODEL'] ??

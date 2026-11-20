@@ -24,6 +24,54 @@ void main() {
     expect(extractiveCompaction(split.older), contains('turn 0'));
   });
 
+  test('a folded chat keeps what was found', () {
+    final messages = [
+      for (var i = 0; i < 30; i++)
+        {
+          'role': i.isEven ? 'user' : 'assistant',
+          'content': 'turn $i',
+          'seq': i,
+        },
+    ];
+    final split = splitForCompaction(messages);
+    final text = extractiveCompaction(split.older);
+    expect(text, contains('turn 0'));
+    expect(text, contains('Already found'));
+    expect(text, contains('turn 1'));
+  });
+
+  test('old tool results clip and a long frame keeps the task', () {
+    final messages = [
+      {'role': 'system', 'content': 'You are Maie'},
+      {'role': 'user', 'content': 'What is in my GitHub account?'},
+      for (var i = 0; i < 8; i++)
+        {
+          'role': 'tool',
+          'tool_name': 'connector',
+          'content': 'row $i ${'x' * 800}',
+        },
+      {'role': 'assistant', 'content': 'still looking'},
+    ];
+    final pruned = pruneToolResults(messages, keep: 4, clip: 80);
+    final tools = [
+      for (final m in pruned)
+        if (m['role'] == 'tool') m,
+    ];
+    expect('${tools.first['content']}', contains('clipped'));
+    expect('${tools.first['content']}'.length, lessThan(200));
+    expect('${tools.last['content']}', contains('row 7'));
+    expect('${tools.last['content']}', isNot(contains('clipped')));
+
+    final folded = foldWorkingSet(messages);
+    final blob = folded.map((m) => '${m['content']}').join('\n');
+    expect(folded.first['content'], 'You are Maie');
+    expect(blob, contains('GitHub'));
+    expect(blob, contains('row 0'));
+    expect(blob, contains('still looking'));
+    expect(folded.length, lessThan(messages.length));
+    expect(modelFrame(messages).length, messages.length);
+  });
+
   test('a short chat is left whole', () {
     final messages = [
       {'role': 'user', 'content': 'hi', 'seq': 1},

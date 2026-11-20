@@ -107,7 +107,7 @@ void main() {
     expect(turn.tools.single['name'], 'memory_search');
   });
 
-  test('extra calls wait for a later step', () async {
+  test('extra calls run in the same step', () async {
     final script = _Script((body) {
       if (_toolMessages(body) == 0) {
         return _calls(const [
@@ -119,7 +119,8 @@ void main() {
     });
     final used = await _run(script, 'both');
     expect(used.map((call) => call['name']), ['now', 'memory_search']);
-    expect(used.last['result'], heldStepResult);
+    expect(used.last['result'], isNot(heldStepResult));
+    expect('${used.last['result']}', contains('no memories'));
   });
 
   test('the web waits until memory has been checked', () async {

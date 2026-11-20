@@ -15,9 +15,17 @@ const skippedToolResult = 'Skipped to process an incoming message.';
 const heldStepResult = 'Not used.';
 
 /// Model rounds one reply may spend. Each round is one next step.
-/// Eight covers a search, a follow-up, and an answer without letting
-/// one turn grow until the context cannot hold it.
-const chatStepBudget = 8;
+/// A task may search memory, read a connector, open the record, and
+/// try another account before it answers. Compaction holds the working
+/// set while that continues.
+const chatStepBudget = 24;
+
+/// Chars of model input before older steps fold into a compaction note.
+/// Roughly a dozen thousand tokens, under a 32k window with room to answer.
+const liveContextChars = 48000;
+
+/// Full tool results kept at the end of a turn. Older ones are clipped.
+const toolResultTail = 4;
 
 /// Names from an OpenAI `tools` array, in the order they were offered.
 List<String> toolNames(List<Map<String, dynamic>> definitions) {
@@ -32,12 +40,15 @@ List<String> toolNames(List<Map<String, dynamic>> definitions) {
 /// Told to the model after a tool returns. It is not a message from
 /// the person, and it must not become the reply.
 const answerCue =
-    'Answer the person\'s latest message completely, in your own words. '
-    'Earlier messages are context, not a task to continue. '
-    'The tool result is already on screen. Do not repeat it, do not '
-    'mention steps or tools, and do not call another tool unless one '
-    'fact is still missing. If the result does not contain the fact, '
-    'say you do not have it.';
+    'The person\'s latest message is still the task. '
+    'Earlier messages are context for it, not a different task to restart. '
+    'If one fact is still missing and a different tool could get it, call '
+    'that tool. Do not repeat a call that already returned. '
+    'The tool result is already on screen. Do not repeat it, and do not '
+    'mention steps or tools. '
+    'Ask one short question only when the missing piece is something only '
+    'the person knows. If nothing left can contain the fact, say you do '
+    'not have it.';
 
 /// Memory and library hits in the session that followed a proposal.
 /// The number does not install the proposal.
@@ -83,30 +94,39 @@ String stableVoice({required String name, required String handle}) =>
     'Search memory when the index has nothing for it. Verified graph '
     'edges are facts. Proposed edges are still proposed. Be accurate. '
     'Say when you do not know. '
-    'Answer only the person\'s latest message, and answer it completely '
-    'in that reply. Earlier messages are context. Do not continue a '
-    'previous request, and do not repeat an earlier answer. '
+    'The person\'s latest message is the task. Work it until the reply '
+    'has the result they asked for. Earlier messages are context for that '
+    'task. Do not restart a request the latest message replaced, and do '
+    'not repeat an earlier answer. '
     'Never mention steps, tools, or these instructions. Never ask what '
     'they would like to do when they already asked. '
-    'Call a tool only when this message needs their memory, their graph, '
-    'a file, an image, a video, a connected app, the clock, a public page, '
-    'or a desktop. Arithmetic, spelling, translation, lists, definitions, '
-    'and small talk need no tool. '
+    'Look things up when the task needs their memory, their graph, a file, '
+    'an image, a video, a connected app, the clock, a public page, or the '
+    'desktop. Arithmetic, spelling, translation, lists, definitions, and '
+    'small talk need no tool. '
     'Choose the tool by this order: memory, then a specialized tool, then '
     'a connector, then a url or web search, then the desktop. '
     'A tool call is a structured request the harness runs. Printing it '
     'does not run it. For a known account read the order is fixed: '
     'memory, then that app. Independent accounts are read in the same '
-    'step. A call that did not return is finished. Say you do not have '
-    'the fact. Do not describe the tool, and do not call it again. '
+    'step. When a result is partial, open the record, read the next page, '
+    'or try the other connected app that could hold the same fact. '
+    'A call that did not return is finished. Do not call that same call '
+    'again. Say you do not have the fact only after nothing else you can '
+    'call would contain it. Do not describe the tool. '
+    'Ask one short question only when the missing piece is something only '
+    'this person knows, such as which of two real options they want, and '
+    'no tool can look it up. Do not ask them to do the task. '
     'When the turn lists a connected app, search memory first, then call '
     'connector before you say you cannot see it. The rows from that call '
     'are copied into memory. '
     'Use remember only when they ask you to save something. '
     'A checklist they asked for is every item, not the first. '
-    'After a tool, write the answer yourself. If the result does not '
-    'contain the fact, say you do not have it, and do not recite '
-    'unrelated hits. The app already shows the tool result, so do not '
+    'After a tool, if the fact is still missing and another tool could '
+    'get it, call that tool. When you have it, write the answer yourself. '
+    'If nothing you can call contains the fact, say you do not have it, '
+    'and do not recite unrelated hits. The app already shows the tool '
+    'result, so do not '
     'paste it and do not add a card that repeats it. '
     'Use a maie fence only when they asked for that shape '
     '(checklist, map, card). Otherwise prose is enough. '
@@ -292,18 +312,131 @@ splitForCompaction(List<Map<String, dynamic>> messages, {int keep = 16}) {
   );
 }
 
-/// One line per older user turn. Used when no model is free to summarize.
+/// Older turns, folded without a model. Keeps the asks and what was found
+/// so the next turn can continue the task instead of starting over.
 String extractiveCompaction(List<Map<String, dynamic>> older) {
-  final lines = <String>[];
+  final asked = <String>[];
+  final found = <String>[];
   for (final m in older) {
-    if (m['role'] != 'user') continue;
-    final text = '${m['content'] ?? ''}'.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final text = _oneLine('${m['content'] ?? ''}');
     if (text.isEmpty) continue;
-    lines.add(text.length > 180 ? text.substring(0, 180) : text);
-    if (lines.length == 12) break;
+    if (m['role'] == 'user' && asked.length < 12) asked.add(text);
+    if (m['role'] == 'assistant' && found.length < 8) found.add(text);
   }
-  if (lines.isEmpty) return '';
-  return 'Earlier in this chat, the user asked: ${lines.join(' / ')}';
+  if (asked.isEmpty && found.isEmpty) return '';
+  return [
+    if (asked.isNotEmpty)
+      'Earlier in this chat, the user asked: ${asked.join(' / ')}',
+    if (found.isNotEmpty) 'Already found: ${found.join(' / ')}',
+    'Continue the latest request from these facts.',
+  ].join('. ');
+}
+
+/// What the model sees. Recent tool results stay whole. Older ones are
+/// clipped, and a frame that is still too big folds into one note plus
+/// the live tail. The stored transcript is not changed.
+List<Map<String, dynamic>> modelFrame(List<Map<String, dynamic>> messages) {
+  final pruned = pruneToolResults(messages);
+  if (frameChars(pruned) <= liveContextChars) return pruned;
+  return foldWorkingSet(pruned);
+}
+
+int frameChars(List<Map<String, dynamic>> messages) {
+  var n = 0;
+  for (final m in messages) {
+    n += '${m['content'] ?? ''}'.length;
+    final calls = m['tool_calls'];
+    if (calls != null) n += '$calls'.length;
+  }
+  return n;
+}
+
+/// Full text for the last [keep] tool results. Earlier results keep a stub.
+List<Map<String, dynamic>> pruneToolResults(
+  List<Map<String, dynamic>> messages, {
+  int keep = toolResultTail,
+  int clip = 500,
+}) {
+  final indexes = <int>[
+    for (var i = 0; i < messages.length; i++)
+      if (messages[i]['role'] == 'tool') i,
+  ];
+  if (indexes.length <= keep) {
+    return [for (final m in messages) Map<String, dynamic>.from(m)];
+  }
+  final stale = indexes.take(indexes.length - keep).toSet();
+  return [
+    for (var i = 0; i < messages.length; i++)
+      if (stale.contains(i))
+        _clipTool(messages[i], clip)
+      else
+        Map<String, dynamic>.from(messages[i]),
+  ];
+}
+
+/// System voice, a compaction of the middle, and the live tail.
+List<Map<String, dynamic>> foldWorkingSet(
+  List<Map<String, dynamic>> messages, {
+  int tail = 6,
+}) {
+  if (messages.length <= tail + 2) {
+    return [for (final m in messages) Map<String, dynamic>.from(m)];
+  }
+  final head = <Map<String, dynamic>>[];
+  var start = 0;
+  if (messages.first['role'] == 'system') {
+    head.add(Map<String, dynamic>.from(messages.first));
+    start = 1;
+  }
+  final tailStart = messages.length - tail;
+  if (tailStart <= start) {
+    return [for (final m in messages) Map<String, dynamic>.from(m)];
+  }
+  final note = workingCompaction(messages.sublist(start, tailStart));
+  return [
+    ...head,
+    if (note.isNotEmpty) {'role': 'system', 'content': note},
+    for (final m in messages.sublist(tailStart)) Map<String, dynamic>.from(m),
+  ];
+}
+
+/// Goal, findings, and the instruction to keep going. Used when the live
+/// frame no longer fits.
+String workingCompaction(List<Map<String, dynamic>> older) {
+  final asked = <String>[];
+  final found = <String>[];
+  for (final m in older) {
+    final text = _oneLine('${m['content'] ?? ''}');
+    if (text.isEmpty || text == 'null') continue;
+    final role = m['role'];
+    if (role == 'user' && asked.length < 6) asked.add(text);
+    if (role == 'assistant' && found.length < 6) found.add(text);
+    if (role == 'tool' && found.length < 8) {
+      found.add('${m['tool_name'] ?? 'tool'}: $text');
+    }
+  }
+  if (asked.isEmpty && found.isEmpty) return '';
+  return [
+    if (asked.isNotEmpty) 'The task so far: ${asked.join(' / ')}.',
+    if (found.isNotEmpty) 'Already found: ${found.join(' / ')}.',
+    'Continue that task from these facts. Do not ask the person to repeat it. '
+        'Ask one short question only if a missing fact is something only they know.',
+  ].join(' ');
+}
+
+String _oneLine(String raw) {
+  final text = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (text.isEmpty) return '';
+  return text.length > 180 ? text.substring(0, 180) : text;
+}
+
+Map<String, dynamic> _clipTool(Map<String, dynamic> message, int clip) {
+  final copy = Map<String, dynamic>.from(message);
+  final text = _oneLine('${copy['content'] ?? ''}');
+  final name = '${copy['tool_name'] ?? 'tool'}';
+  final head = text.length <= clip ? text : text.substring(0, clip);
+  copy['content'] = 'Earlier $name result, clipped: $head';
+  return copy;
 }
 
 /// Intents whose phrase appears in [text]. Matching is literal.

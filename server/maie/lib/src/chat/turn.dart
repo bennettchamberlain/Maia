@@ -8,9 +8,11 @@ import 'package:maie_api/src/chat/tools.dart';
 import 'package:maie_api/src/harness/harness.dart';
 import 'package:maie_api/src/one/extract.dart';
 
-/// One reply: a short loop of next steps. Each step reads the tools that
-/// are available right then, runs at most one of them, then looks again.
-/// OpenClaw keeps its own tools; host tools run for the other providers.
+/// One reply: a loop of next steps. Each step reads the tools that are
+/// available right then, runs every call from that step, then looks again.
+/// The loop stops when the model answers, when the same call comes back,
+/// or when the step budget is spent. OpenClaw keeps its own tools; host
+/// tools run for the other providers.
 Future<({String text, List<Map<String, dynamic>> tools, String? model})>
 runChatTurn({
   required AgentClient harness,
@@ -30,7 +32,7 @@ runChatTurn({
   var graphDone = false;
   var followUp = false;
   var missing = false;
-  String? lastKey;
+  final executed = <String>{};
   final opening = _latestUser(messages);
   final tools = toolbox;
   final book = tools != null && !harness.keepsOwnHistory && opening != null
@@ -63,7 +65,7 @@ runChatTurn({
           ]
         : toolbox.definitions;
     final names = offered == null ? const <String>[] : toolNames(offered);
-    final request = [for (final m in messages) Map<String, dynamic>.from(m)];
+    final request = modelFrame(messages);
     if (hostTools && used.isNotEmpty) {
       request.add({
         'role': 'system',
@@ -133,70 +135,76 @@ runChatTurn({
       messages.add({'role': 'user', 'content': steered});
       continue;
     }
-    final call = calls.first;
-    final key = '${call.name}\n${call.arguments}';
-    if (key == lastKey) break;
-    if (names.contains(call.name) &&
-        consultMemoryFirst(call.name) &&
-        !memoryChecked &&
-        toolbox.isOn('memory_search')) {
-      memoryChecked = true;
-      final query = _latestUser(messages) ?? '';
-      final memory = await toolbox.run(
-        db,
-        'memory_search',
-        jsonEncode({'query': query, 'limit': 6}),
-      );
-      used.add({
-        'name': 'memory_search',
-        'arguments': jsonEncode({'query': query}),
-        'result': memory,
-      });
-      emit('tool', {
-        'name': 'memory_search',
-        'arguments': jsonEncode({'query': query}),
-        'result': memory,
-      });
-      if (!runAlongsideEmptyMemory(call.name, memory)) {
-        _record(messages, used, emit, call, memoryFirstNote(query, memory));
+    var ran = false;
+    var repeated = false;
+    for (final call in calls) {
+      final key = '${call.name}\n${call.arguments}';
+      if (executed.contains(key)) {
+        repeated = true;
         continue;
       }
-    }
-    lastKey = key;
-    var result = names.contains(call.name)
-        ? await toolbox.run(db, call.name, call.arguments)
-        : 'Tool ${call.name} is not available. '
-              'Tools now: ${names.isEmpty ? 'none' : names.join(', ')}.';
-    if (call.name == 'sync' &&
-        result.contains('Nothing is pulling') &&
-        names.contains('connector')) {
-      final platform = _syncPlatform(call.arguments);
-      if (platform.isNotEmpty) {
-        final reading = await toolbox.run(
+      if (names.contains(call.name) &&
+          consultMemoryFirst(call.name) &&
+          !memoryChecked &&
+          toolbox.isOn('memory_search')) {
+        memoryChecked = true;
+        final query = _latestUser(messages) ?? '';
+        final memory = await toolbox.run(
           db,
-          'connector',
-          jsonEncode({
-            'platform': platform,
-            'intent': _latestUser(messages) ?? 'list recent records',
-          }),
+          'memory_search',
+          jsonEncode({'query': query, 'limit': 6}),
         );
         used.add({
-          'name': 'connector',
-          'arguments': jsonEncode({'platform': platform}),
-          'result': reading,
+          'name': 'memory_search',
+          'arguments': jsonEncode({'query': query}),
+          'result': memory,
         });
         emit('tool', {
-          'name': 'connector',
-          'arguments': jsonEncode({'platform': platform}),
-          'result': reading,
+          'name': 'memory_search',
+          'arguments': jsonEncode({'query': query}),
+          'result': memory,
         });
-        result = '$result\n$reading';
+        if (!runAlongsideEmptyMemory(call.name, memory)) {
+          _record(messages, used, emit, call, memoryFirstNote(query, memory));
+          ran = true;
+          continue;
+        }
       }
+      executed.add(key);
+      ran = true;
+      var result = names.contains(call.name)
+          ? await toolbox.run(db, call.name, call.arguments)
+          : 'Tool ${call.name} is not available. '
+                'Tools now: ${names.isEmpty ? 'none' : names.join(', ')}.';
+      if (call.name == 'sync' &&
+          result.contains('Nothing is pulling') &&
+          names.contains('connector')) {
+        final platform = _syncPlatform(call.arguments);
+        if (platform.isNotEmpty) {
+          final reading = await toolbox.run(
+            db,
+            'connector',
+            jsonEncode({
+              'platform': platform,
+              'intent': _latestUser(messages) ?? 'list recent records',
+            }),
+          );
+          used.add({
+            'name': 'connector',
+            'arguments': jsonEncode({'platform': platform}),
+            'result': reading,
+          });
+          emit('tool', {
+            'name': 'connector',
+            'arguments': jsonEncode({'platform': platform}),
+            'result': reading,
+          });
+          result = '$result\n$reading';
+        }
+      }
+      _record(messages, used, emit, call, result);
     }
-    _record(messages, used, emit, call, result);
-    for (final extra in calls.skip(1)) {
-      _record(messages, used, emit, extra, heldStepResult);
-    }
+    if (!ran && repeated) break;
     final incoming = steer?.call();
     if (incoming != null) {
       messages.add({'role': 'user', 'content': incoming});
@@ -208,7 +216,7 @@ runChatTurn({
       used.isNotEmpty &&
       text.toString().trim().isEmpty) {
     final request = [
-      for (final m in messages) Map<String, dynamic>.from(m),
+      ...modelFrame(messages),
       {'role': 'system', 'content': graphDone ? graphAnswerCue : answerCue},
     ];
     final answerSpoken = StringBuffer();
